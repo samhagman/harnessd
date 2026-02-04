@@ -57,16 +57,13 @@
 | 5.1 | What state must persist between sessions? | [~] ★ |
 | 5.2 | How do we implement checkpointing? | [~] ★ |
 | 5.3 | What does the feature_list.json look like? | [x] |
-| 5.4 | What does the progress file look like? | [~] |
-| 5.5 | How do we track complete vs incomplete? | [ ] |
-| 5.6 | How do we ensure clean state between sessions? | [ ] |
-| 5.7 | How do we detect/recover from dirty state? | [ ] |
-| 5.8 | What's the git integration strategy? | [ ] |
+| 5.4 | What does the progress file look like? | [~] ★ |
+| 5.5 | How do we track complete vs incomplete? | [x] |
+| 5.6 | How do we ensure clean state between sessions? | [~] ★ |
+| 5.7 | How do we detect/recover from dirty state? | [~] ★ |
+| 5.8 | What's the git integration strategy? | [~] ★ |
 | **6. Tool Design** | | |
-| 6.1 | What are our core tools? | [ ] |
-| 6.2 | How do we design tool descriptions? | [ ] |
-| 6.3 | How do we prevent tool bloat? | [ ] |
-| 6.4 | How should tools handle errors? | [ ] |
+| 6.1 | What are our core tools and how do we design them? | [~] ★ |
 | 6.5 | Should tools be idempotent? | [ ] |
 | 6.6 | What file system tools do we need? | [ ] |
 | 6.7 | What browser/web tools do we need? | [ ] |
@@ -161,7 +158,7 @@
 | 16.6 | What's the disaster recovery plan? | [ ] |
 | 16.7 | How do we deprecate and migrate? | [ ] |
 
-**Progress: 24/130 answered**
+**Progress: 25/130 answered**
 
 ---
 
@@ -827,11 +824,12 @@ Builder doesn't plan the project (Overseer does), but it does figure out how to 
 ├────────────────────────────────────────────────────────────────┤
 │                                                                │
 │  CORE: IMPLEMENTATION                                          │
-│  • Read the project plan                                       │
+│  • Read the project plan and feature_list.json (read-only)     │
 │  • Pick the next incomplete feature/task                       │
 │  • Write code, tests, configuration                            │
 │  • Commit progress with descriptive messages                   │
-│  • Update progress files                                       │
+│  • Update claude-progress.txt and plan checkboxes              │
+│  • CANNOT edit feature_list.json (Verifier-only)               │
 │                                                                │
 │  TACTICAL PLANNING (within scope)                              │
 │  • Figure out how to implement the current feature             │
@@ -888,6 +886,14 @@ Verifier's job is to navigate through requirements and verify they're actually m
 │  • Check that artifacts exist and work                         │
 │  • Be skeptical — disconfirm "done"                            │
 │                                                                │
+│  FEATURE_LIST.JSON (exclusive ownership)                       │
+│  • ONLY agent that can edit feature_list.json                  │
+│  • Updates passes field:                                       │
+│    - 0 = not attempted                                         │
+│    - -1 = attempted but failed                                 │
+│    - 1 = verified complete                                     │
+│  • Can add verifier_notes with observations                    │
+│                                                                │
 │  REPORTING                                                     │
 │  • If everything passes: output completion marker              │
 │  • If issues found: output detailed verifier report            │
@@ -904,7 +910,7 @@ Verifier's job is to navigate through requirements and verify they're actually m
 └────────────────────────────────────────────────────────────────┘
 ```
 
-**The principle:** Verifier is quality control. Catch problems, report them. Builder fixes everything.
+**The principle:** Verifier is quality control. Catch problems, report them, update feature_list.json status. Builder fixes everything.
 
 **Research Links:**
 - Separation of concerns: validator should not also be implementer
@@ -1595,7 +1601,7 @@ _Schema? Categories? Status tracking?_
 
 **Purpose:** Anthropic describes this as "a structured JSON file with a list of end-to-end feature descriptions" created to address premature project completion. By having 200+ features all initially marked failing, agents have a clear outline of what full functionality looks like.
 
-**Anthropic's exact format (from their long-running agents research):**
+**Anthropic's base format (from their long-running agents research):**
 
 ```json
 {
@@ -1612,109 +1618,180 @@ _Schema? Categories? Status tracking?_
 }
 ```
 
-**Key fields:**
-- `category`: functional (other categories not enumerated in source)
-- `description`: what the feature does
-- `steps`: array of verification steps
-- `passes`: boolean, false until verified
-
-**Critical rules from Anthropic:**
-- Initializer creates 200+ features, all marked `"passes": false`
-- Coding agent reads list, selects **highest-priority** incomplete feature
-- Agents may **only change the `passes` field** — cannot remove or edit tests
-- "It is unacceptable to remove or edit tests because this could lead to missing or buggy functionality"
-- JSON format chosen because "the model is less likely to inappropriately change or overwrite JSON files compared to Markdown files"
-
-**Gherkin-style alternative (same schema, BDD-style steps):**
+**Harnessd extension — tri-state passes + verifier notes:**
 
 ```json
 {
   "category": "functional",
-  "description": "New chat button creates fresh conversation",
-  "given": "User is on the main interface",
-  "when": "User clicks the 'New Chat' button",
-  "then": [
-    "A new conversation is created",
-    "Chat area shows welcome state",
-    "Conversation appears in sidebar"
+  "description": "New chat button creates a fresh conversation",
+  "steps": [
+    "Navigate to main interface",
+    "Click the 'New Chat' button",
+    "Verify a new conversation is created",
+    "Check that chat area shows welcome state",
+    "Verify conversation appears in sidebar"
   ],
-  "passes": false
+  "passes": 0,
+  "verifier_notes": null
 }
 ```
+
+**Key fields:**
+- `category`: functional (other categories not enumerated in source)
+- `description`: what the feature does
+- `steps`: array of verification steps
+- `passes`: integer tri-state:
+  - `0` = not attempted yet
+  - `-1` = attempted but failed
+  - `1` = verified complete
+- `verifier_notes`: string or null — Verifier can add observations about what it saw, what failed, etc.
+
+**Critical rules:**
+- **ONLY the Verifier can edit feature_list.json** — Builder cannot touch it
+- Initializer creates 200+ features, all marked `"passes": 0`
+- Builder reads list to understand what to work on, but cannot modify it
+- Verifier updates `passes` and optionally adds `verifier_notes` after validation
+- "It is unacceptable to remove or edit tests because this could lead to missing or buggy functionality" (Anthropic)
+- JSON format chosen because "the model is less likely to inappropriately change or overwrite JSON files compared to Markdown files" (Anthropic)
 
 **Research Links:**
 - Source: https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
 
 ---
 
-### 5.4 What does the progress file look like? [~]
+### 5.4 What does the progress file look like? [~] ★
 _Format? Update frequency? Content structure?_
 
 **Answer:**
 
-**From Anthropic's source (exact format not specified):**
-
-The source describes claude-progress.txt as:
+**From Anthropic's source:**
+- Called `claude-progress.txt`
 - "A human-readable log where each session documents what it accomplished"
 - Combined with git commit history, enables rapid understanding of project state
 - Updated at session end
+- Exact format not specified (left to implementers)
 
-**Likely format (our interpretation):**
+**Our format (append-only plain text):**
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  PROGRESS FILE OPTIONS                                         │
-├────────────────────────────────────────────────────────────────┤
-│                                                                │
-│  OPTION A: Append-only log                                     │
-│  ---                                                           │
-│  ## Session 3 - 2026-02-01 14:30                               │
-│  - Completed: User authentication flow                         │
-│  - Completed: Login form validation                            │
-│  - In progress: Password reset feature                         │
-│  - Blockers: None                                              │
-│  - Next: Finish password reset, start email verification       │
-│                                                                │
-│  OPTION B: Structured JSON                                     │
-│  (Anthropic mentions JSON "keeps agent from getting creative") │
-│  {                                                             │
-│    "session": 3,                                               │
-│    "timestamp": "2026-02-01T14:30:00Z",                        │
-│    "completed": ["auth-flow", "login-validation"],             │
-│    "in_progress": ["password-reset"],                          │
-│    "blockers": [],                                             │
-│    "next": ["email-verification"]                              │
-│  }                                                             │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
+## Session 3 - 2026-02-01 14:30
+Completed: User authentication flow, login form validation
+In progress: Password reset feature
+Blockers: None
+Next: Finish password reset, start email verification
+
+## Session 2 - 2026-02-01 10:15
+Completed: Database schema, user model
+In progress: Authentication flow
+Blockers: None
+Next: Complete auth, add login form
 ```
+
+**Why this approach:**
+- "Human-readable" suggests markdown/text, not JSON (unlike feature_list.json)
+- Append-only preserves history across sessions
+- Simple structure = less creative drift risk
+- Complements git log (git shows code changes, this shows intent/status)
 
 **Update frequency:** End of each session (before context exhaustion).
 
 **Research Links:**
 - Source: https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
-- Note: Exact format left to implementers; emphasis is on functional role
-- Enables rapid understanding of project state
 
 ---
 
-### 5.5 How do we track what's complete vs incomplete? [ ]
+### 5.5 How do we track what's complete vs incomplete? [x]
 _Progress markers: [ ], [~], [x]?_
 
 **Answer:**
-<!-- TBD -->
+
+**Three complementary tracking systems with clear ownership:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  COMPLETION TRACKING LAYERS                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. feature_list.json (VERIFIER-ONLY, authoritative)            │
+│     └── passes: 0 = not attempted                               │
+│     └── passes: -1 = attempted but failed                       │
+│     └── passes: 1 = verified complete                           │
+│     └── verifier_notes: observations about what was seen        │
+│     └── Builder CANNOT edit. Only Verifier updates this.        │
+│                                                                 │
+│  2. Plan file CLAUDE.md (Builder-editable, phase-level)         │
+│     └── [ ] = not started                                       │
+│     └── [~] = in progress                                       │
+│     └── [x] = quality gate passed                               │
+│     └── Updated by Builder after each phase completes           │
+│                                                                 │
+│  3. claude-progress.txt (Builder-editable, session log)         │
+│     └── Append-only narrative log                               │
+│     └── "Completed: X" / "In progress: Y"                       │
+│     └── Human context, not machine state                        │
+│                                                                 │
+│  4. Git commits (immutable, code-level)                         │
+│     └── Each commit = atomic completed work                     │
+│     └── Commit message = what was done                          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Which system is authoritative?**
+- `feature_list.json` = source of truth for feature completion (Verifier-controlled)
+- Plan file = source of truth for phase completion (Builder-controlled)
+- Git = source of truth for what code exists
+
+**Why this separation?**
+- Builder can't mark its own work as complete — prevents premature victory
+- Verifier is the gatekeeper of "actually done"
+- Tri-state (-1/0/1) gives visibility into what was attempted vs untouched
 
 **Research Links:**
+- Anthropic: "It is unacceptable to remove or edit tests"
+- Separation of builder/verifier prevents self-certification
 - Current: Progress Tracking table in plan
 - Each phase: Narrative, Goals, Tasks, Smoke Tests, Quality Gate
 
 ---
 
-### 5.6 How do we ensure clean state between sessions? [ ]
+### 5.6 How do we ensure clean state between sessions? [~] ★
 _Git commit required? File validation?_
 
 **Answer:**
-<!-- TBD -->
+
+**The loop handles this:** Builder can exit for many reasons (completed, stuck, needs to ask question, crashed). Verifier checks everything and reports what's wrong. When Builder restarts, it reads Verifier's report, cleans up first, then continues building.
+
+**What Verifier checks (candidates for clean state):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  VERIFIER CLEAN STATE CHECKLIST                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  CODE STATE                                                     │
+│  • Are all changes committed with descriptive message?          │
+│  • Is working directory clean (git status)?                     │
+│  • Any uncommitted work left behind?                            │
+│                                                                 │
+│  PROGRESS STATE                                                 │
+│  • Is claude-progress.txt updated with session summary?         │
+│  • Are plan checkboxes accurate for completed phases?           │
+│                                                                 │
+│  RUNTIME STATE                                                  │
+│  • Is dev server running (or init.sh documented)?               │
+│  • Are tests passing?                                           │
+│  • Is environment in known-good state?                          │
+│                                                                 │
+│  CONTEXT STATE                                                  │
+│  • Are next steps documented?                                   │
+│  • Are blockers noted?                                          │
+│  • Can next session orient from files alone?                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**TBD:** Specific items to include in Builder prompt vs Verifier checklist.
 
 **Research Links:**
 - Commit changes with descriptive message
@@ -1723,11 +1800,48 @@ _Git commit required? File validation?_
 
 ---
 
-### 5.7 How do we detect and recover from dirty state? [ ]
+### 5.7 How do we detect and recover from dirty state? [~] ★
 _What if a session crashed mid-work?_
 
 **Answer:**
-<!-- TBD -->
+
+This flows from 5.6 — Verifier handles detection, Builder handles recovery on restart.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  DIRTY STATE: DETECTION → RECOVERY FLOW                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  VERIFIER DETECTS (after any Builder exit):                     │
+│  • git status shows uncommitted changes                         │
+│  • Smoke tests failing                                          │
+│  • Progress file inconsistent with actual state                 │
+│  • Feature marked attempted but code incomplete                 │
+│  • Dev server not running / broken environment                  │
+│                                                                 │
+│  VERIFIER REPORTS:                                              │
+│  <verifier-report>                                              │
+│  ## Dirty state found                                           │
+│  - Uncommitted changes in src/auth.ts                           │
+│  - Smoke test `npm test` fails: "Cannot find module..."         │
+│  - feature_list.json shows auth attempted (-1) but broken       │
+│                                                                 │
+│  ## Recovery required before continuing                         │
+│  1. Commit or stash uncommitted changes                         │
+│  2. Fix broken import in src/auth.ts                            │
+│  3. Re-run smoke tests to verify clean state                    │
+│  </verifier-report>                                             │
+│                                                                 │
+│  BUILDER RECOVERS (on restart):                                 │
+│  1. Read verifier report                                        │
+│  2. Clean up dirty state first (before new work)                │
+│  3. Run smoke tests to confirm recovery                         │
+│  4. Then continue from where it left off                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The principle:** Verifier is the "state inspector" — Builder never starts work on a dirty foundation. Clean up first, then build.
 
 **Research Links:**
 - Run smoke test at session start
@@ -1736,11 +1850,45 @@ _What if a session crashed mid-work?_
 
 ---
 
-### 5.8 What's the git integration strategy? [ ]
+### 5.8 What's the git integration strategy? [~] ★
 _Commit frequency? Branch strategy? What to never commit?_
 
 **Answer:**
-<!-- TBD -->
+
+**TBD — draft below:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GIT INTEGRATION STRATEGY                                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  COMMIT FREQUENCY                                               │
+│  • After each completed feature (atomic units)                  │
+│  • Before session exit (capture in-progress work)               │
+│  • After fixing dirty state (recovery commits)                  │
+│  • Descriptive messages: what was done + why                    │
+│                                                                 │
+│  BRANCH STRATEGY                                                │
+│  • TBD: Single branch (main) vs feature branches?               │
+│  • Consideration: Feature branches add complexity               │
+│  • Consideration: Main-only risks breaking trunk                │
+│                                                                 │
+│  NEVER COMMIT                                                   │
+│  • Secrets, credentials, API keys                               │
+│  • .env files with real values                                  │
+│  • Large binaries (images, videos, models)                      │
+│  • node_modules, .venv, build artifacts                         │
+│  • Anything in .gitignore                                       │
+│                                                                 │
+│  INITIAL SETUP (Initializer does this)                          │
+│  • Create .gitignore with standard exclusions                   │
+│  • Initial commit with project skeleton                         │
+│  • Ensure repo is in clean state for Builder                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Open question:** Branch strategy — do we want Builder working on `main` directly, or should it create feature branches?
 
 **Research Links:**
 - Commit after each completed feature
@@ -1751,52 +1899,68 @@ _Commit frequency? Branch strategy? What to never commit?_
 
 ## 6. Tool Design
 
-### 6.1 What are our core tools? [ ]
+### 6.1 What are our core tools and how do we design them? [~] ★
 _Minimal viable toolset where each tool's purpose is crystal clear_
 
 **Answer:**
-<!-- TBD -->
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CORE TOOLS BY AGENT                                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  BUILDER (full implementation access)                           │
+│  ├── Claude Code Default Toolset (Read, Write, Edit, etc.)      │
+│  ├── Perplexity MCP (search, research, reason)                  │
+│  ├── Pal MCP (chat, thinkdeep, debug, codereview, etc.)         │
+│  └── Task: Can spawn sub-agents                                 │
+│                                                                 │
+│  VERIFIER (read-heavy, limited writes)                          │
+│  ├── Claude Code Default Toolset (restricted via hooks)         │
+│  │   └── No file deletion, no mutating git commands             │
+│  ├── Edit feature_list.json ONLY                                │
+│  ├── Perplexity MCP (for research during verification)          │
+│  ├── Pal MCP (for analysis)                                     │
+│  └── Task: Can spawn sub-agents for parallel verification       │
+│                                                                 │
+│  OVERSEER (orchestration + monitoring)                          │
+│  ├── File: Read logs, progress files, plans                     │
+│  ├── Agent: Spawn/restart Builder and Verifier                  │
+│  ├── Agent: Inject messages into running sessions               │
+│  └── User: Ask questions, present options                       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  TOOL DESCRIPTION PRINCIPLES (for custom tools)                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  NAMING                                                         │
+│  • Self-explanatory: search_customer_database > srch_cust_db    │
+│  • Verb-noun pattern: read_file, create_commit, run_tests       │
+│                                                                 │
+│  DESCRIPTIONS                                                   │
+│  • Docstring = primary guide for model                          │
+│  • What it does, when to use it, what it returns                │
+│                                                                 │
+│  PARAMETERS                                                     │
+│  • JSON Schema with types and constraints                       │
+│  • Required vs optional clearly marked                          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key constraint:** Verifier's tool restrictions are enforced via hooks (PreToolUse), not just prompt instructions.
+
+**Error handling:** Tools return structured error messages the model can reason about (not exceptions that crash). Claude Code already handles this well — agent sees error and can retry or adapt.
 
 **Research Links:**
 - Data tools: context retrieval
 - Action tools: state modification
 - Orchestration tools: agent coordination
-
----
-
-### 6.2 How do we design tool descriptions? [ ]
-_Clear naming, detailed descriptions, strong typing_
-
-**Answer:**
-<!-- TBD -->
-
-**Research Links:**
 - Self-explanatory names (search_customer_database > srch_cust_db)
 - Docstring = primary guide for model
 - JSON Schema for parameter types/constraints
-
----
-
-### 6.3 How do we prevent tool bloat? [ ]
-_When to add vs split vs remove tools?_
-
-**Answer:**
-<!-- TBD -->
-
-**Research Links:**
-- If humans can't determine which tool applies, agents can't either
-- 10+ overlapping tools = split agents
-- 20 distinct tools > 10 overlapping tools
-
----
-
-### 6.4 How should tools handle errors? [ ]
-_Structured error messages vs exceptions?_
-
-**Answer:**
-<!-- TBD -->
-
-**Research Links:**
 - Return structured error messages model can reason about
 - Don't throw exceptions that crash execution
 
