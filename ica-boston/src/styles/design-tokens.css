@@ -1,0 +1,162 @@
+/* ==========================================================================
+   Design Tokens — ICA Boston 2026
+   Single source of truth for the visual language.
+   All values consumed via var(--token-name) throughout the system.
+   ========================================================================== */
+
+:root {
+  /* ========================================================================
+     COLOR PALETTE — Monochromatic with Accent
+     Bold, contemporary art museum language: mostly black/white/gray
+     with restrained accent use for CTAs and highlights.
+     ======================================================================== */
+
+  /* Core monochrome */
+  --color-black: #000000;
+  --color-white: #ffffff;
+
+  /* Gray scale — 9 stops for nuanced hierarchy */
+  --color-gray-50: #fafafa;
+  --color-gray-100: #f5f5f5;
+  --color-gray-200: #e5e5e5;
+  --color-gray-300: #d4d4d4;
+  --color-gray-400: #a3a3a3;
+  --color-gray-500: #737373;
+  --color-gray-600: #525252;
+  --color-gray-700: #404040;
+  --color-gray-800: #262626;
+  --color-gray-900: #171717;
+  --color-gray-950: #0a0a0a;
+
+  /* Accent — warm, institutional, used sparingly */
+  --color-accent: #e63946;
+  --color-accent-light: #ff6b6b;
+  --color-accent-dark: #b71c1c;
+
+  /* Secondary accent — cool complement for subtle differentiation */
+  --color-accent-secondary: #1d3557;
+  --color-accent-secondary-light: #457b9d;
+
+  /* Semantic mappings */
+  --color-bg: var(--color-white);
+  --color-bg-alt: var(--color-gray-50);
+  --color-bg-inverse: var(--color-black);
+  --color-text: var(--color-gray-900);
+  --color-text-secondary: var(--color-gray-600);
+  --color-text-inverse: var(--color-white);
+  --color-border: var(--color-gray-200);
+  --color-border-strong: var(--color-gray-400);
+
+  /* ========================================================================
+     TYPOGRAPHY — Fluid clamp()-based scale
+     Display sizes reach 8–12rem for bold, oversized headline impact.
+     Body sizes scale fluidly between mobile (375px) and wide (1440px).
+     ======================================================================== */
+
+  /* Font families */
+  --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-body: 'DM Sans', system-ui, -apple-system, sans-serif;
+
+  /* Display sizes — oversized, dramatic headlines */
+  --font-size-display-2xl: clamp(4.5rem, 3rem + 8vw, 12rem);
+  --font-size-display-xl: clamp(3.5rem, 2.5rem + 5.5vw, 10rem);
+  --font-size-display-lg: clamp(2.75rem, 2rem + 4vw, 8rem);
+  --font-size-display-md: clamp(2.25rem, 1.75rem + 2.5vw, 5rem);
+  --font-size-display-sm: clamp(1.75rem, 1.25rem + 2vw, 3.5rem);
+
+  /* Heading sizes — editorial hierarchy */
+  --font-size-h1: clamp(2rem, 1.5rem + 2.5vw, 4rem);
+  --font-size-h2: clamp(1.5rem, 1.25rem + 1.25vw, 2.75rem);
+  --font-size-h3: clamp(1.25rem, 1.1rem + 0.75vw, 2rem);
+  --font-size-h4: clamp(1.125rem, 1rem + 0.5vw, 1.5rem);
+
+  /* Body sizes — readable, comfortable */
+  --font-size-body-xl: clamp(1.25rem, 1.125rem + 0.5vw, 1.5rem);
+  --font-size-body-lg: clamp(1.125rem, 1.05rem + 0.35vw, 1.25rem);
+  --font-size-body: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --font-size-body-sm: clamp(0.875rem, 0.85rem + 0.125vw, 0.9375rem);
+  --font-size-caption: clamp(0.75rem, 0.725rem + 0.125vw, 0.8125rem);
+
+  /* Font weights */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line heights */
+  --line-height-tight: 1.0;
+  --line-height-snug: 1.15;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.65;
+
+  /* Letter spacing */
+  --letter-spacing-tight: -0.04em;
+  --letter-spacing-snug: -0.02em;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.05em;
+  --letter-spacing-wider: 0.1em;
+
+  /* ========================================================================
+     SPACING — Consistent rhythm scale
+     Used for margin, padding, gap throughout the system.
+     ======================================================================== */
+
+  --space-3xs: clamp(0.125rem, 0.1rem + 0.125vw, 0.25rem);
+  --space-2xs: clamp(0.25rem, 0.2rem + 0.25vw, 0.5rem);
+  --space-xs: clamp(0.5rem, 0.4rem + 0.5vw, 0.75rem);
+  --space-sm: clamp(0.75rem, 0.6rem + 0.75vw, 1.25rem);
+  --space-md: clamp(1rem, 0.8rem + 1vw, 1.75rem);
+  --space-lg: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem);
+  --space-xl: clamp(2rem, 1.5rem + 2.5vw, 4rem);
+  --space-2xl: clamp(3rem, 2rem + 5vw, 6rem);
+  --space-3xl: clamp(4rem, 2.5rem + 7.5vw, 10rem);
+
+  /* ========================================================================
+     BREAKPOINTS — Reference values
+     Defined as custom properties for documentation; actual media queries
+     use literal values (CSS custom properties can't be used in @media).
+     ======================================================================== */
+
+  --bp-mobile: 375px;
+  --bp-tablet: 768px;
+  --bp-desktop: 1024px;
+  --bp-wide: 1440px;
+
+  /* ========================================================================
+     LAYOUT — Max widths, containers, grid gaps
+     ======================================================================== */
+
+  --max-width: 1440px;
+  --max-width-content: 1200px;
+  --max-width-text: 65ch;
+
+  --grid-gap: var(--space-md);
+  --section-padding-x: clamp(1rem, 0.5rem + 2.5vw, 4rem);
+  --section-padding-y: clamp(3rem, 2rem + 5vw, 8rem);
+
+  /* ========================================================================
+     TRANSITIONS — Timing functions and durations
+     Consumed by components; disabled by prefers-reduced-motion utility.
+     ======================================================================== */
+
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+  --duration-slower: 800ms;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ========================================================================
+     BORDERS & RADII
+     ======================================================================== */
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-full: 9999px;
+
+  --border-thin: 1px solid var(--color-border);
+  --border-strong: 2px solid var(--color-border-strong);
+}
