@@ -1,9 +1,9 @@
-/* ==========================================================================
-   Modern CSS Reset
-   Minimal, opinionated reset for consistent cross-browser rendering.
-   ========================================================================== */
+/*
+ * CSS Reset
+ * Based on modern CSS reset best practices
+ */
 
-/* Box sizing */
+/* Box sizing rules */
 *,
 *::before,
 *::after {
@@ -16,28 +16,52 @@
   padding: 0;
 }
 
-/* Prevent font-size inflation on mobile */
+/* Prevent font size inflation */
 html {
   -moz-text-size-adjust: none;
   -webkit-text-size-adjust: none;
   text-size-adjust: none;
 }
 
-/* Smooth scroll for anchor links (respects reduced motion via utilities.css) */
-html:focus-within {
-  scroll-behavior: smooth;
-}
-
-/* Core body defaults */
+/* Set core body defaults */
 body {
   min-height: 100vh;
-  line-height: var(--line-height-normal, 1.5);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
 }
 
-/* Media defaults — block display, responsive sizing */
+/* Remove list styles on ul, ol elements with a list role */
+ul[role='list'],
+ol[role='list'] {
+  list-style: none;
+}
+
+/* Set shorter line heights on headings and interactive elements */
+h1,
+h2,
+h3,
+h4,
+button,
+input,
+label {
+  line-height: 1.1;
+}
+
+/* Balance text wrapping on headings */
+h1,
+h2,
+h3,
+h4 {
+  text-wrap: balance;
+}
+
+/* A elements that don't have a class get default styles */
+a:not([class]) {
+  text-decoration-skip-ink: auto;
+  color: currentColor;
+}
+
+/* Make images easier to work with */
 img,
 picture,
 video,
@@ -47,56 +71,12 @@ svg {
   max-width: 100%;
 }
 
-/* Remove built-in form typography styles */
+/* Inherit fonts for inputs and buttons */
 input,
 button,
 textarea,
 select {
   font: inherit;
-  color: inherit;
-}
-
-/* Avoid text overflows */
-p,
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  overflow-wrap: break-word;
-}
-
-/* Remove list styles on ul, ol elements with a list role */
-ul[role='list'],
-ol[role='list'] {
-  list-style: none;
-}
-
-/* Remove all animations and transitions for people who prefer not to see them
-   (additional enforcement in utilities.css) */
-@media (prefers-reduced-motion: reduce) {
-  html:focus-within {
-    scroll-behavior: auto;
-  }
-}
-
-/* A elements that don't have a class get default styles */
-a:not([class]) {
-  text-decoration-skip-ink: auto;
-  color: currentColor;
-}
-
-/* Inherit fonts for inputs and buttons */
-button {
-  cursor: pointer;
-  background: none;
-  border: none;
-}
-
-/* Remove default fieldset styles */
-fieldset {
-  border: none;
 }
 
 /* Make sure textareas without a rows attribute are not tiny */
