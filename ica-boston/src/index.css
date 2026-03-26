@@ -85,3 +85,20 @@ button {
   cursor: pointer;
   font-family: var(--font-sans);
 }
+
+/* ── Focus-visible global defaults ── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Reduced-motion support ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

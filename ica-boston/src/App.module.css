@@ -36,3 +36,30 @@
   margin: 0 auto;
   padding: var(--space-2xl) var(--space-xl);
 }
+
+.filterBar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.count {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  letter-spacing: 0.01em;
+}
+
+@media (max-width: 480px) {
+  .main {
+    padding: var(--space-xl) var(--space-md);
+  }
+
+  .filterBar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -5,15 +5,21 @@ import styles from "./BookCard.module.css";
 
 interface Props {
   book: Book;
+  index: number;
 }
 
-export default function BookCard({ book }: Props) {
+export default function BookCard({ book, index }: Props) {
   const badgeColor = getGenreColor(book.genre);
 
   return (
     <article
       className={styles.card}
-      style={{ "--accent-color": book.coverColor } as React.CSSProperties}
+      style={
+        {
+          "--accent-color": book.coverColor,
+          "--animation-delay": `${index * 60}ms`,
+        } as React.CSSProperties
+      }
     >
       <div className={styles.body}>
         <h2 className={styles.title}>{book.title}</h2>
