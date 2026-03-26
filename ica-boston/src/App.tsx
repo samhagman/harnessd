@@ -1,4 +1,5 @@
 import { books } from "./data/books";
+import BookList from "./components/BookList/BookList";
 import styles from "./App.module.css";
 
 export default function App() {
@@ -13,7 +14,7 @@ export default function App() {
         </div>
       </header>
       <main className={styles.main}>
-        {/* Book cards — PKT-002 */}
+        <BookList books={books} />
       </main>
     </div>
   );

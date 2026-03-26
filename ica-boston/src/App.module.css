@@ -10,7 +10,7 @@
 }
 
 .headerInner {
-  max-width: 960px;
+  max-width: 1100px;
   margin: 0 auto;
 }
 
@@ -32,7 +32,7 @@
 }
 
 .main {
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: var(--space-2xl) var(--space-xl);
 }

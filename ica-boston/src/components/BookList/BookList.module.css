@@ -1,0 +1,21 @@
+/* auto-fill+minmax(280px) can't hit exact 600px/900px breakpoints with standard
+   padding, so explicit breakpoints are used to guarantee AC-1 compliance */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-lg);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+@media (min-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

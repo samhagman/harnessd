@@ -1,0 +1,10 @@
+.container {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.star {
+  display: block;
+  flex-shrink: 0;
+}

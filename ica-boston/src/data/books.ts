@@ -29,7 +29,7 @@ export const books: Book[] = [
     title: "Sapiens",
     author: "Yuval Noah Harari",
     genre: "Non-Fiction",
-    rating: 3.2,
+    rating: 3.7,
     coverColor: "#5c7d8a",
   },
   {
