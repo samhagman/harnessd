@@ -1,16 +1,21 @@
 {
   "name": "harnessd-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "start": "./run.sh",
-    "sanity": "./run.sh --sanity-check"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:live": "HARNESSD_LIVE=1 vitest run src/test/live/"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.0.7"
+    "@anthropic-ai/claude-agent-sdk": "0.2.83",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^6.0.2",
+    "vitest": "^3.0.0"
   }
 }

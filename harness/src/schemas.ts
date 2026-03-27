@@ -1,0 +1,654 @@
+/**
+ * Zod schemas and TypeScript types for all harnessd data structures.
+ *
+ * These schemas are used at boundaries: file read/write and agent output parsing.
+ * Internally, code passes plain TypeScript types (inferred from schemas).
+ *
+ * Reference: TAD sections 8, 19, 23
+ */
+
+import { z } from "zod";
+
+// ------------------------------------
+// Enums and constants
+// ------------------------------------
+
+export const RunPhaseSchema = z.enum([
+  "planning",
+  "awaiting_plan_approval",
+  "selecting_packet",
+  "negotiating_contract",
+  "building_packet",
+  "evaluating_packet",
+  "fixing_packet",
+  "awaiting_human_review",
+  "rate_limited",
+  "paused",
+  "needs_human",
+  "completed",
+  "failed",
+]);
+
+export type RunPhase = z.infer<typeof RunPhaseSchema>;
+
+export const PacketTypeSchema = z.enum([
+  "bugfix",
+  "ui_feature",
+  "backend_feature",
+  "migration",
+  "refactor",
+  "long_running_job",
+  "integration",
+  "tooling",
+]);
+
+export type PacketType = z.infer<typeof PacketTypeSchema>;
+
+export const PacketStatusSchema = z.enum([
+  "pending",
+  "negotiating",
+  "building",
+  "evaluating",
+  "fixing",
+  "done",
+  "blocked",
+  "failed",
+]);
+
+export type PacketStatus = z.infer<typeof PacketStatusSchema>;
+
+export const CriterionKindSchema = z.enum([
+  "command",
+  "scenario",
+  "api",
+  "artifact",
+  "invariant",
+  "negative",
+  "observability",
+  "performance",
+  "rubric",
+]);
+
+export type CriterionKind = z.infer<typeof CriterionKindSchema>;
+
+export const WorkerRoleSchema = z.enum([
+  "planner",
+  "contract_builder",
+  "contract_evaluator",
+  "builder",
+  "evaluator",
+]);
+
+export type WorkerRole = z.infer<typeof WorkerRoleSchema>;
+
+export const ContractDecisionSchema = z.enum([
+  "accept",
+  "revise",
+  "split",
+  "escalate",
+]);
+
+export type ContractDecision = z.infer<typeof ContractDecisionSchema>;
+
+export const ContractStatusSchema = z.enum([
+  "proposed",
+  "accepted",
+  "revise",
+  "split",
+  "escalate",
+]);
+
+export type ContractStatus = z.infer<typeof ContractStatusSchema>;
+
+// ------------------------------------
+// Core data models
+// ------------------------------------
+
+export const RateLimitStateSchema = z.object({
+  status: z.enum(["ok", "suspected", "confirmed"]),
+  retryCount: z.number().int().min(0),
+  nextRetryAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+});
+
+export type RateLimitState = z.infer<typeof RateLimitStateSchema>;
+
+export const OperatorFlagsSchema = z.object({
+  pauseAfterCurrentPacket: z.boolean(),
+  stopRequested: z.boolean(),
+});
+
+export type OperatorFlags = z.infer<typeof OperatorFlagsSchema>;
+
+export const RunStateSchema = z.object({
+  runId: z.string(),
+  objective: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  phase: RunPhaseSchema,
+  currentPacketId: z.string().nullable(),
+  packetOrder: z.array(z.string()),
+  completedPacketIds: z.array(z.string()),
+  failedPacketIds: z.array(z.string()),
+  blockedPacketIds: z.array(z.string()),
+  currentWorkerRole: WorkerRoleSchema.nullable(),
+  currentWorkerSessionId: z.string().nullable(),
+  lastHeartbeatAt: z.string().nullable(),
+  rateLimitState: RateLimitStateSchema,
+  operatorFlags: OperatorFlagsSchema,
+});
+
+export type RunState = z.infer<typeof RunStateSchema>;
+
+export const PacketSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  type: PacketTypeSchema,
+  objective: z.string(),
+  whyNow: z.string(),
+  dependencies: z.array(z.string()),
+  status: PacketStatusSchema,
+  priority: z.number().int(),
+  estimatedSize: z.enum(["S", "M", "L"]),
+  risks: z.array(z.string()),
+  notes: z.array(z.string()),
+  requiresHumanReview: z.boolean().default(false),
+});
+
+export type Packet = z.infer<typeof PacketSchema>;
+
+// ------------------------------------
+// Acceptance criteria
+// ------------------------------------
+
+export const ScenarioSchema = z.object({
+  tool: z.enum(["playwright", "bash", "manual-script"]),
+  steps: z.array(z.string()),
+  expects: z.array(z.string()),
+});
+
+export const RubricSchema = z.object({
+  scale: z.literal("1-5"),
+  threshold: z.number(),
+  dimensions: z.array(z.string()),
+});
+
+export const AcceptanceCriterionSchema = z.object({
+  id: z.string(),
+  kind: CriterionKindSchema,
+  description: z.string(),
+  blocking: z.boolean(),
+  threshold: z.number().optional(),
+  command: z.string().optional(),
+  expected: z.string().optional(),
+  scenario: ScenarioSchema.optional(),
+  rubric: RubricSchema.optional(),
+  evidenceRequired: z.array(z.string()),
+});
+
+export type AcceptanceCriterion = z.infer<typeof AcceptanceCriterionSchema>;
+
+// ------------------------------------
+// Contract
+// ------------------------------------
+
+export const ContractRiskSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  mitigation: z.string(),
+});
+
+export const BackgroundJobPlanSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  command: z.string(),
+  heartbeatExpected: z.boolean(),
+  completionSignal: z.string(),
+});
+
+export const MicroFanoutPlanSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["research", "draft", "validate"]),
+  brief: z.string(),
+  maxAgents: z.number().int(),
+  directRepoEditsAllowed: z.boolean(),
+});
+
+export const PacketContractSchema = z.object({
+  packetId: z.string(),
+  round: z.number().int(),
+  status: ContractStatusSchema,
+  title: z.string(),
+  packetType: PacketTypeSchema,
+  objective: z.string(),
+  inScope: z.array(z.string()),
+  outOfScope: z.array(z.string()),
+  assumptions: z.array(z.string()),
+  risks: z.array(ContractRiskSchema),
+  likelyFiles: z.array(z.string()),
+  implementationPlan: z.array(z.string()),
+  backgroundJobs: z.array(BackgroundJobPlanSchema),
+  microFanoutPlan: z.array(MicroFanoutPlanSchema),
+  acceptance: z.array(AcceptanceCriterionSchema),
+  reviewChecklist: z.array(z.string()),
+  proposedCommitMessage: z.string(),
+});
+
+export type PacketContract = z.infer<typeof PacketContractSchema>;
+
+// ------------------------------------
+// Contract review
+// ------------------------------------
+
+export const ContractReviewScoresSchema = z.object({
+  scopeFit: z.number(),
+  testability: z.number(),
+  riskCoverage: z.number(),
+  clarity: z.number(),
+  specAlignment: z.number(),
+});
+
+export const ContractReviewSchema = z.object({
+  packetId: z.string(),
+  round: z.number().int(),
+  decision: ContractDecisionSchema,
+  scores: ContractReviewScoresSchema,
+  requiredChanges: z.array(z.string()),
+  suggestedCriteriaAdditions: z.array(AcceptanceCriterionSchema),
+  missingRisks: z.array(z.string()),
+  rationale: z.string(),
+});
+
+export type ContractReview = z.infer<typeof ContractReviewSchema>;
+
+// ------------------------------------
+// Builder report
+// ------------------------------------
+
+export const CommandRunSchema = z.object({
+  command: z.string(),
+  exitCode: z.number().int(),
+  summary: z.string(),
+});
+
+export const BackgroundJobStatusSchema = z.object({
+  id: z.string(),
+  status: z.enum(["running", "completed", "failed"]),
+  note: z.string(),
+});
+
+export const MicroFanoutUsedSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  summary: z.string(),
+});
+
+export const SelfCheckResultSchema = z.object({
+  criterionId: z.string(),
+  status: z.enum(["pass", "fail", "unknown"]),
+  evidence: z.string(),
+});
+
+export const BuilderReportSchema = z.object({
+  packetId: z.string(),
+  sessionId: z.string(),
+  changedFiles: z.array(z.string()),
+  commandsRun: z.array(CommandRunSchema),
+  backgroundJobs: z.array(BackgroundJobStatusSchema),
+  microFanoutUsed: z.array(MicroFanoutUsedSchema),
+  selfCheckResults: z.array(SelfCheckResultSchema),
+  remainingConcerns: z.array(z.string()),
+  claimsDone: z.boolean(),
+});
+
+export type BuilderReport = z.infer<typeof BuilderReportSchema>;
+
+// ------------------------------------
+// Evaluator report
+// ------------------------------------
+
+export const HardFailureSchema = z.object({
+  criterionId: z.string(),
+  description: z.string(),
+  evidence: z.string(),
+  reproduction: z.array(z.string()),
+});
+
+export const RubricScoreSchema = z.object({
+  criterionId: z.string(),
+  score: z.number(),
+  threshold: z.number(),
+  rationale: z.string(),
+});
+
+export const EvaluatorReportSchema = z.object({
+  packetId: z.string(),
+  sessionId: z.string(),
+  overall: z.enum(["pass", "fail"]),
+  hardFailures: z.array(HardFailureSchema),
+  rubricScores: z.array(RubricScoreSchema),
+  missingEvidence: z.array(z.string()),
+  nextActions: z.array(z.string()),
+  contractGapDetected: z.boolean(),
+});
+
+export type EvaluatorReport = z.infer<typeof EvaluatorReportSchema>;
+
+// ------------------------------------
+// Worker result envelope
+// ------------------------------------
+
+export const RESULT_START_SENTINEL = "===HARNESSD_RESULT_START===";
+export const RESULT_END_SENTINEL = "===HARNESSD_RESULT_END===";
+
+export const WorkerResultEnvelopeSchema = z.object({
+  role: WorkerRoleSchema,
+  packetId: z.string().optional(),
+  payload: z.unknown(),
+});
+
+export type WorkerResultEnvelope = z.infer<typeof WorkerResultEnvelopeSchema>;
+
+// ------------------------------------
+// Event log
+// ------------------------------------
+
+export const EventTypeSchema = z.enum([
+  "run.started",
+  "run.paused",
+  "run.resumed",
+  "run.needs_human",
+  "run.completed",
+  "run.failed",
+  "planning.started",
+  "planning.completed",
+  "planning.failed",
+  "packet.selected",
+  "packet.done",
+  "packet.failed",
+  "packet.blocked",
+  "contract.round.started",
+  "contract.round.reviewed",
+  "contract.accepted",
+  "contract.escalated",
+  "contract.split",
+  "builder.started",
+  "builder.heartbeat",
+  "builder.background_job.started",
+  "builder.background_job.completed",
+  "builder.completed",
+  "builder.failed",
+  "evaluator.started",
+  "evaluator.passed",
+  "evaluator.failed",
+  "worker.rate_limited",
+  "worker.resumed",
+  "poke.received",
+  "poke.responded",
+  "plan.awaiting_approval",
+  "plan.approved",
+  "packet.awaiting_review",
+  "packet.approved",
+  "packet.rejected",
+  "packet.reset",
+  "nudge.sent",
+  "context.injected",
+]);
+
+export type EventType = z.infer<typeof EventTypeSchema>;
+
+export const EventEntrySchema = z.object({
+  ts: z.string(),
+  event: EventTypeSchema,
+  phase: RunPhaseSchema.optional(),
+  packetId: z.string().optional(),
+  detail: z.string().optional(),
+});
+
+export type EventEntry = z.infer<typeof EventEntrySchema>;
+
+// ------------------------------------
+// Status snapshot
+// ------------------------------------
+
+export const StatusSnapshotSchema = z.object({
+  runId: z.string(),
+  phase: RunPhaseSchema,
+  objective: z.string(),
+  elapsed: z.string(),
+  currentPacket: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      status: PacketStatusSchema,
+    })
+    .nullable(),
+  contractRound: z.number().int().nullable(),
+  currentWorker: z
+    .object({
+      role: WorkerRoleSchema,
+      sessionId: z.string().nullable(),
+      heartbeatAge: z.string().nullable(),
+    })
+    .nullable(),
+  packetsComplete: z.number().int(),
+  packetsTotal: z.number().int(),
+  lastEvent: z.string().nullable(),
+  alerts: z.array(z.string()),
+  nextAction: z.string(),
+  updatedAt: z.string(),
+});
+
+export type StatusSnapshot = z.infer<typeof StatusSnapshotSchema>;
+
+// ------------------------------------
+// Risk register
+// ------------------------------------
+
+export const RiskEntrySchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  severity: z.enum(["low", "medium", "high", "critical"]),
+  mitigation: z.string(),
+  watchpoints: z.array(z.string()),
+});
+
+export type RiskEntry = z.infer<typeof RiskEntrySchema>;
+
+export const RiskRegisterSchema = z.object({
+  risks: z.array(RiskEntrySchema),
+});
+
+export type RiskRegister = z.infer<typeof RiskRegisterSchema>;
+
+// ------------------------------------
+// Project config
+// ------------------------------------
+
+export const ProjectConfigSchema = z.object({
+  maxNegotiationRounds: z.number().int().default(6),
+  maxNegotiationRoundsRisky: z.number().int().default(8),
+  maxFixLoopsPerPacket: z.number().int().default(3),
+  staleWorkerMinutes: z.number().default(15),
+  heartbeatWriteSeconds: z.number().default(20),
+  resumeBackoffMinutes: z.array(z.number()).default([5, 15, 30, 60]),
+  allowBuilderMicroFanout: z.boolean().default(true),
+  maxBuilderMicroFanoutAgents: z.number().int().default(3),
+  allowDirectEditSubagents: z.boolean().default(false),
+  renderStatusOnEveryEvent: z.boolean().default(true),
+  maxConsecutiveResumeFailures: z.number().int().default(8),
+  model: z.string().optional(),
+});
+
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+// ------------------------------------
+// Acceptance template
+// ------------------------------------
+
+export const AcceptanceTemplateSchema = z.object({
+  type: PacketTypeSchema,
+  requiredCriterionKinds: z.array(CriterionKindSchema),
+  defaultCriteria: z.array(AcceptanceCriterionSchema),
+});
+
+export type AcceptanceTemplate = z.infer<typeof AcceptanceTemplateSchema>;
+
+// ------------------------------------
+// Session info (persisted per worker)
+// ------------------------------------
+
+export const WorkerSessionSchema = z.object({
+  sessionId: z.string().nullable(),
+  role: WorkerRoleSchema,
+  packetId: z.string().optional(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  lastHeartbeatAt: z.string().nullable(),
+  transcriptPath: z.string().nullable(),
+  resultPath: z.string().nullable(),
+});
+
+export type WorkerSession = z.infer<typeof WorkerSessionSchema>;
+
+// ------------------------------------
+// Heartbeat
+// ------------------------------------
+
+export const HeartbeatSchema = z.object({
+  sessionId: z.string().nullable(),
+  role: WorkerRoleSchema,
+  packetId: z.string().optional(),
+  ts: z.string(),
+  turnCount: z.number().int(),
+});
+
+export type Heartbeat = z.infer<typeof HeartbeatSchema>;
+
+// ------------------------------------
+// Inbox / Outbox
+// ------------------------------------
+
+export const InboxMessageSchema = z.object({
+  type: z.enum([
+    "poke",
+    "pause",
+    "resume",
+    "summarize",
+    "stop_after_current",
+    "approve_plan",
+    "approve_packet",
+    "reject_packet",
+    "send_to_agent",
+    "inject_context",
+    "reset_packet",
+    "pivot_agent",
+  ]),
+  createdAt: z.string(),
+  message: z.string().optional(),
+  packetId: z.string().optional(),
+  context: z.string().optional(),
+});
+
+export type InboxMessage = z.infer<typeof InboxMessageSchema>;
+
+// ------------------------------------
+// Evaluator guide (planner-generated)
+// ------------------------------------
+
+export const RubricDimensionSchema = z.object({
+  name: z.string(),
+  weight: z.number().min(1).max(5),
+  description: z.string(),
+  score5: z.string().optional(), // calibration: what a 5 looks like
+  score3: z.string().optional(), // calibration: what a 3 looks like
+  score1: z.string().optional(), // calibration: what a 1 looks like
+});
+
+export type RubricDimension = z.infer<typeof RubricDimensionSchema>;
+
+export const EvaluatorGuideSchema = z.object({
+  domain: z.string(), // e.g. "frontend-ui", "backend-api", "data-pipeline"
+  qualityCriteria: z.array(z.object({
+    name: z.string(),
+    weight: z.number().min(1).max(5),
+    description: z.string(),
+  })),
+  antiPatterns: z.array(z.string()), // things to penalize
+  referenceStandard: z.string(), // "the best designs are museum quality"
+  edgeCases: z.array(z.string()), // domain-specific edge cases to check
+  browserVerification: z.object({
+    enabled: z.boolean(),
+    viewports: z.array(z.object({ width: z.number(), height: z.number(), label: z.string() })),
+    interactions: z.array(z.string()), // things to click/test
+  }).optional(),
+  calibrationExamples: z.array(z.object({
+    dimension: z.string(),
+    score: z.number(),
+    description: z.string(),
+  })),
+  skepticismLevel: z.enum(["normal", "high", "adversarial"]).default("normal"),
+});
+
+export type EvaluatorGuide = z.infer<typeof EvaluatorGuideSchema>;
+
+// ------------------------------------
+// Planning context (operator interview)
+// ------------------------------------
+
+export const PlanningContextSchema = z.object({
+  vision: z.string().optional(),
+  techPreferences: z.array(z.string()).default([]),
+  designReferences: z.array(z.string()).default([]),
+  avoidList: z.array(z.string()).default([]),
+  doneDefinition: z.string().optional(),
+  customNotes: z.string().optional(),
+});
+
+export type PlanningContext = z.infer<typeof PlanningContextSchema>;
+
+// ------------------------------------
+// Helpers
+// ------------------------------------
+
+/** Default run state for a new run */
+export function defaultRunState(runId: string, objective: string): RunState {
+  const now = new Date().toISOString();
+  return {
+    runId,
+    objective,
+    createdAt: now,
+    updatedAt: now,
+    phase: "planning",
+    currentPacketId: null,
+    packetOrder: [],
+    completedPacketIds: [],
+    failedPacketIds: [],
+    blockedPacketIds: [],
+    currentWorkerRole: null,
+    currentWorkerSessionId: null,
+    lastHeartbeatAt: null,
+    rateLimitState: {
+      status: "ok",
+      retryCount: 0,
+      nextRetryAt: null,
+      lastError: null,
+    },
+    operatorFlags: {
+      pauseAfterCurrentPacket: false,
+      stopRequested: false,
+    },
+  };
+}
+
+/** Default project config with TAD section 23 defaults */
+export function defaultProjectConfig(): ProjectConfig {
+  return ProjectConfigSchema.parse({});
+}
+
+/** Risky packet types that get extra negotiation rounds */
+export const RISKY_PACKET_TYPES: readonly PacketType[] = [
+  "migration",
+  "integration",
+  "long_running_job",
+];
