@@ -23,6 +23,10 @@ logs/
 .vscode/
 *.swp
 
+# Test app outputs (built by harness during live testing)
+ica-boston/
+counter-app/
+
 # Embedded reference repos (clone separately if needed)
 inspiration/openclaw-bot/
 inspiration/pal-mcp-server/
