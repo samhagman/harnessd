@@ -270,11 +270,13 @@ async function executePhase(
 
     case "paused":
       console.log("Run is paused. Use resume.sh to continue.");
-      return transition(repoRoot, runState, "paused");
+      await sleep(GATE_POLL_INTERVAL_MS);
+      return runState;
 
     case "needs_human":
       console.log("Run needs human input. Check outbox/ for details.");
-      return transition(repoRoot, runState, "needs_human");
+      await sleep(GATE_POLL_INTERVAL_MS);
+      return runState;
 
     default:
       throw new Error(`Unknown phase: ${runState.phase}`);
@@ -624,8 +626,9 @@ async function handleFixing(
 
   // Count fix attempts from events
   const events = readEvents(repoRoot, runState.runId);
+  // Count only fix-phase builder starts, not the initial build
   const fixAttempts = events.filter(
-    (e) => e.event === "builder.started" && e.packetId === packetId,
+    (e) => e.event === "builder.started" && e.packetId === packetId && e.phase === "fixing_packet",
   ).length;
 
   if (fixAttempts >= config.maxFixLoopsPerPacket) {
@@ -841,7 +844,11 @@ async function processInbox(
       // Check if this message requires a specific phase
       const requiredPhase = requiredPhaseForMessage(msg.type);
       if (requiredPhase && runState.phase !== requiredPhase) {
-        // Leave the message in inbox — it's not for the current phase yet
+        continue;
+      }
+
+      // Skip messages handled exclusively by the global nudge poller
+      if (msg.type === "send_to_agent" || msg.type === "pivot_agent") {
         continue;
       }
 
@@ -923,11 +930,6 @@ async function processInbox(
             runState = updateRun(repoRoot, runState.runId, { phase: "fixing_packet" });
           }
           break;
-
-        case "send_to_agent":
-        case "pivot_agent":
-          // Handled exclusively by the global background nudge poller
-          continue;
 
         case "inject_context":
           if (msg.context) {

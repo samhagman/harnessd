@@ -126,8 +126,8 @@ harnessd/
 │   │   │   ├── claude-sdk.ts        # Real SDK implementation (v2 sessions)
 │   │   │   └── fake-backend.ts      # Test double (zero quota, sessions)
 │   │   └── test/                    # vitest test suite
-│   │       ├── unit/                # 9 unit test files (142 tests)
-│   │       └── scenarios/           # 2 scenario test files (2 tests)
+│   │       ├── unit/                # 8 unit test files
+│   │       └── scenarios/           # 2 scenario test files
 │   │
 │   ├── run.sh                       # Launch harness
 │   ├── tail.sh                      # Tail logs (multiple modes)
@@ -136,7 +136,6 @@ harnessd/
 │   ├── resume.sh                    # Resume an interrupted run
 │   ├── tmux.sh                      # 3-pane tmux operator layout
 │   │
-│   ├── operator-skill.md            # Comprehensive operator guide
 │   ├── projects/                    # Project plan templates
 │   │   └── example-project/
 │   └── logs/                        # Session logs (gitignored)
@@ -188,7 +187,7 @@ cd harness && npx tsx src/main.ts --resume
 ./harness/tail.sh --evaluator  # latest evaluator transcript
 
 # Tests
-cd harness && npx vitest run           # all tests (144 passing)
+cd harness && npx vitest run           # all tests (148 passing)
 cd harness && npx tsc --noEmit         # typecheck
 ```
 
@@ -241,8 +240,8 @@ cd harness && npx tsc --noEmit         # typecheck
 
 ```json
 {
-  "maxNegotiationRounds": 4,
-  "maxNegotiationRoundsRisky": 5,
+  "maxNegotiationRounds": 6,
+  "maxNegotiationRoundsRisky": 8,
   "maxFixLoopsPerPacket": 3,
   "staleWorkerMinutes": 15,
   "heartbeatWriteSeconds": 20,
