@@ -111,28 +111,55 @@ export function createRun(
   repoRoot: string,
   objective: string,
   config?: ProjectConfig,
+  customRunId?: string,
+  workspaceDir?: string,
 ): RunState {
-  const runId = generateRunId();
+  const runId = customRunId ?? generateRunId();
   const runDir = getRunDir(repoRoot, runId);
 
-  // Create run directory and all subdirectories
+  // Create run directory and all subdirectories (no-ops if they already exist)
   for (const sub of RUN_SUBDIRS) {
     fs.mkdirSync(path.join(runDir, sub), { recursive: true });
   }
 
   // Build and validate initial state
   const state = defaultRunState(runId, objective);
+  if (workspaceDir) {
+    state.workspaceDir = workspaceDir;
+  }
   RunStateSchema.parse(state);
 
-  // Write initial files
+  // Write initial files (only if they don't already exist — preserves pre-seeded content)
   atomicWriteJson(path.join(runDir, "run.json"), state);
-  atomicWriteJson(path.join(runDir, "status.json"), {});
-  fs.writeFileSync(path.join(runDir, "status.md"), `# Run ${runId}\n\nPhase: planning\n`, "utf-8");
-  fs.writeFileSync(path.join(runDir, "events.jsonl"), "", "utf-8");
+  if (!fs.existsSync(path.join(runDir, "status.json"))) {
+    atomicWriteJson(path.join(runDir, "status.json"), {});
+  }
+  if (!fs.existsSync(path.join(runDir, "status.md"))) {
+    fs.writeFileSync(path.join(runDir, "status.md"), `# Run ${runId}\n\nPhase: planning\n`, "utf-8");
+  }
+  if (!fs.existsSync(path.join(runDir, "events.jsonl"))) {
+    fs.writeFileSync(path.join(runDir, "events.jsonl"), "", "utf-8");
+  }
 
   // Persist config if provided (otherwise defaults will be used on read)
   const resolvedConfig = config ?? defaultProjectConfig();
   atomicWriteJson(path.join(runDir, "config.json"), resolvedConfig);
+
+  // Auto-generate workspace path note in context-overrides.md when using a separate workspace
+  if (workspaceDir && workspaceDir !== repoRoot) {
+    const overridePath = path.join(runDir, "spec", "context-overrides.md");
+    if (!fs.existsSync(overridePath)) {
+      const workspaceNote = `## WORKSPACE PATH\n\nAll builder file operations must use paths within: ${workspaceDir}\nDo NOT write to paths outside this directory.\n`;
+      fs.writeFileSync(overridePath, workspaceNote, "utf-8");
+    } else {
+      // Append workspace note to existing overrides
+      const existing = fs.readFileSync(overridePath, "utf-8");
+      if (!existing.includes("WORKSPACE PATH")) {
+        const workspaceNote = `\n\n## WORKSPACE PATH\n\nAll builder file operations must use paths within: ${workspaceDir}\nDo NOT write to paths outside this directory.\n`;
+        fs.appendFileSync(overridePath, workspaceNote, "utf-8");
+      }
+    }
+  }
 
   return state;
 }

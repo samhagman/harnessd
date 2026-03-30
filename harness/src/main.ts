@@ -9,6 +9,7 @@
  *   npx tsx src/main.ts --status [run-id]             # Show status
  *   npx tsx src/main.ts --workspace <dir> "objective"  # Agents work in <dir>
  *   npx tsx src/main.ts --interview "objective"        # Interactive planning context
+ *   npx tsx src/main.ts --run-id <name> "objective"    # Use a specific run directory name
  */
 
 import process from "node:process";
@@ -17,9 +18,12 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { ClaudeSdkBackend } from "./backend/claude-sdk.js";
+import { BackendFactory } from "./backend/backend-factory.js";
 import { runOrchestrator } from "./orchestrator.js";
-import { getLatestRunId, getRunDir, createRun, atomicWriteJson } from "./state-store.js";
+import { getLatestRunId, getRunDir, createRun, loadRun, atomicWriteJson } from "./state-store.js";
 import type { PlanningContext } from "./schemas.js";
+import type { RoleBackendMap } from "./schemas.js";
+import { defaultProjectConfig } from "./schemas.js";
 
 // ------------------------------------
 // Interactive interview
@@ -88,8 +92,25 @@ async function main(): Promise<void> {
       console.error("No runs found to resume.");
       process.exit(1);
     }
-    const backend = new ClaudeSdkBackend();
-    await runOrchestrator(backend, { repoRoot, objective: "", resumeRunId });
+    // Restore workspaceDir and backend config from persisted run state + config
+    const runState = loadRun(repoRoot, resumeRunId);
+    const resumeWorkspaceDir = runState.workspaceDir ?? undefined;
+
+    // Restore role backends from persisted config.json
+    let resumeRoleBackends: RoleBackendMap = {};
+    let resumeCodexModel: string | undefined;
+    try {
+      const configPath = path.join(getRunDir(repoRoot, resumeRunId), "config.json");
+      if (fs.existsSync(configPath)) {
+        const savedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        resumeRoleBackends = savedConfig.roleBackends ?? {};
+        resumeCodexModel = savedConfig.codexModel;
+      }
+    } catch { /* use defaults */ }
+
+    const claudeBackend = new ClaudeSdkBackend();
+    const resumeFactory = new BackendFactory(claudeBackend, { roleBackends: resumeRoleBackends, codexModel: resumeCodexModel });
+    await runOrchestrator(resumeFactory, { repoRoot, objective: "", resumeRunId, workspaceDir: resumeWorkspaceDir });
     return;
   }
 
@@ -119,9 +140,33 @@ async function main(): Promise<void> {
     model = args[modelIdx + 1]!;
   }
 
+  // --run-id <name>: use a specific run directory name instead of auto-generated
+  let customRunId: string | undefined;
+  const runIdIdx = args.indexOf("--run-id");
+  if (runIdIdx !== -1 && args[runIdIdx + 1] && !args[runIdIdx + 1]!.startsWith("--")) {
+    customRunId = args[runIdIdx + 1]!;
+  }
+
+  // --codex-roles <roles>: comma-separated list of roles to run with Codex
+  let roleBackends: RoleBackendMap = {};
+  const codexRolesIdx = args.indexOf("--codex-roles");
+  if (codexRolesIdx !== -1 && args[codexRolesIdx + 1] && !args[codexRolesIdx + 1]!.startsWith("--")) {
+    const roles = args[codexRolesIdx + 1]!.split(",").map((r) => r.trim());
+    const rb: Record<string, "codex"> = {};
+    for (const role of roles) rb[role] = "codex";
+    roleBackends = rb as RoleBackendMap;
+  }
+
+  // --codex-model <model>: model for Codex CLI backend (e.g. "o3", "o4-mini")
+  let codexModel: string | undefined;
+  const codexModelIdx = args.indexOf("--codex-model");
+  if (codexModelIdx !== -1 && args[codexModelIdx + 1] && !args[codexModelIdx + 1]!.startsWith("--")) {
+    codexModel = args[codexModelIdx + 1]!;
+  }
+
   const filteredArgs = args.filter((a, i) =>
     !a.startsWith("--") &&
-    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--interview" && args[i - 1] !== "--model")),
+    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--interview" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model")),
   );
   const objective = filteredArgs.join(" ").trim();
 
@@ -132,7 +177,8 @@ async function main(): Promise<void> {
   npx tsx src/main.ts --interview "your objective"
   npx tsx src/main.ts --resume [run-id]
   npx tsx src/main.ts --status [run-id]
-  npx tsx src/main.ts --workspace <dir> "your objective"`);
+  npx tsx src/main.ts --workspace <dir> "your objective"
+  npx tsx src/main.ts --run-id <name> "your objective"`);
     process.exit(1);
   }
 
@@ -163,16 +209,16 @@ async function main(): Promise<void> {
     }
   }
 
-  const backend = new ClaudeSdkBackend();
+  const claudeBackend = new ClaudeSdkBackend();
+  const factory = new BackendFactory(claudeBackend, { roleBackends, codexModel });
 
   if (planOnly) {
     const { runPlanner } = await import("./planner.js");
     const { appendEvent, readEvents } = await import("./event-log.js");
     const { renderStatus, renderStatusMarkdown } = await import("./status-renderer.js");
-    const { defaultProjectConfig } = await import("./schemas.js");
 
-    const config = { ...defaultProjectConfig(), ...(model ? { model } : {}) };
-    const runState = createRun(repoRoot, objective);
+    const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel };
+    const runState = createRun(repoRoot, objective, config, customRunId, workspaceDir);
 
     // Write planning context if provided
     if (planningContext) {
@@ -191,8 +237,9 @@ async function main(): Promise<void> {
       phase: "planning",
     });
 
-    const result = await runPlanner(backend, objective, {
+    const result = await runPlanner(factory.forRole("planner"), objective, {
       repoRoot,
+      workspaceDir,
       runId: runState.runId,
       config,
     }, undefined, undefined, planningContext);
@@ -226,19 +273,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  const orchConfig = model ? { model } : {};
+  const orchConfig = { ...(model ? { model } : {}), roleBackends, codexModel };
 
-  // Full run — write planning context first if provided
-  if (planningContext) {
-    // Create run early to get runId for writing context
-    const runState = createRun(repoRoot, objective);
+  // Full run — create run (with optional custom ID), write planning context, then go
+  if (planningContext || customRunId) {
+    const fullConfig = { ...defaultProjectConfig(), ...orchConfig };
+    const runState = createRun(repoRoot, objective, fullConfig, customRunId, workspaceDir);
     const specDir = path.join(getRunDir(repoRoot, runState.runId), "spec");
     fs.mkdirSync(specDir, { recursive: true });
-    atomicWriteJson(path.join(specDir, "planning-context.json"), planningContext);
+    if (planningContext) {
+      atomicWriteJson(path.join(specDir, "planning-context.json"), planningContext);
+    }
     // Resume this run (it starts in "planning" phase)
-    await runOrchestrator(backend, { repoRoot, workspaceDir, objective: "", resumeRunId: runState.runId, config: orchConfig });
+    await runOrchestrator(factory, { repoRoot, workspaceDir, objective: "", resumeRunId: runState.runId, config: orchConfig });
   } else {
-    await runOrchestrator(backend, { repoRoot, workspaceDir, objective, config: orchConfig });
+    await runOrchestrator(factory, { repoRoot, workspaceDir, objective, config: orchConfig });
   }
 }
 

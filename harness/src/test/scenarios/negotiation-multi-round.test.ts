@@ -213,6 +213,18 @@ function evaluatorPassEnvelope(): string {
     overall: "pass",
     hardFailures: [],
     rubricScores: [],
+    criterionVerdicts: [
+      {
+        criterionId: "AC-001",
+        verdict: "pass",
+        evidence: "Command runs successfully with expected output",
+      },
+      {
+        criterionId: "AC-002",
+        verdict: "pass",
+        evidence: "Error path returns appropriate error message",
+      },
+    ],
     missingEvidence: [],
     nextActions: [],
     contractGapDetected: false,
@@ -316,6 +328,7 @@ describe("negotiation-multi-round scenario", () => {
     await runOrchestrator(backend, {
       repoRoot: tmpDir,
       objective: "Build feature X",
+      config: { skipQA: true, skipPlanReview: true },
     });
     clearInterval(autoApprove);
 

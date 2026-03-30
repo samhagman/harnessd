@@ -77,9 +77,9 @@ describe("defaultRunState", () => {
 describe("defaultProjectConfig", () => {
   it("produces a valid config with correct defaults", () => {
     const config = defaultProjectConfig();
-    expect(config.maxNegotiationRounds).toBe(6);
-    expect(config.maxNegotiationRoundsRisky).toBe(8);
-    expect(config.maxFixLoopsPerPacket).toBe(3);
+    expect(config.maxNegotiationRounds).toBe(10);
+    expect(config.maxNegotiationRoundsRisky).toBe(10);
+    expect(config.maxFixLoopsPerPacket).toBe(10);
     expect(config.staleWorkerMinutes).toBe(15);
     expect(config.heartbeatWriteSeconds).toBe(20);
     expect(config.resumeBackoffMinutes).toEqual([5, 15, 30, 60]);

@@ -51,13 +51,18 @@ export async function runBuilder(
   riskRegister?: RiskRegister,
   priorEvalReport?: EvaluatorReport,
   contextOverrides?: string,
+  completionSummaries?: string,
 ): Promise<BuilderRunResult> {
   // Build the nudge file path — the builder will check this periodically
   const runDir = getRunDir(runnerConfig.repoRoot, runnerConfig.runId);
   const nudgeFilePath = path.join(runDir, "packets", runnerConfig.packetId, "nudge.md");
 
+  const effectiveWorkspaceDir = runnerConfig.workspaceDir && runnerConfig.workspaceDir !== runnerConfig.repoRoot
+    ? runnerConfig.workspaceDir
+    : undefined;
+
   const prompt = buildBuilderPrompt(
-    contract, spec, riskRegister, priorEvalReport, contextOverrides, nudgeFilePath,
+    contract, spec, riskRegister, priorEvalReport, contextOverrides, nudgeFilePath, effectiveWorkspaceDir, completionSummaries,
   );
 
   const workerResult = await runWorker(
@@ -69,6 +74,7 @@ export async function runBuilder(
       settingSources: ["user"],
       ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
       mcpServers: [createValidationMcpServer()],
+      sandboxMode: "workspace-write",
       hooks: {
         PreToolUse: [
           { matcher: "Bash", hooks: [makeBuilderHook()] },
@@ -82,6 +88,7 @@ export async function runBuilder(
       packetId: runnerConfig.packetId,
       artifactDir: `packets/${runnerConfig.packetId}/builder`,
       heartbeatIntervalSeconds: runnerConfig.config.heartbeatWriteSeconds,
+      workspaceDir: runnerConfig.workspaceDir,
     },
     BuilderReportSchema,
   );

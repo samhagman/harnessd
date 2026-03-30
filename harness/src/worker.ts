@@ -38,6 +38,8 @@ export interface WorkerConfig {
   artifactDir: string;
   /** Heartbeat interval in seconds (0 to disable) */
   heartbeatIntervalSeconds?: number;
+  /** Workspace directory — when set and different from repoRoot, a workspace preamble is prepended to the prompt */
+  workspaceDir?: string;
 }
 
 export interface WorkerResult<T = unknown> {
@@ -133,6 +135,14 @@ export async function runWorker<T = unknown>(
   config: WorkerConfig,
   payloadSchema?: z.ZodType<T>,
 ): Promise<WorkerResult<T>> {
+  // Prepend workspace preamble if workspaceDir differs from repoRoot
+  if (config.workspaceDir && config.workspaceDir !== config.repoRoot) {
+    sessionOptions = {
+      ...sessionOptions,
+      prompt: `WORKSPACE: All file operations must target ${config.workspaceDir}\n\n${sessionOptions.prompt}`,
+    };
+  }
+
   const runDir = getRunDir(config.repoRoot, config.runId);
   const artifactPath = path.join(runDir, config.artifactDir);
   fs.mkdirSync(artifactPath, { recursive: true });
