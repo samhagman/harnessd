@@ -15,6 +15,7 @@ import { z } from "zod";
 
 export const RunPhaseSchema = z.enum([
   "planning",
+  "plan_review",
   "awaiting_plan_approval",
   "selecting_packet",
   "negotiating_contract",
@@ -27,6 +28,10 @@ export const RunPhaseSchema = z.enum([
   "needs_human",
   "completed",
   "failed",
+  // QA and Round 2 phases
+  "qa_review",
+  "round2_planning",
+  "awaiting_round2_approval",
 ]);
 
 export type RunPhase = z.infer<typeof RunPhaseSchema>;
@@ -73,10 +78,13 @@ export type CriterionKind = z.infer<typeof CriterionKindSchema>;
 
 export const WorkerRoleSchema = z.enum([
   "planner",
+  "plan_reviewer",
   "contract_builder",
   "contract_evaluator",
   "builder",
   "evaluator",
+  "qa_agent",
+  "round2_planner",
 ]);
 
 export type WorkerRole = z.infer<typeof WorkerRoleSchema>;
@@ -136,6 +144,14 @@ export const RunStateSchema = z.object({
   lastHeartbeatAt: z.string().nullable(),
   rateLimitState: RateLimitStateSchema,
   operatorFlags: OperatorFlagsSchema,
+  // QA and Round 2 tracking
+  round: z.number().int().default(1),
+  qaReportPath: z.string().nullable().default(null),
+  round2PacketOrder: z.array(z.string()).default([]),
+  round2CompletedPacketIds: z.array(z.string()).default([]),
+  maxRounds: z.number().int().default(2),
+  // Workspace directory (persisted so resume can restore it)
+  workspaceDir: z.string().nullable().default(null),
 });
 
 export type RunState = z.infer<typeof RunStateSchema>;
@@ -149,9 +165,9 @@ export const PacketSchema = z.object({
   dependencies: z.array(z.string()),
   status: PacketStatusSchema,
   priority: z.number().int(),
-  estimatedSize: z.enum(["S", "M", "L"]),
+  estimatedSize: z.enum(["S", "M", "L", "XL"]),
   risks: z.array(z.string()),
-  notes: z.array(z.string()),
+  notes: z.array(z.string()).default([]),
   requiresHumanReview: z.boolean().default(false),
 });
 
@@ -162,7 +178,7 @@ export type Packet = z.infer<typeof PacketSchema>;
 // ------------------------------------
 
 export const ScenarioSchema = z.object({
-  tool: z.enum(["playwright", "bash", "manual-script"]),
+  tool: z.enum(["playwright", "bash", "manual-script", "chrome-devtools"]),
   steps: z.array(z.string()),
   expects: z.array(z.string()),
 });
@@ -321,18 +337,68 @@ export const RubricScoreSchema = z.object({
   rationale: z.string(),
 });
 
+export const CriterionVerdictSchema = z.object({
+  criterionId: z.string(), // matches the AC id from the contract
+  verdict: z.enum(["pass", "fail", "skip"]),
+  evidence: z.string(), // what the evaluator observed (required)
+  skipReason: z.string().optional(), // required if verdict is "skip"
+});
+
+export type CriterionVerdict = z.infer<typeof CriterionVerdictSchema>;
+
 export const EvaluatorReportSchema = z.object({
   packetId: z.string(),
   sessionId: z.string(),
   overall: z.enum(["pass", "fail"]),
   hardFailures: z.array(HardFailureSchema),
   rubricScores: z.array(RubricScoreSchema),
+  criterionVerdicts: z.array(CriterionVerdictSchema).default([]),
   missingEvidence: z.array(z.string()),
   nextActions: z.array(z.string()),
   contractGapDetected: z.boolean(),
 });
 
 export type EvaluatorReport = z.infer<typeof EvaluatorReportSchema>;
+
+// ------------------------------------
+// QA report
+// ------------------------------------
+
+export const QAIssueSeveritySchema = z.enum(["critical", "major", "minor"]);
+
+export type QAIssueSeverity = z.infer<typeof QAIssueSeveritySchema>;
+
+export const QAIssueSchema = z.object({
+  id: z.string(),
+  severity: QAIssueSeveritySchema,
+  title: z.string(),
+  description: z.string(),
+  stepsToReproduce: z.array(z.string()),
+  screenshotPath: z.string().optional(),
+  relatedPackets: z.array(z.string()),
+});
+
+export type QAIssue = z.infer<typeof QAIssueSchema>;
+
+export const QAScenarioResultSchema = z.object({
+  scenarioId: z.string(),
+  name: z.string(),
+  status: z.enum(["pass", "fail", "blocked"]),
+  notes: z.string(),
+});
+
+export type QAScenarioResult = z.infer<typeof QAScenarioResultSchema>;
+
+export const QAReportSchema = z.object({
+  overallVerdict: z.enum(["pass", "fail"]),
+  scenariosChecked: z.number().int(),
+  issues: z.array(QAIssueSchema),
+  scenarioResults: z.array(QAScenarioResultSchema).default([]),
+  consoleErrors: z.array(z.string()),
+  summary: z.string(),
+});
+
+export type QAReport = z.infer<typeof QAReportSchema>;
 
 // ------------------------------------
 // Worker result envelope
@@ -393,6 +459,24 @@ export const EventTypeSchema = z.enum([
   "packet.reset",
   "nudge.sent",
   "context.injected",
+  // Plan review events
+  "plan_review.started",
+  "plan_review.completed",
+  "plan_review.revision_requested",
+  // QA and Round 2 events
+  "qa.started",
+  "qa.passed",
+  "qa.failed",
+  "round2.planning.started",
+  "round2.planning.completed",
+  "round2.plan.awaiting_approval",
+  "round2.plan.approved",
+  // Tool gate events
+  "gate.started",
+  "gate.passed",
+  "gate.failed",
+  "gate.skipped",
+  "gate.blocked",
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -465,10 +549,61 @@ export type RiskRegister = z.infer<typeof RiskRegisterSchema>;
 // Project config
 // ------------------------------------
 
+export const QAPassThresholdSchema = z.object({
+  maxCritical: z.number().int().default(0),
+  maxMajor: z.number().int().default(0),
+  maxMinor: z.number().int().default(5),
+});
+
+export type QAPassThreshold = z.infer<typeof QAPassThresholdSchema>;
+
+export const DevServerConfigSchema = z.object({
+  command: z.string(),
+  readyPattern: z.string().default("Local:"),
+  port: z.number().int().default(5173),
+  timeoutSeconds: z.number().default(30),
+});
+
+export type DevServerConfig = z.infer<typeof DevServerConfigSchema>;
+
+export const ToolGateConfigSchema = z.object({
+  name: z.string(),
+  command: z.string(),
+  blocking: z.boolean().default(true),
+  packetTypes: z.array(PacketTypeSchema).optional(),
+});
+
+export type ToolGateConfig = z.infer<typeof ToolGateConfigSchema>;
+
+// ------------------------------------
+// Backend selection per role
+// ------------------------------------
+
+export const BackendTypeSchema = z.enum(["claude", "codex"]);
+
+export type BackendType = z.infer<typeof BackendTypeSchema>;
+
+export const RoleBackendMapSchema = z.object({
+  planner: BackendTypeSchema.optional(),
+  plan_reviewer: BackendTypeSchema.optional(),
+  contract_builder: BackendTypeSchema.optional(),
+  contract_evaluator: BackendTypeSchema.optional(),
+  builder: BackendTypeSchema.optional(),
+  evaluator: BackendTypeSchema.optional(),
+  qa_agent: BackendTypeSchema.optional(),
+  round2_planner: BackendTypeSchema.optional(),
+}).default({});
+
+export type RoleBackendMap = z.infer<typeof RoleBackendMapSchema>;
+
+// ------------------------------------
+// Project config
+// ------------------------------------
+
 export const ProjectConfigSchema = z.object({
-  maxNegotiationRounds: z.number().int().default(6),
-  maxNegotiationRoundsRisky: z.number().int().default(8),
-  maxFixLoopsPerPacket: z.number().int().default(3),
+  maxNegotiationRounds: z.number().int().default(10),
+  maxNegotiationRoundsRisky: z.number().int().default(10),
+  maxFixLoopsPerPacket: z.number().int().default(10),
   staleWorkerMinutes: z.number().default(15),
   heartbeatWriteSeconds: z.number().default(20),
   resumeBackoffMinutes: z.array(z.number()).default([5, 15, 30, 60]),
@@ -478,9 +613,48 @@ export const ProjectConfigSchema = z.object({
   renderStatusOnEveryEvent: z.boolean().default(true),
   maxConsecutiveResumeFailures: z.number().int().default(8),
   model: z.string().optional(),
+  // QA and Round 2 settings
+  maxRounds: z.number().int().default(10),
+  qaPassThreshold: QAPassThresholdSchema.default({ maxCritical: 0, maxMajor: 0, maxMinor: 5 }),
+  skipQA: z.boolean().default(false),
+  devServer: DevServerConfigSchema.optional(),
+  /** Custom tool gates to run between builder and evaluator */
+  toolGates: z.array(ToolGateConfigSchema).default([]),
+  /** Enable default gates (typecheck + test). Defaults to true. */
+  enableDefaultGates: z.boolean().default(true),
+  /** Max rounds of plan review negotiation (planner ↔ reviewer). */
+  maxPlanReviewRounds: z.number().int().default(10),
+  /** Skip the plan review phase entirely. */
+  skipPlanReview: z.boolean().default(false),
+  /** Per-role backend selection. Defaults all roles to "claude". */
+  roleBackends: RoleBackendMapSchema,
+  /** Model for Codex CLI backend (e.g. "o3", "o4-mini"). Passed as --model flag. */
+  codexModel: z.string().optional(),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+// ------------------------------------
+// Plan review
+// ------------------------------------
+
+export const PlanReviewIssueSchema = z.object({
+  severity: z.enum(["critical", "major", "minor"]),
+  area: z.enum(["architecture", "scope", "risk", "acceptance_criteria", "integration", "ux"]),
+  description: z.string(),
+  suggestion: z.string(),
+});
+
+export type PlanReviewIssue = z.infer<typeof PlanReviewIssueSchema>;
+
+export const PlanReviewSchema = z.object({
+  verdict: z.enum(["approve", "revise"]),
+  issues: z.array(PlanReviewIssueSchema),
+  missingIntegrationScenarios: z.array(z.string()),
+  summary: z.string(),
+});
+
+export type PlanReview = z.infer<typeof PlanReviewSchema>;
 
 // ------------------------------------
 // Acceptance template
@@ -543,6 +717,8 @@ export const InboxMessageSchema = z.object({
     "inject_context",
     "reset_packet",
     "pivot_agent",
+    "approve_round2",
+    "skip_qa",
   ]),
   createdAt: z.string(),
   message: z.string().optional(),
@@ -638,12 +814,71 @@ export function defaultRunState(runId: string, objective: string): RunState {
       pauseAfterCurrentPacket: false,
       stopRequested: false,
     },
+    // QA and Round 2 defaults
+    round: 1,
+    qaReportPath: null,
+    round2PacketOrder: [],
+    round2CompletedPacketIds: [],
+    maxRounds: 10,
+    workspaceDir: null,
   };
 }
 
 /** Default project config with TAD section 23 defaults */
 export function defaultProjectConfig(): ProjectConfig {
   return ProjectConfigSchema.parse({});
+}
+
+// ------------------------------------
+// Integration scenarios (planner-generated)
+// ------------------------------------
+
+export const IntegrationStepSchema = z.object({
+  action: z.string(),
+  expected: z.string(),
+});
+
+export type IntegrationStep = z.infer<typeof IntegrationStepSchema>;
+
+export const IntegrationScenarioSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  packetDependencies: z.array(z.string()),
+  steps: z.array(IntegrationStepSchema),
+});
+
+export type IntegrationScenario = z.infer<typeof IntegrationScenarioSchema>;
+
+export const IntegrationScenarioListSchema = z.object({
+  scenarios: z.array(IntegrationScenarioSchema),
+});
+
+export type IntegrationScenarioList = z.infer<typeof IntegrationScenarioListSchema>;
+
+/** Check if a QA report meets the pass threshold */
+export function qaPassesThreshold(
+  report: QAReport,
+  threshold: QAPassThreshold,
+): boolean {
+  const criticalCount = report.issues.filter((i) => i.severity === "critical").length;
+  const majorCount = report.issues.filter((i) => i.severity === "major").length;
+  const minorCount = report.issues.filter((i) => i.severity === "minor").length;
+
+  if (criticalCount > threshold.maxCritical) return false;
+  if (majorCount > threshold.maxMajor) return false;
+  if (minorCount > threshold.maxMinor) return false;
+
+  // Also fail if overall verdict says fail (even if counts look OK)
+  if (report.overallVerdict === "fail") {
+    // Only override if counts actually pass — trust the counts over the agent verdict
+    if (criticalCount === 0 && majorCount === 0 && minorCount <= threshold.maxMinor) {
+      return true;
+    }
+    return false;
+  }
+
+  return true;
 }
 
 /** Risky packet types that get extra negotiation rounds */

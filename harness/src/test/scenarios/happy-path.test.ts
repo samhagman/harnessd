@@ -173,6 +173,13 @@ function evaluatorPassEnvelope(packetId: string): string {
     overall: "pass",
     hardFailures: [],
     rubricScores: [],
+    criterionVerdicts: [
+      {
+        criterionId: "AC-001",
+        verdict: "pass",
+        evidence: "Script runs with exit 0, output matches expected",
+      },
+    ],
     missingEvidence: [],
     nextActions: [],
     contractGapDetected: false,
@@ -284,6 +291,7 @@ describe("happy-path scenario", () => {
     await runOrchestrator(backend, {
       repoRoot: tmpDir,
       objective: "Build test utilities",
+      config: { skipQA: true, skipPlanReview: true },
     });
     clearInterval(autoApprove);
 

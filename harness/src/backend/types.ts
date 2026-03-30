@@ -83,6 +83,13 @@ export interface AgentSessionOptions {
   model?: string;
 
   /**
+   * Hint for backends about filesystem access level.
+   * Claude backend ignores this (uses hooks for read-only enforcement).
+   * Codex backend maps to --sandbox flag (OS-level enforcement).
+   */
+  sandboxMode?: "read-only" | "workspace-write";
+
+  /**
    * Additional options passed through to the SDK.
    * Explicitly typed fields above take precedence.
    */

@@ -24,10 +24,24 @@ export function buildBuilderPrompt(
   priorEvalReport?: EvaluatorReport,
   contextOverrides?: string,
   nudgeFilePath?: string,
+  workspaceDir?: string,
+  completionSummaries?: string,
 ): string {
   const sections: string[] = [];
 
-  // 0. Autonomous preamble
+  // 0. Workspace directory guidance (if using a separate workspace)
+  if (workspaceDir) {
+    sections.push(`## WORKSPACE DIRECTORY
+
+You are working in: ${workspaceDir}
+
+ALL file operations (Read, Write, Edit, Glob, Grep) MUST use paths within this directory.
+Do NOT use absolute paths from CLAUDE.md or other config files that reference a different location.
+When you Read a file and get back an absolute path, verify it starts with ${workspaceDir} before using it in Write/Edit.
+If a config file, import, or error message references a path outside ${workspaceDir}, translate it to the equivalent path inside this workspace before acting on it.`);
+  }
+
+  // 0b. Autonomous preamble
   sections.push(`## Autonomous Operation
 
 You are AUTONOMOUS. Work continuously toward your goal until it is complete.
@@ -43,7 +57,13 @@ The only way you stop is by completing your goal and emitting the result envelop
 You are the BUILDER for packet ${contract.packetId}: "${contract.title}".
 
 You are the ONLY repo writer. Implement exactly what the contract specifies — nothing more, nothing less.
-You own this packet end-to-end: read the contract, implement, test, and report.`);
+You own this packet end-to-end: read the contract, implement, test, and report.
+
+**NO GRACEFUL FALLBACKS.** Things must work one and only one way — the way specified in the
+contract. Do not add fallback paths, degraded modes, or "if this doesn't work, try that"
+alternatives. If we wanted those, they would be in the plan. If something isn't working,
+be persistent — take a step back, understand why, and get the packet to work as intended.
+Do not paper over failures with fallbacks.`);
 
   // 2. Packet contract
   sections.push(`## Packet Contract
@@ -93,6 +113,17 @@ ${contract.acceptance
 ${specExcerpt}`);
   }
 
+  // 4b. Previously completed packet summaries
+  if (completionSummaries) {
+    sections.push(`## Previously Completed Packets
+
+The following packets have already been completed. Use this context to understand what
+exists in the codebase, what patterns were established, and what integration points are
+available. This should eliminate the need to explore the codebase from scratch.
+
+${completionSummaries}`);
+  }
+
   // 5. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
     sections.push(`## Risks to Watch
@@ -100,23 +131,57 @@ ${specExcerpt}`);
 ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}\n  Mitigation: ${r.mitigation}`).join("\n")}`);
   }
 
-  // 6. Web research
-  sections.push(`## Web Research
+  // 6. Research tools (MCP)
+  sections.push(`## Research Tools
 
-You have access to web search tools (perplexity). Use them when you need to:
-- Look up API documentation or library usage
-- Find current best practices for implementation patterns
-- Research design patterns, color palettes, or typography for UI work
-- Check compatibility or browser support for web features
-- Look up real content, images, or data for the domain you're building for
+You have access to these research tools. Use them — don't guess at APIs.
 
-Don't guess — search for the answer when you're unsure.`);
+### Context7 (Library Documentation)
+When you need to look up API documentation for libraries (React, Effect-TS, Jotai, etc.),
+use the Context7 MCP tools:
+1. Call \`resolve-library-id\` with the library name to find the library ID
+2. Call \`query-docs\` with the library ID and your specific question to fetch current documentation
+This is more reliable than guessing at API signatures. Your training data may be outdated —
+Context7 gives you CURRENT documentation.
+Use Context7 for: API syntax, configuration, version migration, setup instructions.
+
+### Perplexity (Web Search)
+For current best practices or recent API changes, use Perplexity's tools:
+- \`perplexity_search\` for quick factual lookups and finding URLs
+- \`perplexity_ask\` for AI-answered questions with citations
+- \`perplexity_research\` for in-depth multi-source investigation
+Use Perplexity for: design patterns, browser compatibility, real-world examples, domain content
+(colors, typography, real data), and anything beyond library-specific docs.
+
+Prefer Context7 over Perplexity for library-specific questions.
+Prefer Perplexity over Context7 for design, patterns, and domain knowledge.`);
+
+  // 6a. Browser self-testing for UI packets
+  if (contract.packetType === "ui_feature") {
+    sections.push(`## Browser Self-Testing
+
+For UI feature packets, use your browser automation tools to verify your work in the browser.
+Note: your Playwright MCP runs Chromium in \`--isolated\` mode. Opening a new browser
+window creates a fresh context with NO pre-existing cookies, localStorage, or session
+state. Reuse the same window for multi-step flows that depend on shared session context.
+Before claiming done:
+1. Start the dev server if not already running
+2. Navigate to your changes in the browser
+3. Take a screenshot of the current page state to verify visual correctness
+4. Check the browser console for errors and warnings
+5. Click through the complete user flow, fill form fields, and get a snapshot of
+   the page's content/accessibility tree to verify interactions
+6. Test at ALL viewports if the design should be responsive
+
+Do NOT just read code and assume it works — actually test in the browser.
+Static code review alone is insufficient for UI work.`);
+  }
 
   // 6b. Repo writer rule
   sections.push(`## Repo Writer Rule
 
 You are the ONLY canonical repo writer for this packet:
-- You may read and write any files in the repository
+- You may read and write any files in the repository${workspaceDir ? ` (within ${workspaceDir})` : ""}
 - You may run any bash commands (within builder permissions)
 - You may use git add and git commit
 - You may NOT use git push, git pull, or git fetch
@@ -201,14 +266,45 @@ If the file exists:
 If the file does not exist, continue normally. This check should be quick — just a file existence check.`);
   }
 
-  // 10. Self-check + output
+  // 10. Automated quality gates warning
+  sections.push(`## Automated Quality Gates
+
+The harness will automatically run these checks AFTER you claim done:
+- \`npx tsc --noEmit\` (if tsconfig.json exists) -- MUST pass or you will be sent back to fix
+- \`npm test\` / \`npx vitest run\` (if test script exists) -- MUST pass or you will be sent back to fix
+
+**Run these yourself before emitting the result envelope.** If they fail, the harness will
+skip the evaluator entirely and send you back to fix the errors -- wasting a session.
+Fix ALL type errors and test failures before claiming done.`);
+
+  // 11. Pre-submission quality passes
+  sections.push(`## Pre-Submission Quality Review (MANDATORY)
+
+After all acceptance criteria pass but BEFORE emitting the result envelope, run these
+two quality passes on your own changes. This is your chance to catch issues before the
+evaluator sees them.
+
+### Pass 1: Run /simplify
+
+Run \`/simplify\`. It will review your diff and fix code quality issues.
+If it makes changes, verify acceptance criteria still pass after.
+
+### Pass 2: Run /code-review
+
+Run \`/code-review\` (but don't post to GitHub — just review locally and fix any issues it finds).
+
+### Then: Final verification`);
+
+  // 12. Self-check + output
   sections.push(`## Self-Check & Output
 
 Before claiming done:
 1. Run every acceptance criterion's verification command
-2. Classify each as: pass, fail, or unknown
-3. If ANY blocking criterion is "fail" or "unknown", keep working
-4. Only emit the result envelope when all blocking criteria pass
+2. Run \`npx tsc --noEmit\` (if TypeScript project) and fix all errors
+3. Run the test suite and fix all failures
+4. Classify each criterion as: pass, fail, or unknown
+5. If ANY blocking criterion is "fail" or "unknown", keep working
+6. Only emit the result envelope when all blocking criteria pass
 
 ### Proposed Commit Message
 \`${contract.proposedCommitMessage}\`

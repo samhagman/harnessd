@@ -14,6 +14,7 @@ import {
   ContractReviewSchema,
   BuilderReportSchema,
   EvaluatorReportSchema,
+  QAReportSchema,
 } from "./schemas.js";
 
 const SCHEMAS: Record<string, z.ZodType<unknown>> = {
@@ -21,6 +22,7 @@ const SCHEMAS: Record<string, z.ZodType<unknown>> = {
   ContractReview: ContractReviewSchema as z.ZodType<unknown>,
   BuilderReport: BuilderReportSchema as z.ZodType<unknown>,
   EvaluatorReport: EvaluatorReportSchema as z.ZodType<unknown>,
+  QAReport: QAReportSchema as z.ZodType<unknown>,
 };
 
 /**
@@ -39,7 +41,7 @@ export function createValidationMcpServer() {
         "Returns either {valid: true} or {valid: false, errors: [...]} so you can fix issues before emitting. " +
         "Available schemas: PacketContract, ContractReview, BuilderReport, EvaluatorReport",
         {
-          schema_name: z.enum(["PacketContract", "ContractReview", "BuilderReport", "EvaluatorReport"])
+          schema_name: z.enum(["PacketContract", "ContractReview", "BuilderReport", "EvaluatorReport", "QAReport"])
             .describe("Which schema to validate against"),
           json_string: z.string()
             .describe("The JSON string to validate (your proposed envelope payload)"),

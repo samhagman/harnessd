@@ -187,7 +187,45 @@ judges the builder's work. Think deeply about:
   security-sensitive or user-facing work where failures are costly.
 
 ### 5. Plan Summary (markdown)
-A short (5-10 line) human-readable summary optimized for quick review.`);
+A short (5-10 line) human-readable summary optimized for quick review.
+
+### 6. Integration Scenarios (JSON)
+For any feature with MULTIPLE VIEWS, MULTI-STEP FLOWS, or CROSS-PACKET DEPENDENCIES,
+generate integration scenarios that test end-to-end user journeys spanning multiple packets.
+These catch bugs that per-packet testing misses:
+- State loss when navigating between views built in different packets
+- Data not being passed correctly between components
+- Forward-and-backward navigation breaking state
+
+Return an object with a \`scenarios\` array. Each scenario:
+- \`id\`: "IS-001", "IS-002", etc.
+- \`name\`: short descriptive name of the user journey
+- \`description\`: full scenario narrative including what state should persist
+- \`packetDependencies\`: array of packet IDs involved in this journey
+- \`steps\`: array of { action: string, expected: string } describing each step
+
+Example:
+\`\`\`json
+{
+  "scenarios": [
+    {
+      "id": "IS-001",
+      "name": "Complete form creation from PDF upload",
+      "description": "User uploads PDF, reviews annotations, builds form, then navigates back. All state must persist across view transitions.",
+      "packetDependencies": ["PKT-003", "PKT-004", "PKT-005"],
+      "steps": [
+        { "action": "Upload a PDF file", "expected": "Auto-detected fields appear as annotations" },
+        { "action": "Edit an annotation (rename a field)", "expected": "Field name updates in real-time" },
+        { "action": "Click Build Form", "expected": "Form editor opens with generated form definition" },
+        { "action": "Click Back to Annotations", "expected": "All annotations including the renamed field are preserved" }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+Generate at least one integration scenario for every multi-view or multi-step feature.
+If the project is simple with no cross-packet flows, return \`{ "scenarios": [] }\`.`);
 
   // 6. Packet type guidance
   sections.push(`## Packet Type Reference
@@ -285,7 +323,20 @@ ${RESULT_START_SENTINEL}
     ],
     "skepticismLevel": "high"
   },
-  "planSummary": "(your plan-summary.md content as a string)"
+  "planSummary": "(your plan-summary.md content as a string)",
+  "integrationScenarios": {
+    "scenarios": [
+      {
+        "id": "IS-001",
+        "name": "...",
+        "description": "...",
+        "packetDependencies": ["PKT-001", "PKT-002"],
+        "steps": [
+          { "action": "...", "expected": "..." }
+        ]
+      }
+    ]
+  }
 }
 ${RESULT_END_SENTINEL}
 

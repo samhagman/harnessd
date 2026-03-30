@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { AgentBackend } from "./backend/types.js";
+import { BackendFactory } from "./backend/backend-factory.js";
 import type {
   Packet,
   PacketContract,
@@ -49,13 +50,22 @@ export type NegotiationOutcome =
 
 /**
  * Negotiate a packet contract through multi-round builder↔evaluator loop.
+ *
+ * Accepts a BackendFactory (or plain AgentBackend for backward compat) to select
+ * separate backends for the contract_builder and contract_evaluator roles.
  */
 export async function negotiateContract(
-  backend: AgentBackend,
+  backendOrFactory: AgentBackend | BackendFactory,
   packet: Packet,
   riskRegister: RiskRegister | undefined,
   negConfig: NegotiationConfig,
 ): Promise<NegotiationOutcome> {
+  // Backward compatibility: wrap plain AgentBackend in a factory
+  const factory = backendOrFactory instanceof BackendFactory
+    ? backendOrFactory
+    : BackendFactory.fromSingleBackend(backendOrFactory);
+  const contractBuilderBackend = factory.forRole("contract_builder");
+  const contractEvaluatorBackend = factory.forRole("contract_evaluator");
   const isRisky = RISKY_PACKET_TYPES.includes(packet.type);
   const maxRounds = isRisky
     ? negConfig.config.maxNegotiationRoundsRisky
@@ -86,7 +96,7 @@ export async function negotiateContract(
     );
 
     const builderResult = await runWorker(
-      backend,
+      contractBuilderBackend,
       {
         prompt: builderPrompt,
         cwd: negConfig.workspaceDir ?? negConfig.repoRoot,
@@ -96,6 +106,7 @@ export async function negotiateContract(
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: [createValidationMcpServer()],
+        sandboxMode: "read-only",
       },
       {
         repoRoot: negConfig.repoRoot,
@@ -103,6 +114,7 @@ export async function negotiateContract(
         role: "contract_builder",
         packetId: packet.id,
         artifactDir: `packets/${packet.id}/contract`,
+        workspaceDir: negConfig.workspaceDir,
       },
       PacketContractSchema,
     );
@@ -155,7 +167,7 @@ export async function negotiateContract(
     const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister);
 
     const evaluatorResult = await runWorker(
-      backend,
+      contractEvaluatorBackend,
       {
         prompt: evaluatorPrompt,
         cwd: negConfig.workspaceDir ?? negConfig.repoRoot,
@@ -165,6 +177,7 @@ export async function negotiateContract(
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: [createValidationMcpServer()],
+        sandboxMode: "read-only",
       },
       {
         repoRoot: negConfig.repoRoot,
@@ -172,6 +185,7 @@ export async function negotiateContract(
         role: "contract_evaluator",
         packetId: packet.id,
         artifactDir: `packets/${packet.id}/contract`,
+        workspaceDir: negConfig.workspaceDir,
       },
       ContractReviewSchema,
     );

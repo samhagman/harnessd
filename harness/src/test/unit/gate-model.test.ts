@@ -213,6 +213,13 @@ function evaluatorPassEnvelope(packetId: string): string {
     overall: "pass",
     hardFailures: [],
     rubricScores: [],
+    criterionVerdicts: [
+      {
+        criterionId: "AC-001",
+        verdict: "pass",
+        evidence: "Script runs with exit 0, output matches expected",
+      },
+    ],
     missingEvidence: [],
     nextActions: [],
     contractGapDetected: false,
@@ -607,6 +614,7 @@ describe("plan approval gate (orchestrator integration)", () => {
     await runOrchestrator(backend, {
       repoRoot: tmpDir,
       objective: "Test plan approval gate",
+      config: { skipQA: true, skipPlanReview: true },
     });
     clearInterval(autoActions);
 
@@ -677,6 +685,7 @@ describe("packet review gate (orchestrator integration)", () => {
     await runOrchestrator(backend, {
       repoRoot: tmpDir,
       objective: "Test packet review gate",
+      config: { skipQA: true, skipPlanReview: true },
     });
     clearInterval(autoActions);
 
@@ -784,6 +793,7 @@ describe("reject packet (orchestrator integration)", () => {
       repoRoot: tmpDir,
       objective: "test reject packet",
       resumeRunId: runId,
+      config: { skipQA: true, skipPlanReview: true },
     });
     clearInterval(autoActions);
 
@@ -872,6 +882,7 @@ describe("reset packet (orchestrator integration)", () => {
       repoRoot: tmpDir,
       objective: "test reset",
       resumeRunId: runId,
+      config: { skipQA: true, skipPlanReview: true },
     });
 
     const state = loadRun(tmpDir, runId);
@@ -923,6 +934,7 @@ describe("context injection (orchestrator integration)", () => {
       repoRoot: tmpDir,
       objective: "test context injection",
       resumeRunId: runId,
+      config: { skipQA: true, skipPlanReview: true },
     });
 
     // Verify context-overrides.md was written

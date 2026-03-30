@@ -103,6 +103,11 @@ export function renderStatusMarkdown(snapshot: StatusSnapshot): string {
   lines.push(`**Phase:** \`${snapshot.phase}\``);
   lines.push(`**Elapsed:** ${snapshot.elapsed}`);
   lines.push(`**Progress:** ${snapshot.packetsComplete}/${snapshot.packetsTotal} packets`);
+  // Show round indicator for QA/R2 phases
+  if (snapshot.phase === "qa_review" || snapshot.phase === "round2_planning" ||
+      snapshot.phase === "awaiting_round2_approval") {
+    lines.push(`**Round:** QA/R2 in progress`);
+  }
   lines.push("");
 
   // Current packet
@@ -193,5 +198,13 @@ function describeNextAction(runState: RunState): string {
       return "Run completed successfully.";
     case "failed":
       return "Run failed. Check events.jsonl and outbox/ for details.";
+    case "qa_review":
+      return `QA agent is testing the complete feature end-to-end (round ${runState.round ?? 1}).`;
+    case "round2_planning":
+      return "Round 2 planner is creating targeted fix packets based on QA findings.";
+    case "awaiting_round2_approval":
+      return "Round 2 plan ready for review. Approve via inbox to continue.";
+    case "plan_review":
+      return "Codex is reviewing the plan for technical issues.";
   }
 }
