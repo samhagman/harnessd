@@ -73,18 +73,24 @@ function extractToolUses(
 // SDK message → AgentMessage normalizer
 // ------------------------------------
 
-function normalize(msg: SDKMessage): AgentMessage | null {
+function normalize(msg: SDKMessage): AgentMessage {
   switch (msg.type) {
     case "system": {
-      if (!("subtype" in msg)) return null;
+      if (!("subtype" in msg)) break;
       const sub = (msg as { subtype?: string }).subtype;
-      if (sub !== "init") return null;
-      return {
-        type: "system",
-        subtype: "init",
-        sessionId: "session_id" in msg ? String(msg.session_id) : undefined,
-        raw: msg,
-      };
+      if (sub === "init") {
+        return {
+          type: "system",
+          subtype: "init",
+          sessionId: "session_id" in msg ? String(msg.session_id) : undefined,
+          raw: msg,
+        };
+      }
+      // Capture useful system subtypes as event markers
+      if (sub === "api_retry" || sub === "compact_boundary" || sub === "task_notification") {
+        return { type: "event", subtype: sub, raw: msg };
+      }
+      break;
     }
 
     case "assistant": {
@@ -120,9 +126,61 @@ function normalize(msg: SDKMessage): AgentMessage | null {
       };
     }
 
-    default:
-      return null;
+    case "user": {
+      // Extract tool_result content blocks — these are tool outputs returned to the model
+      const content = (msg as { message?: { content?: unknown[] } }).message?.content;
+      if (Array.isArray(content)) {
+        const toolResults: Array<{ toolUseId: string; output: string; isError?: boolean }> = [];
+        for (const block of content) {
+          if (
+            block != null &&
+            typeof block === "object" &&
+            "type" in block &&
+            block.type === "tool_result" &&
+            "tool_use_id" in block &&
+            typeof (block as { tool_use_id: unknown }).tool_use_id === "string"
+          ) {
+            const b = block as { tool_use_id: string; content?: unknown; is_error?: boolean };
+            // Extract text output from the content field (may be string or array of blocks)
+            let output = "";
+            if (typeof b.content === "string") {
+              output = b.content;
+            } else if (Array.isArray(b.content)) {
+              for (const inner of b.content) {
+                if (
+                  inner != null &&
+                  typeof inner === "object" &&
+                  "type" in inner &&
+                  inner.type === "text" &&
+                  "text" in inner &&
+                  typeof (inner as { text: unknown }).text === "string"
+                ) {
+                  output += (inner as { text: string }).text;
+                }
+              }
+            }
+            toolResults.push({
+              toolUseId: b.tool_use_id,
+              output: output.slice(0, 4000),
+              ...(b.is_error != null ? { isError: b.is_error } : {}),
+            });
+          }
+        }
+        if (toolResults.length > 0) {
+          return {
+            type: "tool_result",
+            toolResults,
+            sessionId: "session_id" in msg ? String((msg as { session_id?: unknown }).session_id) : undefined,
+            raw: msg,
+          };
+        }
+      }
+      break;
+    }
   }
+
+  // Catch-all: preserve unknown/unhandled message types as events so nothing is silently dropped
+  return { type: "event", subtype: (msg as { subtype?: string }).subtype ?? (msg as { type?: string }).type ?? "unknown", raw: msg };
 }
 
 // ------------------------------------
@@ -180,7 +238,6 @@ export class ClaudeSdkBackend implements AgentBackend {
     try {
       for await (const sdkMsg of q) {
         const normalized = normalize(sdkMsg);
-        if (normalized == null) continue;
 
         if (normalized.sessionId) {
           this.lastSessionId = normalized.sessionId;

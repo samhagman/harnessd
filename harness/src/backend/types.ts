@@ -14,10 +14,15 @@
 // ------------------------------------
 
 export interface AgentMessage {
-  /** Top-level message kind. Maps to SDK system/assistant/result. */
-  type: "system" | "assistant" | "result";
+  /**
+   * Top-level message kind.
+   * - "system" / "assistant" / "result" — original types (SDK session lifecycle)
+   * - "tool_result" — tool outputs returned to the model (what the tool returned)
+   * - "event" — lightweight state-change markers (turn boundaries, status events)
+   */
+  type: "system" | "assistant" | "result" | "tool_result" | "event";
 
-  /** Sub-classification (e.g. "init", "success", "error_max_turns"). */
+  /** Sub-classification (e.g. "init", "success", "error_max_turns", "command_execution"). */
   subtype?: string;
 
   /** Concatenated text content (from text blocks in assistant messages, or result text). */
@@ -25,6 +30,9 @@ export interface AgentMessage {
 
   /** Tool-use blocks extracted from assistant messages. */
   toolUses?: Array<{ name: string; input: unknown }>;
+
+  /** Tool results returned to the model (output truncated to 4000 chars; full content in raw). */
+  toolResults?: Array<{ toolUseId: string; output: string; isError?: boolean }>;
 
   /** Session ID captured from init or result messages. */
   sessionId?: string;
@@ -81,6 +89,17 @@ export interface AgentSessionOptions {
 
   /** Model to use (e.g. "claude-sonnet-4-6"). */
   model?: string;
+
+  /**
+   * Hint for backends about filesystem access level.
+   * Claude backend ignores this (uses hooks for read-only enforcement).
+   * Codex backend maps to --sandbox flag (OS-level enforcement).
+   */
+  sandboxMode?: "read-only" | "workspace-write";
+
+  /** Claude SDK session ID to resume. Loads full conversation history.
+   *  Ignored by Codex backend. */
+  resume?: string;
 
   /**
    * Additional options passed through to the SDK.

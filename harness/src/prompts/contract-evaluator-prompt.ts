@@ -14,6 +14,10 @@ import {
   RESULT_END_SENTINEL,
   RISKY_PACKET_TYPES,
 } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+} from "./shared.js";
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
 
@@ -24,14 +28,7 @@ export function buildContractEvaluatorPrompt(
   const sections: string[] = [];
 
   // 0. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Review stance
   sections.push(`## Your Role
@@ -41,6 +38,9 @@ whether it meets quality standards before the builder starts implementation.
 
 Be rigorous. A weak contract leads to weak implementation and wasted builder cycles.
 Only accept contracts that are specific, testable, and properly scoped.`);
+
+  // 1b. Mandatory validate_envelope gate
+  sections.push(buildValidateEnvelopeSection("ContractReview"));
 
   // 2. Packet type expectations
   const isUserVisible = USER_VISIBLE_TYPES.includes(proposal.packetType);
@@ -150,8 +150,8 @@ This is round ${proposal.round}. ${pragmatismNote(proposal.round)}
 
 Emit the envelope ONCE at the end. No commentary after the end marker.
 
-**IMPORTANT:** Before emitting the envelope, call the \`validate_envelope\` MCP tool with
-schema_name="ContractReview" and your JSON to check it's valid. Fix any errors before emitting.`);
+**IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
+from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
 
   return sections.join("\n\n");
 }

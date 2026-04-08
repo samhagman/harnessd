@@ -11,7 +11,14 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-RUNS_DIR="$REPO_ROOT/.harnessd/runs"
+# Harness uses its own dir as repoRoot (cwd), so check both locations
+if [[ -d "$HARNESS_DIR/.harnessd/runs" ]]; then
+  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
+elif [[ -d "$REPO_ROOT/.harnessd/runs" ]]; then
+  RUNS_DIR="$REPO_ROOT/.harnessd/runs"
+else
+  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
+fi
 
 # ------------------------------------
 # Parse arguments
@@ -52,9 +59,20 @@ find_latest_run() {
     echo ""
     return
   fi
-  # Run IDs are timestamp-prefixed (run-YYYYMMDD-HHMMSS-XXXX), so
-  # lexicographic sort gives chronological order.
-  ls -1d "$RUNS_DIR"/run-* 2>/dev/null | sort | tail -1 | xargs -I{} basename {}
+  # Find the most recently modified run directory (any name, must have run.json)
+  local best=""
+  local best_time=0
+  for dir in "$RUNS_DIR"/*/; do
+    if [[ -f "${dir}run.json" ]]; then
+      local mtime
+      mtime=$(stat -f %m "${dir}run.json" 2>/dev/null || stat -c %Y "${dir}run.json" 2>/dev/null || echo 0)
+      if (( mtime > best_time )); then
+        best_time=$mtime
+        best="$(basename "${dir%/}")"
+      fi
+    fi
+  done
+  echo "$best"
 }
 
 if [[ -z "$RUN_ID" ]]; then

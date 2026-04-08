@@ -38,6 +38,8 @@ export interface WorkerConfig {
   artifactDir: string;
   /** Heartbeat interval in seconds (0 to disable) */
   heartbeatIntervalSeconds?: number;
+  /** Workspace directory — when set and different from repoRoot, a workspace preamble is prepended to the prompt */
+  workspaceDir?: string;
 }
 
 export interface WorkerResult<T = unknown> {
@@ -133,6 +135,14 @@ export async function runWorker<T = unknown>(
   config: WorkerConfig,
   payloadSchema?: z.ZodType<T>,
 ): Promise<WorkerResult<T>> {
+  // Prepend workspace preamble if workspaceDir differs from repoRoot
+  if (config.workspaceDir && config.workspaceDir !== config.repoRoot) {
+    sessionOptions = {
+      ...sessionOptions,
+      prompt: `WORKSPACE: All file operations must target ${config.workspaceDir}\n\n${sessionOptions.prompt}`,
+    };
+  }
+
   const runDir = getRunDir(config.repoRoot, config.runId);
   const artifactPath = path.join(runDir, config.artifactDir);
   fs.mkdirSync(artifactPath, { recursive: true });
@@ -147,6 +157,8 @@ export async function runWorker<T = unknown>(
 
   const transcriptStream = fs.createWriteStream(transcriptPath, { flags: "a" });
   const legacyStream = fs.createWriteStream(legacyTranscriptPath, { flags: "a" });
+  const rawEventLogPath = path.join(artifactPath, "raw-events.jsonl");
+  const rawEventStream = fs.createWriteStream(rawEventLogPath, { flags: "a" });
 
   let combinedText = "";
   let sessionId: string | null = null;
@@ -194,10 +206,17 @@ export async function runWorker<T = unknown>(
     legacyStream.write(line);
   };
 
+  const logRawEvent = (msg: AgentMessage) => {
+    if (msg.raw) {
+      rawEventStream.write(JSON.stringify({ ts: new Date().toISOString(), raw: msg.raw }) + "\n");
+    }
+  };
+
   try {
     for await (const msg of backend.runSession(sessionOptions)) {
-      // Log to transcript
+      // Log to transcript and raw event log
       logMessage(msg);
+      logRawEvent(msg);
 
       // Capture session ID
       if (msg.sessionId && !sessionId) {
@@ -238,6 +257,7 @@ export async function runWorker<T = unknown>(
   } finally {
     transcriptStream.end();
     legacyStream.end();
+    rawEventStream.end();
   }
 
   // Final heartbeat

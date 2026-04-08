@@ -30,3 +30,20 @@ counter-app/
 # Embedded reference repos (clone separately if needed)
 inspiration/openclaw-bot/
 inspiration/pal-mcp-server/
+
+# Screenshots and debug artifacts from harness runs
+*.png
+*.txt
+!README.txt
+harness/*.png
+harness/*.txt
+output/
+harness/output/
+research/
+
+# Local tool state
+.agents/
+.playwright-mcp/
+.claude/skills/
+.claude/scheduled_tasks.lock
+skills-lock.json

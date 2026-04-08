@@ -13,8 +13,69 @@ import path from "node:path";
 import type {
   PacketType,
   AcceptanceTemplate,
+  AcceptanceCriterion,
 } from "./schemas.js";
 import { atomicWriteJson } from "./state-store.js";
+
+// ------------------------------------
+// UX Quality Checklist — mandatory criteria for ui_feature packets
+// ------------------------------------
+
+/**
+ * UX quality criteria that should be present in every ui_feature contract.
+ * The contract linter warns if any of these IDs are missing from a
+ * ui_feature packet's acceptance criteria.
+ */
+export const UX_QUALITY_CRITERIA: ReadonlyArray<Omit<AcceptanceCriterion, "command" | "expected" | "threshold" | "scenario" | "rubric"> & { verification: string }> = [
+  {
+    id: "ux-navigation",
+    kind: "scenario",
+    blocking: true,
+    description: "All views have working back/forward navigation. No dead-end screens.",
+    evidenceRequired: ["navigation test at each view", "back button verification"],
+    verification: "Navigate to every view, verify back button exists and returns to expected parent view.",
+  },
+  {
+    id: "ux-state-persistence",
+    kind: "scenario",
+    blocking: true,
+    description: "State persists correctly across view transitions. No data loss when navigating between sub-views.",
+    evidenceRequired: ["state before navigation", "state after round-trip"],
+    verification: "Navigate forward through the flow, then back. Verify data is preserved.",
+  },
+  {
+    id: "ux-console-errors",
+    kind: "invariant",
+    blocking: true,
+    description: "Zero console errors during complete user flow.",
+    evidenceRequired: ["console output at initial load", "console output after navigating all views", "console output after all interactions"],
+    verification: "Open browser console, navigate through all screens, check for errors/warnings.",
+  },
+  {
+    id: "ux-loading-states",
+    kind: "invariant",
+    blocking: false,
+    description: "All async operations show appropriate loading indicators.",
+    evidenceRequired: ["observation of loading state for each async operation"],
+    verification: "Trigger each async operation, verify loading state appears.",
+  },
+  {
+    id: "ux-empty-states",
+    kind: "invariant",
+    blocking: false,
+    description: "Empty states are handled gracefully with helpful messaging.",
+    evidenceRequired: ["screenshot or observation of each empty state"],
+    verification: "View each screen with no data, verify empty state renders.",
+  },
+  {
+    id: "ux-error-states",
+    kind: "negative",
+    blocking: false,
+    description: "Error states are handled gracefully (network failures, invalid data).",
+    evidenceRequired: ["error trigger", "observed error UI"],
+    verification: "Simulate error conditions, verify error messaging.",
+  },
+];
 
 const templates: Record<PacketType, AcceptanceTemplate> = {
   bugfix: {
@@ -57,11 +118,46 @@ const templates: Record<PacketType, AcceptanceTemplate> = {
         evidenceRequired: ["scenario steps", "observed behavior"],
       },
       {
-        id: "no-console-errors",
+        id: "ux-navigation",
+        kind: "scenario",
+        blocking: true,
+        description: "All views have working back/forward navigation. No dead-end screens.",
+        evidenceRequired: ["navigation test at each view", "back button verification"],
+      },
+      {
+        id: "ux-state-persistence",
+        kind: "scenario",
+        blocking: true,
+        description: "State persists correctly across view transitions. No data loss when navigating between sub-views.",
+        evidenceRequired: ["state before navigation", "state after round-trip"],
+      },
+      {
+        id: "ux-console-errors",
         kind: "invariant",
         blocking: true,
-        description: "No new console errors in browser",
-        evidenceRequired: ["console output"],
+        description: "Zero console errors during complete user flow (not just initial load — navigate through all views, perform all interactions).",
+        evidenceRequired: ["console output at initial load", "console output after navigating all views", "console output after all interactions"],
+      },
+      {
+        id: "ux-loading-states",
+        kind: "invariant",
+        blocking: false,
+        description: "All async operations show appropriate loading indicators.",
+        evidenceRequired: ["observation of loading state for each async operation"],
+      },
+      {
+        id: "ux-empty-states",
+        kind: "invariant",
+        blocking: false,
+        description: "Empty states are handled gracefully with helpful messaging.",
+        evidenceRequired: ["screenshot or observation of each empty state"],
+      },
+      {
+        id: "ux-error-states",
+        kind: "negative",
+        blocking: false,
+        description: "Error states are handled gracefully (network failures, invalid data).",
+        evidenceRequired: ["error trigger", "observed error UI"],
       },
       {
         id: "design-polish",
@@ -250,6 +346,14 @@ const templates: Record<PacketType, AcceptanceTemplate> = {
     ],
   },
 };
+
+/**
+ * Get the IDs from the UX quality checklist.
+ * Used by the contract linter to warn about missing UX criteria.
+ */
+export function getUxQualityCriteriaIds(): readonly string[] {
+  return UX_QUALITY_CRITERIA.map((c) => c.id);
+}
 
 /**
  * Get the acceptance template for a given packet type.
