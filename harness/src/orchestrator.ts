@@ -2090,7 +2090,7 @@ async function processInbox(
             });
             runState = updateRun(repoRoot, runState.runId, {
               phase: "selecting_packet",
-              round: 2,
+              round: runState.round,
             });
           }
           break;

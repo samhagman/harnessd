@@ -185,7 +185,7 @@ harnessd/
 │   │   ├── templates.ts             # Acceptance criteria templates
 │   │   ├── background-jobs.ts       # Long-running command tracker
 │   │   ├── validation-tool.ts       # MCP validate_envelope tool
-│   │   ├── prompts/                 # Prompt builders per role (8 files)
+│   │   ├── prompts/                 # Prompt builders per role (9 files)
 │   │   │   ├── planner-prompt.ts
 │   │   │   ├── plan-review-prompt.ts
 │   │   │   ├── builder-prompt.ts
@@ -201,7 +201,7 @@ harnessd/
 │   │   │   ├── backend-factory.ts   # Per-role backend selection
 │   │   │   └── fake-backend.ts      # Test double (zero quota, sessions)
 │   │   └── test/                    # vitest test suite
-│   │       ├── unit/                # 11 unit test files
+│   │       ├── unit/                # 13 unit test files
 │   │       └── scenarios/           # 2 scenario test files
 │   │
 │   ├── bin/

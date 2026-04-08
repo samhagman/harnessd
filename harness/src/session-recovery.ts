@@ -134,6 +134,7 @@ function extractVerdicts(text: string): ExtractedVerdict[] {
 
       // If the pattern didn't capture a criterion ID directly (the "verdict: pass" patterns),
       // search backward for the nearest criterion ID
+      CRITERION_ID_PATTERN.lastIndex = 0;
       if (!criterionId || !CRITERION_ID_PATTERN.test(criterionId)) {
         CRITERION_ID_PATTERN.lastIndex = 0;
         const before = text.slice(Math.max(0, match.index - 200), match.index);
