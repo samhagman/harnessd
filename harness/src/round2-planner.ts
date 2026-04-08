@@ -25,6 +25,7 @@ import { runWorker } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { buildRound2PlannerPrompt, type Round2PlannerPromptContext } from "./prompts/round2-planner-prompt.js";
+import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
 // Schema for the round 2 planner's structured output
@@ -57,8 +58,6 @@ export interface Round2PlannerResult {
 /**
  * Run the round 2 planner to create targeted fix packets from QA findings.
  */
-const CONTINUATION_PROMPT =
-  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
 export async function runRound2Planner(
   backend: AgentBackend,

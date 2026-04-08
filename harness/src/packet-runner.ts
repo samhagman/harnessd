@@ -24,6 +24,7 @@ import { BuilderReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeBuilderHook } from "./permissions.js";
 import { buildBuilderPrompt } from "./prompts/builder-prompt.js";
+import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
@@ -40,8 +41,6 @@ export interface BuilderRunResult {
   workerResult: WorkerResult<BuilderReport>;
 }
 
-const CONTINUATION_PROMPT =
-  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
 /**
  * Run the builder agent on a single packet.

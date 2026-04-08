@@ -15,6 +15,9 @@ import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
 } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+} from "./shared.js";
 
 export function buildPlanReviewPrompt(
   specContent: string,
@@ -27,14 +30,7 @@ export function buildPlanReviewPrompt(
   const sections: string[] = [];
 
   // 0. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Role
   sections.push(`## Your Role

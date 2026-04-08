@@ -14,6 +14,10 @@ import {
   RESULT_END_SENTINEL,
   RISKY_PACKET_TYPES,
 } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+} from "./shared.js";
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
 
@@ -24,14 +28,7 @@ export function buildContractEvaluatorPrompt(
   const sections: string[] = [];
 
   // 0. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Review stance
   sections.push(`## Your Role
@@ -43,22 +40,7 @@ Be rigorous. A weak contract leads to weak implementation and wasted builder cyc
 Only accept contracts that are specific, testable, and properly scoped.`);
 
   // 1b. Mandatory validate_envelope gate
-  sections.push(`## MANDATORY: Validate Before Emitting
-
-You MUST validate your result envelope BEFORE emitting it. This is not optional.
-If you emit without validating, your output will be REJECTED and you will have to redo your work.
-
-**Option 1 — MCP tool (preferred):**
-Call \`validate_envelope\` with schema_name="ContractReview" and json_string=<your JSON>
-
-**Option 2 — CLI (if MCP tool unavailable):**
-\`\`\`bash
-echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema ContractReview --json -
-\`\`\`
-
-If validation returns {valid: false}, FIX the errors and validate again.
-ONLY after getting {valid: true} should you emit the envelope.
-Do NOT skip this step. Do NOT emit first and hope it works.`);
+  sections.push(buildValidateEnvelopeSection("ContractReview"));
 
   // 2. Packet type expectations
   const isUserVisible = USER_VISIBLE_TYPES.includes(proposal.packetType);

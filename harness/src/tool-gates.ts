@@ -190,8 +190,8 @@ export function makeTypecheckGate(): ToolGate {
 }
 
 /** Build the default test gate. */
-export function makeTestGate(workspaceDir: string): ToolGate {
-  const testCmd = detectTestCommand(workspaceDir);
+export function makeTestGate(workspaceDir: string, preDetectedCmd?: string | null): ToolGate {
+  const testCmd = preDetectedCmd !== undefined ? preDetectedCmd : detectTestCommand(workspaceDir);
 
   return {
     name: "test",
@@ -293,7 +293,7 @@ export function executeGate(
  */
 export function resolveDefaultGates(
   workspaceDir: string,
-  packetType: PacketType,
+  _packetType: PacketType,
   config: ProjectConfig,
 ): { gates: ToolGate[]; skippedGates: GateRunResult[] } {
   const gates: ToolGate[] = [];
@@ -323,7 +323,7 @@ export function resolveDefaultGates(
   // Test gate — only if test runner is detected
   const testCmd = detectTestCommand(workspaceDir);
   if (testCmd) {
-    gates.push(makeTestGate(workspaceDir));
+    gates.push(makeTestGate(workspaceDir, testCmd));
   } else {
     skippedGates.push({
       gate: "test",

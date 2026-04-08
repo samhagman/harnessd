@@ -19,6 +19,11 @@ import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
 } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+  buildDevServerSetupSection,
+} from "./shared.js";
 
 export function buildEvaluatorPrompt(
   contract: PacketContract,
@@ -92,57 +97,10 @@ If the dev server returns 404 for new modules, this is a HARD FAILURE — the bu
   }
 
   // 0b. Environment setup
-  if (devServer) {
-    const portFilter = devServer.backendPort
-      ? `:${devServer.port}|:${devServer.backendPort}`
-      : `:${devServer.port}`;
-    sections.push(`## Environment Setup (Do This First)
-
-Before verifying anything in the browser, ensure you have a clean dev environment:
-
-1. Kill any stale dev server processes:
-   \`lsof -iTCP -sTCP:LISTEN -P -n | grep -E '${portFilter}'\`
-   If anything is listening on these ports, kill those PIDs: \`kill <pid>\`
-
-2. Start the dev server fresh from your workspace:
-   \`${devServer.command}\`
-   Run this with run_in_background=true.
-
-3. Wait for the server to be ready (look for "${devServer.readyPattern}" in the output).
-   Then verify http://localhost:${devServer.port} returns HTML.
-
-4. For ALL browser testing, navigate to http://localhost:${devServer.port}
-   (the frontend). The frontend proxies API calls automatically.
-
-5. **Clean data state:** Previous test sessions may have left dirty data in the database.
-   Before testing, check for accumulated/duplicate data:
-   - Look for data directories (\`.tmp-*\`, \`data/\`, \`*.db\`, \`*.sqlite\`) in the workspace
-   - If you find SQLite DBs or data files, DELETE them so the server re-seeds from scratch
-   - The dev server's bootstrap will recreate clean seed data on fresh start
-   - This prevents false failures from stale data accumulated across prior builder/evaluator sessions
-
-Do NOT assume the dev environment is clean from a previous session.
-Do NOT skip this step — stale servers AND stale data will cause false test failures.
-Previous sessions have failed because stale servers served outdated code and accumulated
-duplicate data caused incorrect state that looked like code bugs but was really dirty test data.`);
-  } else {
-    sections.push(`## Environment Setup
-
-Before browser testing, check package.json for the dev command, start it with
-run_in_background=true, and navigate to the URL it prints. Kill any stale
-processes on the same ports first.
-Previous evaluator sessions have failed because stale servers were serving outdated code.`);
-  }
+  sections.push(buildDevServerSetupSection(devServer, "evaluator"));
 
   // 0c. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Role
   sections.push(`## Your Role
@@ -197,24 +155,7 @@ env var), that's fine — do it and move on to verifying.`);
 
   // 3b. Mandatory validate_envelope gate
   const criterionIds = contract.acceptance.map((c) => c.id).join(",");
-  sections.push(`## MANDATORY: Validate Before Emitting
-
-You MUST validate your result envelope BEFORE emitting it. This is not optional.
-If you emit without validating, your output will be REJECTED and you will have to redo your work.
-
-**Option 1 — MCP tool (preferred):**
-Call \`validate_envelope\` with schema_name="EvaluatorReport" and json_string=<your JSON>
-
-**Option 2 — CLI (if MCP tool unavailable):**
-\`\`\`bash
-echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema EvaluatorReport --criterion-ids ${criterionIds} --json -
-\`\`\`
-
-(The \`--criterion-ids\` flag validates that your criterionVerdicts array covers every criterion in the contract. Use the criterion IDs listed in the contract above.)
-
-If validation returns {valid: false}, FIX the errors and validate again.
-ONLY after getting {valid: true} should you emit the envelope.
-Do NOT skip this step. Do NOT emit first and hope it works.`);
+  sections.push(buildValidateEnvelopeSection("EvaluatorReport", criterionIds));
 
   // 4. Contract
   sections.push(`## Packet Contract

@@ -349,20 +349,21 @@ export class CodexCliBackend implements AgentBackend {
       });
 
       // Emit final result message based on exit code
+      const stderr = stderrChunks.join("");
       if (exitCode === 0) {
         yield {
           type: "result",
           subtype: "success",
           isError: false,
-          raw: { exitCode, stderr: stderrChunks.join("") },
+          raw: { exitCode, stderr },
         };
       } else {
         yield {
           type: "result",
           subtype: "error_max_turns",
-          text: `Codex exited with code ${exitCode}. Stderr: ${stderrChunks.join("").slice(0, 1000)}`,
+          text: `Codex exited with code ${exitCode}. Stderr: ${stderr.slice(0, 1000)}`,
           isError: true,
-          raw: { exitCode, stderr: stderrChunks.join("") },
+          raw: { exitCode, stderr },
         };
       }
     } catch (err: unknown) {

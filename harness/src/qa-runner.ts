@@ -22,6 +22,7 @@ import { QAReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildQAPrompt, type QAPromptContext } from "./prompts/qa-prompt.js";
+import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
 // ------------------------------------
@@ -51,8 +52,6 @@ export interface QARunResult {
  * and runs the agent session. Returns a QAReport or null if the agent
  * failed to produce one.
  */
-const CONTINUATION_PROMPT =
-  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
 export async function runQA(
   backend: AgentBackend,

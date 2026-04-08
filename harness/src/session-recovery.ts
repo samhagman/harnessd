@@ -66,6 +66,17 @@ interface TranscriptLine {
  */
 const CRITERION_ID_PATTERN = /\b(ac[-_][\w-]+)/gi;
 
+/**
+ * Module-level factory for the criterion-ID global regex.
+ * We must create a fresh instance each time a top-level function is called
+ * because RegExp instances with the `g` flag carry mutable `lastIndex` state.
+ * Creating it here (outside inner loops) prevents redundant re-compilation
+ * while keeping the stateful `lastIndex` safe.
+ */
+function makeCriterionIdGlobalRegex(): RegExp {
+  return new RegExp(CRITERION_ID_PATTERN.source, "gi");
+}
+
 const VERDICT_PATTERNS: Array<{
   regex: RegExp;
   verdict: "pass" | "fail" | "skip";
@@ -110,6 +121,9 @@ interface ExtractedVerdict {
  */
 function extractVerdicts(text: string): ExtractedVerdict[] {
   const found = new Map<string, ExtractedVerdict>();
+  // Create once per function call — global regexes carry mutable lastIndex state
+  // so they must not be shared across calls or reused inside inner loops.
+  const criterionIdGlobal = makeCriterionIdGlobalRegex();
 
   for (const { regex, verdict } of VERDICT_PATTERNS) {
     // Reset lastIndex for global regexes
@@ -123,7 +137,8 @@ function extractVerdicts(text: string): ExtractedVerdict[] {
       if (!criterionId || !CRITERION_ID_PATTERN.test(criterionId)) {
         CRITERION_ID_PATTERN.lastIndex = 0;
         const before = text.slice(Math.max(0, match.index - 200), match.index);
-        const ids = [...before.matchAll(new RegExp(CRITERION_ID_PATTERN.source, "gi"))];
+        criterionIdGlobal.lastIndex = 0;
+        const ids = [...before.matchAll(criterionIdGlobal)];
         if (ids.length > 0) {
           criterionId = ids[ids.length - 1]![1]!;
         } else {
@@ -153,6 +168,8 @@ function extractHardFailures(
 ): Array<{ criterionId: string; description: string }> {
   const failures: Array<{ criterionId: string; description: string }> = [];
   const seen = new Set<string>();
+  // Create once per function call — avoid constructing inside the inner loop
+  const criterionIdGlobal = makeCriterionIdGlobalRegex();
 
   for (const pattern of HARD_FAILURE_PATTERNS) {
     pattern.lastIndex = 0;
@@ -163,7 +180,8 @@ function extractHardFailures(
       const searchEnd = Math.min(text.length, match.index + match[0].length + 200);
       const nearby = text.slice(searchStart, searchEnd);
 
-      const idMatches = [...nearby.matchAll(new RegExp(CRITERION_ID_PATTERN.source, "gi"))];
+      criterionIdGlobal.lastIndex = 0;
+      const idMatches = [...nearby.matchAll(criterionIdGlobal)];
       const criterionId = idMatches.length > 0
         ? idMatches[0]![1]!.toLowerCase().replace(/_/g, "-")
         : "unknown";

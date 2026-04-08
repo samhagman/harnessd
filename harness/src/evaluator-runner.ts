@@ -24,6 +24,7 @@ import { EvaluatorReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeEvaluatorHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildEvaluatorPrompt } from "./prompts/evaluator-prompt.js";
+import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
 // ------------------------------------
@@ -102,8 +103,6 @@ export interface EvaluatorRunResult {
  *
  * Returns the evaluator report or null if the evaluator failed to produce one.
  */
-const CONTINUATION_PROMPT =
-  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
 export async function runEvaluator(
   backend: AgentBackend,
@@ -245,7 +244,7 @@ export async function runEvaluator(
 export function applyAdvisoryGuard(
   report: EvaluatorReport,
   contract: PacketContract,
-  verdictValidation: VerdictValidation,
+  _verdictValidation: VerdictValidation,
   runId?: string,
   packetId?: string,
 ): EvaluatorReport {

@@ -20,6 +20,11 @@ import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
 } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+  buildDevServerSetupSection,
+} from "./shared.js";
 
 export interface QAPromptContext {
   spec: string;
@@ -44,56 +49,10 @@ Use this path for all file operations.`);
   }
 
   // 0b. Environment setup
-  if (ctx.devServer) {
-    const portFilter = ctx.devServer.backendPort
-      ? `:${ctx.devServer.port}|:${ctx.devServer.backendPort}`
-      : `:${ctx.devServer.port}`;
-    sections.push(`## Environment Setup (Do This First)
-
-Before starting any work, ensure you have a clean dev environment:
-
-1. Kill any stale dev server processes:
-   \`lsof -iTCP -sTCP:LISTEN -P -n | grep -E '${portFilter}'\`
-   If anything is listening on these ports, kill those PIDs: \`kill <pid>\`
-
-2. Start the dev server fresh from your workspace:
-   \`${ctx.devServer.command}\`
-   Run this with run_in_background=true.
-
-3. Wait for the server to be ready (look for "${ctx.devServer.readyPattern}" in the output).
-   Then verify http://localhost:${ctx.devServer.port} returns HTML.
-
-4. For ALL browser testing, navigate to http://localhost:${ctx.devServer.port}
-   (the frontend). The frontend proxies API calls automatically.
-
-5. **Clean data state:** Previous test sessions may have left dirty data in the database.
-   Before testing, check for accumulated/duplicate data:
-   - Look for data directories (\`.tmp-*\`, \`data/\`, \`*.db\`, \`*.sqlite\`) in the workspace
-   - If you find SQLite DBs or data files, DELETE them so the server re-seeds from scratch
-   - The dev server's bootstrap will recreate clean seed data on fresh start
-   - This prevents false failures from stale data accumulated across prior builder/evaluator sessions
-
-Do NOT assume the dev environment is clean from a previous session.
-Do NOT skip this step — stale servers AND stale data will cause false test failures.
-When you find unexpected data (duplicate values, wrong permissions, stale entities),
-consider whether the DATA is dirty from prior test runs before concluding the CODE is wrong.`);
-  } else {
-    sections.push(`## Environment Setup
-
-Before browser testing, check package.json for the dev command, start it with
-run_in_background=true, and navigate to the URL it prints. Kill any stale
-processes on the same ports first.`);
-  }
+  sections.push(buildDevServerSetupSection(ctx.devServer, "qa"));
 
   // 0c. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Role
   sections.push(`## Your Role
@@ -131,22 +90,7 @@ Your job is to FIND and REPORT issues, not to fix them. Report everything you fi
 and the round 2 planner will create fix packets.`);
 
   // 2b. Mandatory validate_envelope gate
-  sections.push(`## MANDATORY: Validate Before Emitting
-
-You MUST validate your result envelope BEFORE emitting it. This is not optional.
-If you emit without validating, your output will be REJECTED and you will have to redo your work.
-
-**Option 1 — MCP tool (preferred):**
-Call \`validate_envelope\` with schema_name="QAReport" and json_string=<your JSON>
-
-**Option 2 — CLI (if MCP tool unavailable):**
-\`\`\`bash
-echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema QAReport --json -
-\`\`\`
-
-If validation returns {valid: false}, FIX the errors and validate again.
-ONLY after getting {valid: true} should you emit the envelope.
-Do NOT skip this step. Do NOT emit first and hope it works.`);
+  sections.push(buildValidateEnvelopeSection("QAReport"));
 
   // 3. Spec summary
   if (ctx.spec) {

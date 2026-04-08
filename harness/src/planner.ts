@@ -21,6 +21,7 @@ import { runWorker } from "./worker.js";
 import { makePlannerHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { buildPlannerPrompt } from "./prompts/planner-prompt.js";
+import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
 // Schema for the planner's structured output
@@ -77,8 +78,6 @@ export interface RevisionContext {
  * it receives the previous plan and reviewer feedback, and is instructed to
  * revise the plan to address the identified issues.
  */
-const CONTINUATION_PROMPT =
-  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
 export async function runPlanner(
   backend: AgentBackend,

@@ -12,6 +12,10 @@ import {
   RESULT_END_SENTINEL,
 } from "../schemas.js";
 import type { PlanningContext } from "../schemas.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+} from "./shared.js";
 
 export function buildPlannerPrompt(
   objective: string,
@@ -22,14 +26,7 @@ export function buildPlannerPrompt(
   const sections: string[] = [];
 
   // 0. Autonomous preamble
-  sections.push(`## Autonomous Operation
-
-You are AUTONOMOUS. Work continuously toward your goal until it is complete.
-Do NOT stop to ask questions. Do NOT wait for confirmation. Do NOT ask "shall I continue?".
-
-If you receive a new message from the operator mid-session, it is a STEERING NUDGE.
-Incorporate the new context and keep working. Do not treat it as a stop signal.
-The only way you stop is by completing your goal and emitting the result envelope.`);
+  sections.push(AUTONOMOUS_PREAMBLE);
 
   // 1. Role
   sections.push(`## Your Role
@@ -57,22 +54,7 @@ Before planning, use your web search tools to research:
 Use perplexity_search or perplexity_ask to find real, current information. Ground your plan in research, not assumptions.`);
 
   // 1b. Mandatory validate_envelope gate
-  sections.push(`## MANDATORY: Validate Before Emitting
-
-You MUST validate your result envelope BEFORE emitting it. This is not optional.
-If you emit without validating, your output will be REJECTED and you will have to redo your work.
-
-**Option 1 — MCP tool (preferred):**
-Call \`validate_envelope\` with schema_name="PlannerOutput" and json_string=<your JSON>
-
-**Option 2 — CLI (if MCP tool unavailable):**
-\`\`\`bash
-echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema PlannerOutput --json -
-\`\`\`
-
-If validation returns {valid: false}, FIX the errors and validate again.
-ONLY after getting {valid: true} should you emit the envelope.
-Do NOT skip this step. Do NOT emit first and hope it works.`);
+  sections.push(buildValidateEnvelopeSection("PlannerOutput"));
 
   // 2. Planning constraints
   sections.push(`## Planning Constraints

@@ -100,6 +100,15 @@ const MAX_CONSECUTIVE_RETRIES = 10;
 const GATE_POLL_INTERVAL_MS = 2000;
 
 // ------------------------------------
+// Round helpers
+// ------------------------------------
+
+/** Returns true when the run is executing a round-2+ fix-pass with packets queued. */
+function isRound2Active(runState: RunState): boolean {
+  return runState.round >= 2 && runState.round2PacketOrder.length > 0;
+}
+
+// ------------------------------------
 // Session resume helpers
 // ------------------------------------
 
@@ -644,7 +653,7 @@ async function handlePacketSelection(
   config: ProjectConfig,
 ): Promise<RunState> {
   // Determine which packet list and completed list to use based on round
-  const isRound2 = runState.round >= 2 && runState.round2PacketOrder.length > 0;
+  const isRound2 = isRound2Active(runState);
   const activePacketOrder = isRound2 ? runState.round2PacketOrder : runState.packetOrder;
   const activeCompletedIds = isRound2 ? runState.round2CompletedPacketIds : runState.completedPacketIds;
 
@@ -918,7 +927,7 @@ async function handleEvaluation(
   }
 
   // Use the active round's packet order for future-packet context
-  const activeOrder = runState.round >= 2 && runState.round2PacketOrder.length > 0
+  const activeOrder = isRound2Active(runState)
     ? runState.round2PacketOrder : runState.packetOrder;
   const futurePacketsSummary = buildFuturePacketsSummary(
     repoRoot, runState.runId, packetId, activeOrder,
@@ -1545,7 +1554,7 @@ export function selectNextPacket(
   runState: RunState,
 ): Packet | null {
   // Use round 2+ packet order if in any fix round and round2PacketOrder is populated
-  const isRound2 = runState.round >= 2 && runState.round2PacketOrder.length > 0;
+  const isRound2 = isRound2Active(runState);
   const activeOrder = isRound2 ? runState.round2PacketOrder : runState.packetOrder;
   const activeDone = isRound2
     ? new Set([...runState.round2CompletedPacketIds])
@@ -1668,33 +1677,46 @@ function readIntegrationScenarios(repoRoot: string, runId: string): IntegrationS
 
 
 /**
- * Gather all finalized contracts for a run.
+ * Generic artifact gatherer — reads one artifact per completed packet.
+ * Skips packets that don't have the artifact yet (e.g. in-progress or failed).
  */
-function gatherAllContracts(repoRoot: string, runId: string, runState: RunState): PacketContract[] {
-  const contracts: PacketContract[] = [];
+function gatherArtifacts<T>(
+  repoRoot: string,
+  runId: string,
+  runState: RunState,
+  pathFn: (packetId: string) => string,
+  schema: z.ZodType<T>,
+): T[] {
+  const results: T[] = [];
   const allIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
   for (const packetId of allIds) {
     try {
-      const contract = readArtifact(repoRoot, runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
-      contracts.push(contract);
-    } catch { /* skip packets without contracts */ }
+      results.push(readArtifact(repoRoot, runId, pathFn(packetId), schema));
+    } catch { /* skip packets without this artifact */ }
   }
-  return contracts;
+  return results;
+}
+
+/**
+ * Gather all finalized contracts for a run.
+ */
+function gatherAllContracts(repoRoot: string, runId: string, runState: RunState): PacketContract[] {
+  return gatherArtifacts(
+    repoRoot, runId, runState,
+    (id) => `packets/${id}/contract/final.json`,
+    PacketContractSchema,
+  );
 }
 
 /**
  * Gather all builder reports for a run.
  */
 function gatherAllBuilderReports(repoRoot: string, runId: string, runState: RunState): BuilderReport[] {
-  const reports: BuilderReport[] = [];
-  const allIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
-  for (const packetId of allIds) {
-    try {
-      const report = readArtifact(repoRoot, runId, `packets/${packetId}/builder/builder-report.json`, BuilderReportSchema);
-      reports.push(report);
-    } catch { /* skip packets without reports */ }
-  }
-  return reports;
+  return gatherArtifacts(
+    repoRoot, runId, runState,
+    (id) => `packets/${id}/builder/builder-report.json`,
+    BuilderReportSchema,
+  );
 }
 
 /**
@@ -1966,9 +1988,13 @@ async function processInbox(
                 filesInvolved: [],
               }],
               rubricScores: [],
+              criterionVerdicts: [],
               missingEvidence: [],
               nextActions: [msg.message ?? "Address operator feedback"],
               contractGapDetected: false,
+              addedCriteria: [],
+              additionalIssuesOmitted: false,
+              advisoryEscalations: [],
             };
             const reportPath = path.join(
               getRunDir(repoRoot, runState.runId),
