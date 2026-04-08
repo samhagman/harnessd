@@ -9,51 +9,84 @@
 Harnessd enables AI agents to work autonomously on complex, multi-session tasks that exceed a single context window. The core insight: long-running agent success requires explicit planning, contract-based acceptance, durable state, and independent verification.
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                          USER                                       │
-│                            │                                        │
-│                            ▼                                        │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                    ORCHESTRATOR                               │  │
-│  │  • Planner mode: objective → SPEC.md + packets.json           │  │
-│  │  • Packet selection: linear, dependency-aware                 │  │
-│  │  • Contract negotiation: multi-round builder↔evaluator        │  │
-│  │  • Status rendering, poke/resume, rate-limit recovery         │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                            │                                        │
-│            ┌───────────────┼───────────────┐                        │
-│            ▼               ▼               ▼                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
-│  │   PLANNER    │  │   CONTRACT   │  │   PACKET     │             │
-│  │  read-only   │  │  NEGOTIATOR  │  │   RUNNER     │             │
-│  │  SPEC.md     │  │  multi-round │  │              │             │
-│  │  packets.json│  │  lint+review │  │  ┌────────┐  │             │
-│  │  risks.json  │  │  final.json  │  │  │BUILDER │  │             │
-│  └──────────────┘  └──────────────┘  │  └───┬────┘  │             │
-│                                       │      │       │             │
-│                                       │      ▼       │             │
-│                                       │  ┌────────┐  │             │
-│                                       │  │EVALUAT.│  │             │
-│                                       │  │(r/o)   │  │             │
-│                                       │  └───┬────┘  │             │
-│                                       │      │       │             │
-│                                       │      ▼       │             │
-│                                       │  fix loop    │             │
-│                                       │  or done     │             │
-│                                       └──────────────┘             │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                    STATE (.harnessd/)                          │  │
-│  │  • run.json — phase machine state                             │  │
-│  │  • events.jsonl — append-only event stream                    │  │
-│  │  • status.json / status.md — human-readable status            │  │
-│  │  • spec/ — SPEC.md, packets.json, risk-register.json,         │  │
-│  │           evaluator-guide.json, planning-context.json         │  │
-│  │  • packets/PKT-NNN/ — contract, builder, evaluator artifacts  │  │
-│  │  • transcripts/ — organized by packet and role                │  │
-│  │  • inbox/ outbox/ — operator communication channel            │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+                              USER OBJECTIVE
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                        ORCHESTRATOR                               │
+│  Resilient phase machine — never dies from agent crashes          │
+│  Rate-limit backoff, nudge injection, inbox polling               │
+└──────────────┬───────────────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────┐     ┌──────────────────────┐
+│      PLANNER         │────▶│   PLAN REVIEWER      │
+│  read-only, web      │◀────│   adversarial (Codex)│
+│  research, interview │     │   max N rounds       │
+│  → SPEC.md           │     └──────────────────────┘
+│  → packets.json      │
+│  → risk-register.json│
+└──────────┬───────────┘
+           │  operator approves plan
+           ▼
+┌──────────────────────┐
+│  CONTRACT NEGOTIATOR │  ◀─── per packet
+│  builder proposes    │
+│  linter validates    │
+│  evaluator reviews   │
+│  max 10 rounds       │
+│  → final.json        │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│      BUILDER         │  ← only repo writer
+│  implements packet   │
+│  self-checks ACs     │
+│  receives nudges     │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│    TOOL GATES        │  typecheck + test
+│    pass? ──────────────▶ continue
+│    fail? ──────────────▶ back to builder (fix loop, max 10)
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│     EVALUATOR        │  read-only, adversarial
+│  disconfirms claims  │
+│  diagnosticHypothesis│
+│  contract-gap detect │
+│  pass ─────────────────▶ next packet
+│  fail ─────────────────▶ back to builder (fix loop)
+│  contract gap ─────────▶ back to negotiation
+└──────────┬───────────┘
+           │  all packets done
+           ▼
+┌──────────────────────┐
+│     QA RUNNER        │  holistic e2e browser testing
+│  cross-packet issues │
+│  max 10 rounds       │
+│  pass ─────────────────▶ COMPLETE
+│  fail ─────────────────▶ round 2+ planner
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│  ROUND 2+ PLANNER    │  targeted fix packets
+│  PKT-R{round}-NNN   │  from QA findings
+│  → back to contract  │
+│    negotiation       │
+└──────────────────────┘
+
+STATE: .harnessd/runs/<run-id>/
+  run.json, events.jsonl, status.json, status.md
+  spec/ (SPEC.md, packets.json, risk-register.json, evaluator-guide.json)
+  packets/PKT-NNN/ (contract/, builder/, evaluator/)
+  transcripts/ (organized by packet and role)
+  inbox/ outbox/ (operator communication)
 ```
 
 ---
@@ -177,6 +210,7 @@ harnessd/
 │   ├── run.sh                       # Launch harness
 │   ├── tail.sh                      # Tail logs (multiple modes)
 │   ├── status.sh                    # Print run status
+│   ├── nudge.sh                     # Send nudge to running builder
 │   ├── poke.sh                      # Send poke to running harness
 │   ├── resume.sh                    # Resume an interrupted run
 │   ├── tmux.sh                      # 3-pane tmux operator layout
@@ -322,15 +356,37 @@ cd harness && npx tsc --noEmit         # typecheck
 
 ---
 
-## Key Insights from Research
+## Testing
 
-1. **Context is precious** — smallest set of high-signal tokens wins
-2. **Specification quality > prompt iteration** — diminishing returns after 5 hours
-3. **Two-agent pattern works** — initializer + coding agent for session continuity
-4. **"One feature at a time"** — reduces context exhaustion by 71%
-5. **10-iteration rule** — if prompts don't fix it, it's architectural
-6. **Self-verification is critical** — without browser automation, features get marked done prematurely
-7. **Contract-driven acceptance** — negotiate testable criteria before building, not after
+All tests use `FakeBackend` — a deterministic test double that replays scripted messages with zero API calls. It implements the same `AgentBackend` interface as the real backends.
+
+```ts
+// Common pattern: simulate an agent that emits a valid result
+const backend = FakeBackend.success(JSON.stringify({ verdict: "pass", hardFailures: [] }));
+const result = await runEvaluator(backend, contract, builderReport, config);
+
+expect(result.report.verdict).toBe("pass");
+expect(backend.calls).toHaveLength(1);           // assert what was passed to the agent
+expect(backend.calls[0].prompt).toContain("...");  // check prompt content
+```
+
+**Factory methods:**
+- `FakeBackend.success(text)` — agent runs and emits result envelope containing `text`
+- `FakeBackend.error(text)` — agent crashes with error (test retry/recovery paths)
+- `FakeBackend.fromScript(messages[])` — full control over yielded `AgentMessage` sequence
+
+`backend.calls[]` records every `runSession()` invocation for assertion. `backend.nudgeMessages[]` records nudges.
+
+---
+
+## Gotchas
+
+1. **Inbox only reads `*.json`** — `.md` files placed in `inbox/` are silently ignored. Always use `nudge.sh` or write JSON directly.
+2. **`permissionMode: "plan"` blocks ALL tools** — this activates Claude Code's built-in plan mode. For read-only agents that still need Read/Grep/Glob/Bash, use `permissionMode: "bypassPermissions"` with `disallowedTools` instead.
+3. **`streamInput()` hangs from `setInterval`** — must be called from within the `for-await` loop that consumes query messages. The nudge queue pattern (`backend.queueNudge()` → drain inside loop) is the correct approach.
+4. **Read-only agents will try to write files** — without an explicit CRITICAL RULES section at the top of the prompt saying "You CANNOT write files, your only output is the envelope", agents default to trying Write/Edit/Agent tools.
+5. **All agents must call `validate_envelope` before emitting** — Claude agents use the MCP tool, Codex agents use `bin/validate-envelope.mts`. Without this, agents emit malformed JSON that fails parsing and wastes a full retry cycle.
+6. **Dirty data accumulates across QA rounds** — builders/evaluators leave test artifacts in shared state. Multi-round QA can fail on stale data, not real bugs. No automated cleanup mechanism exists yet.
 
 ---
 
