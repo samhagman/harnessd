@@ -153,9 +153,7 @@ export const RunStateSchema = z.object({
   qaReportPath: z.string().nullable().default(null),
   round2PacketOrder: z.array(z.string()).default([]),
   round2CompletedPacketIds: z.array(z.string()).default([]),
-  // Schema default is 2 (conservative) for backward compatibility with old persisted run.json
-  // files that predate this field. New runs always get maxRounds: 10 via defaultRunState().
-  maxRounds: z.number().int().default(2),
+  maxRounds: z.number().int().default(10),
   // Workspace directory (persisted so resume can restore it)
   workspaceDir: z.string().nullable().default(null),
 });
