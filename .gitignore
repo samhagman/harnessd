@@ -44,5 +44,6 @@ research/
 # Local tool state
 .agents/
 .playwright-mcp/
-skills-lock.json
+.claude/skills/
 .claude/scheduled_tasks.lock
+skills-lock.json

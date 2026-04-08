@@ -530,7 +530,7 @@ describe("makeTypecheckGate", () => {
   it("creates a gate with correct properties", () => {
     const gate = makeTypecheckGate();
     expect(gate.name).toBe("typecheck");
-    expect(gate.command).toBe("npx tsc --noEmit");
+    expect(gate.command).toBe("npx tsc -b --noEmit");
     expect(gate.blocking).toBe(true);
   });
 

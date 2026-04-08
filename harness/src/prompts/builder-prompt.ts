@@ -247,7 +247,24 @@ Before claiming done:
 5. Test at ALL viewports if the design should be responsive
 
 Do NOT just read code and assume it works — actually test in the browser.
-Static code review alone is insufficient for UI work.`);
+Static code review alone is insufficient for UI work.
+
+### Runtime Verification for Scenario Criteria (MANDATORY)
+
+For acceptance criteria with \`kind: "scenario"\` and \`blocking: true\`, you MUST:
+1. Start the dev server (\`pnpm dev:web\` or the configured dev command)
+2. Actually perform the action described in the criterion
+3. Observe the real result (HTTP response, browser behavior, console output)
+4. Report the ACTUAL output, not what the code "should" do
+
+Code-path verification (reading code and reasoning about what it does) is NOT
+sufficient for scenario criteria. The evaluator will test these at runtime and
+catch bugs that only manifest during execution (stale references, missing imports,
+race conditions, wrong response shapes).
+
+If you cannot perform runtime verification (e.g., missing credentials, external
+service unavailable), report the criterion as \`status: "untested"\` with the
+reason — NEVER report \`status: "pass"\` for criteria you did not actually execute.`);
 
   // 6b. Repo writer rule
   sections.push(`## Repo Writer Rule
@@ -362,7 +379,11 @@ If the file does not exist, continue normally. This check should be quick — ju
   sections.push(`## Automated Quality Gates
 
 The harness will automatically run these checks AFTER you claim done:
-- \`npx tsc --noEmit\` (if tsconfig.json exists) -- MUST pass or you will be sent back to fix
+- TypeScript typecheck -- MUST pass or you will be sent back to fix
+  **WARNING:** Never run \`npx tsc --noEmit\` from the workspace root in a monorepo.
+  The root tsconfig.json may have \`"files": []\` and compile nothing (false green).
+  Instead run per-package: \`pnpm exec tsc --noEmit --project packages/<pkg>/tsconfig.json\`
+  or use \`tsc -b --noEmit\` for project references.
 - \`npm test\` / \`npx vitest run\` (if test script exists) -- MUST pass or you will be sent back to fix
 
 **Run these yourself before emitting the result envelope.** If they fail, the harness will
@@ -392,11 +413,28 @@ Run \`/code-review\` (but don't post to GitHub — just review locally and fix a
 
 Before claiming done:
 1. Run every acceptance criterion's verification command
-2. Run \`npx tsc --noEmit\` (if TypeScript project) and fix all errors
-3. Run the test suite and fix all failures
-4. Classify each criterion as: pass, fail, or unknown
+2. Run typecheck on EACH package you modified — NOT from the workspace root.
+   For each modified package: \`cd packages/<pkg> && npx tsc --noEmit\`
+   The workspace root \`npx tsc --noEmit\` may silently pass with \`"files": []\`.
+3. Run the FULL test suite using the same command the gate runs: \`npm test\`
+   from the workspace root. Do NOT substitute per-package \`npx vitest run\` —
+   the gate runs \`turbo run test\` across ALL packages and catches cross-package
+   regressions that per-package runs miss. If \`npm test\` fails, check whether
+   failures are pre-existing (unrelated packages) or regressions from your changes.
+4. Classify each criterion as: pass, fail, unknown, or untested
+   - \`pass\`: you executed the verification and it succeeded
+   - \`fail\`: you executed the verification and it failed
+   - \`unknown\`: you could not determine the result
+   - \`untested\`: the criterion requires credentials, external services, or
+     runtime conditions that are not available — you could NOT execute the
+     verification. Never report "pass" for untested criteria.
 5. If ANY blocking criterion is "fail" or "unknown", keep working
 6. Only emit the result envelope when all blocking criteria pass
+7. Cross-check data contracts: if your UI reads data from an API endpoint,
+   read the backend handler source and verify every field your component
+   expects is actually present in the response. Do not assume the backend
+   returns what the contract describes — verify the actual handler code.
+   This is especially important when the backend was built in a previous packet.
 
 ### Proposed Commit Message
 \`${contract.proposedCommitMessage}\`

@@ -329,7 +329,7 @@ export const MicroFanoutUsedSchema = z.object({
 
 export const SelfCheckResultSchema = z.object({
   criterionId: z.string(),
-  status: z.enum(["pass", "fail", "unknown"]),
+  status: z.enum(["pass", "fail", "unknown", "untested"]),
   evidence: z.string(),
 });
 

@@ -169,7 +169,7 @@ export function makeTypecheckGate(): ToolGate {
   return {
     name: "typecheck",
     description: "TypeScript compilation succeeds with no errors",
-    command: "npx tsc --noEmit",
+    command: "npx tsc -b --noEmit",
     blocking: true,
     timeoutMs: 120_000, // 2 minutes
     parseOutput: (_stdout, stderr, exitCode) => {
@@ -418,14 +418,14 @@ export function synthesizeEvalReportFromGates(
     criterionId: `gate:${f.gate}`,
     description: f.summary,
     evidence: f.errors.join("\n"),
-    reproduction: [f.gate === "typecheck" ? "npx tsc --noEmit" : f.gate === "test" ? "npm test" : f.gate],
+    reproduction: [f.gate === "typecheck" ? "npx tsc -b --noEmit" : f.gate === "test" ? "npm test" : f.gate],
     diagnosticHypothesis: `Gate '${f.gate}' failed: ${f.summary}`,
     filesInvolved: [],
   }));
 
   const nextActions = failures.map((f) => {
     if (f.gate === "typecheck") {
-      return `Fix TypeScript compilation errors. Run \`npx tsc --noEmit\` and resolve all errors before claiming done.`;
+      return `Fix TypeScript compilation errors. Run \`npx tsc -b --noEmit\` (or per-package: \`cd packages/<pkg> && npx tsc --noEmit\`) and resolve all errors before claiming done.`;
     }
     if (f.gate === "test") {
       return `Fix failing tests. Run the test suite and ensure all tests pass before claiming done.`;
