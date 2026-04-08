@@ -131,7 +131,11 @@ processes on the same ports first.`,
 Before browser testing, check package.json for the dev command, start it with
 run_in_background=true, and navigate to the URL it prints. Kill any stale
 processes on the same ports first.
-Previous evaluator sessions have failed because stale servers were serving outdated code.`,
+Previous evaluator sessions have failed because stale servers were serving outdated code.
+
+**Before concluding credentials are unavailable:** Read the workspace \`.env\` file.
+If CLERK_SECRET_KEY, VITE_CLERK_PUBLISHABLE_KEY, or other required keys are present,
+the dev server WILL work — start it and do runtime verification.`,
 
   qa: `## Environment Setup
 

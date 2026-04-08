@@ -13,6 +13,25 @@ import type {
   RiskRegister,
   DevServerConfig,
 } from "../schemas.js";
+
+/**
+ * Options bag for `buildBuilderPrompt`.
+ *
+ * All fields are optional — only `spec` is typically required for a meaningful
+ * prompt, but the function degrades gracefully without it.
+ */
+export interface BuilderPromptOptions {
+  spec?: string;
+  riskRegister?: RiskRegister;
+  priorEvalReport?: EvaluatorReport;
+  contextOverrides?: string;
+  /** Absolute path to the nudge file the builder checks between steps. */
+  nudgeFilePath?: string;
+  /** Effective workspace dir (already collapsed — pass undefined if same as repoRoot). */
+  workspaceDir?: string;
+  completionSummaries?: string;
+  devServer?: DevServerConfig;
+}
 import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
@@ -25,15 +44,19 @@ import {
 
 export function buildBuilderPrompt(
   contract: PacketContract,
-  spec: string,
-  riskRegister?: RiskRegister,
-  priorEvalReport?: EvaluatorReport,
-  contextOverrides?: string,
-  nudgeFilePath?: string,
-  workspaceDir?: string,
-  completionSummaries?: string,
-  devServer?: DevServerConfig,
+  opts: BuilderPromptOptions = {},
 ): string {
+  const {
+    spec = "",
+    riskRegister,
+    priorEvalReport,
+    contextOverrides,
+    nudgeFilePath,
+    workspaceDir,
+    completionSummaries,
+    devServer,
+  } = opts;
+
   const sections: string[] = [];
 
   // 0. Workspace directory guidance (if using a separate workspace)

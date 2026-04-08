@@ -60,13 +60,14 @@ import { renderStatus, renderStatusMarkdown } from "./status-renderer.js";
 import { runPlanner, type RevisionContext } from "./planner.js";
 import { runPlanReview } from "./plan-reviewer.js";
 import { negotiateContract } from "./contract-negotiator.js";
-import { runBuilder, type BuilderRunResult } from "./packet-runner.js";
+import { runBuilder, type BuilderRunResult, type BuilderContext } from "./packet-runner.js";
 import {
   runEvaluator,
   hasContractGap,
   processProposedCriteria,
   isInvalidDualReport,
   assignCriterionIds,
+  type EvaluatorContext,
 } from "./evaluator-runner.js";
 import { findLatestTranscript, readPriorSessionId } from "./session-recovery.js";
 import { recoverFromCrashedSession } from "./recovery-agent.js";
@@ -674,13 +675,6 @@ async function handlePacketSelection(
       }
       // Transition to QA review instead of completed
       return transition(repoRoot, runState, "qa_review");
-    } else if (runState.completedPacketIds.length === runState.packetOrder.length && !isRound2) {
-      // R1 packets all done — same QA routing
-      if (config.skipQA) {
-        appendEvent(repoRoot, runState.runId, { event: "run.completed", phase: "completed" });
-        return transition(repoRoot, runState, "completed");
-      }
-      return transition(repoRoot, runState, "qa_review");
     } else {
       appendEvent(repoRoot, runState.runId, {
         event: "run.needs_human",
@@ -799,13 +793,20 @@ async function executeBuilder(
   const contextOverrides = readContextOverrides(repoRoot, runState.runId);
   const allCompletedIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
   const completionSummaries = readCompletionSummaries(repoRoot, runState.runId, allCompletedIds);
-  return runBuilder(factory.forRole("builder"), contract, {
+  const builderCtx: BuilderContext = {
     repoRoot,
     workspaceDir,
     runId: runState.runId,
     packetId,
     config,
-  }, readSpec(repoRoot, runState.runId), readRiskRegister(repoRoot, runState.runId), evalReport, contextOverrides, completionSummaries, resumeSessionId ?? undefined);
+    spec: readSpec(repoRoot, runState.runId),
+    riskRegister: readRiskRegister(repoRoot, runState.runId),
+    priorEvalReport: evalReport,
+    contextOverrides,
+    completionSummaries,
+    resumeSessionId: resumeSessionId ?? undefined,
+  };
+  return runBuilder(factory.forRole("builder"), contract, builderCtx);
 }
 
 async function handleBuilding(
@@ -933,13 +934,22 @@ async function handleEvaluation(
     repoRoot, runState.runId, packetId, activeOrder,
   );
 
-  const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, {
+  const evaluatorCtx: EvaluatorContext = {
     repoRoot,
     workspaceDir,
     runId: runState.runId,
     packetId,
     config,
-  }, readRiskRegister(repoRoot, runState.runId), evaluatorGuide, completionSummaries, gateResultsSummary, recoveryContext ?? undefined, futurePacketsSummary, config.devServer, resumeSessionId ?? undefined, builderTranscriptPath ?? undefined);
+    riskRegister: readRiskRegister(repoRoot, runState.runId),
+    evaluatorGuide,
+    completionSummaries,
+    gateResultsSummary,
+    recoveryContext: recoveryContext ?? undefined,
+    futurePacketsSummary,
+    resumeSessionId: resumeSessionId ?? undefined,
+    builderTranscriptPath: builderTranscriptPath ?? undefined,
+  };
+  const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, evaluatorCtx);
 
   if (!result.report) {
     // Evaluator session crashed without producing output — retry
@@ -1110,9 +1120,20 @@ async function handleFixing(
 
   // Count fix attempts from events
   const events = readEvents(repoRoot, runState.runId);
-  // Count only fix-phase builder starts, not the initial build
+
+  // Find the most recent fix counter reset for this packet (watermark)
+  const lastReset = [...events].reverse().find(
+    (e) => e.event === "packet.fix_counter_reset" && e.packetId === packetId,
+  );
+  const lastResetTime = lastReset ? new Date(lastReset.ts).getTime() : 0;
+
+  // Count only fix-phase builder starts after the last reset (or all if no reset)
   const fixAttempts = events.filter(
-    (e) => e.event === "builder.started" && e.packetId === packetId && e.phase === "fixing_packet",
+    (e) =>
+      e.event === "builder.started" &&
+      e.packetId === packetId &&
+      e.phase === "fixing_packet" &&
+      new Date(e.ts).getTime() > lastResetTime,
   ).length;
 
   if (fixAttempts >= config.maxFixLoopsPerPacket) {
@@ -1137,8 +1158,13 @@ async function handleFixing(
   // Resume only when retrying a crashed fix attempt (not starting a new fix iteration).
   // Detect: if the last builder.started in fixing_packet was NOT followed by evaluator.started,
   // the builder crashed and we should resume. If evaluator ran, it's a new iteration — fresh start.
+  // Only look at events after the last fix counter reset (watermark) to avoid resuming stale sessions.
   const lastBuilderFixStart = [...events].reverse().find(
-    (e) => e.event === "builder.started" && e.packetId === packetId && e.phase === "fixing_packet",
+    (e) =>
+      e.event === "builder.started" &&
+      e.packetId === packetId &&
+      e.phase === "fixing_packet" &&
+      new Date(e.ts).getTime() > lastResetTime,
   );
   const evalFollowed = lastBuilderFixStart && events.some(
     (e) => e.event === "evaluator.started" && e.packetId === packetId &&
@@ -2080,6 +2106,83 @@ async function processInbox(
             runState = await transition(repoRoot, runState, "completed");
           }
           break;
+
+        case "force_approve": {
+          const packetId = msg.packetId ?? runState.currentPacketId;
+          if (!packetId) break;
+
+          // Only valid during evaluating_packet or fixing_packet phases
+          if (runState.phase !== "evaluating_packet" && runState.phase !== "fixing_packet") {
+            appendEvent(repoRoot, runState.runId, {
+              event: "poke.responded",
+              detail: `force_approve ignored — only valid during evaluating_packet or fixing_packet (current: ${runState.phase})`,
+            });
+            break;
+          }
+
+          appendEvent(repoRoot, runState.runId, {
+            event: "evaluator.passed",
+            packetId,
+            detail: `Force-approved by operator: ${msg.message ?? "no reason given"}`,
+          });
+          appendEvent(repoRoot, runState.runId, {
+            event: "packet.done",
+            packetId,
+            detail: "",
+          });
+
+          await markPacketStatus(repoRoot, runState.runId, packetId, "done");
+
+          const isR2ForceApprove = runState.round >= 2 && runState.round2PacketOrder.includes(packetId);
+          const compUpdateForceApprove: Partial<RunState> = isR2ForceApprove
+            ? {
+                round2CompletedPacketIds: runState.round2CompletedPacketIds.includes(packetId)
+                  ? runState.round2CompletedPacketIds
+                  : [...runState.round2CompletedPacketIds, packetId],
+              }
+            : {
+                completedPacketIds: runState.completedPacketIds.includes(packetId)
+                  ? runState.completedPacketIds
+                  : [...runState.completedPacketIds, packetId],
+              };
+
+          runState = updateRun(repoRoot, runState.runId, {
+            phase: "selecting_packet",
+            currentPacketId: null,
+            failedPacketIds: runState.failedPacketIds.filter((id) => id !== packetId),
+            ...compUpdateForceApprove,
+          });
+          break;
+        }
+
+        case "reset_fix_counter": {
+          const packetId = msg.packetId ?? runState.currentPacketId;
+          if (!packetId) break;
+
+          appendEvent(repoRoot, runState.runId, {
+            event: "packet.fix_counter_reset",
+            packetId,
+            detail: msg.message ?? "Fix counter reset by operator",
+          });
+
+          // Unfail the packet if it was marked failed
+          const unfailedList = runState.failedPacketIds.filter((id) => id !== packetId);
+
+          // If we're in needs_human because this packet exhausted fix loops,
+          // reset to fixing_packet so the builder can try again
+          if (runState.phase === "needs_human") {
+            runState = updateRun(repoRoot, runState.runId, {
+              phase: "fixing_packet",
+              currentPacketId: packetId,
+              failedPacketIds: unfailedList,
+            });
+          } else {
+            runState = updateRun(repoRoot, runState.runId, {
+              failedPacketIds: unfailedList,
+            });
+          }
+          break;
+        }
       }
 
       // Rename to CONSUMED__ prefix instead of deleting — preserves history

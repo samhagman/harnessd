@@ -12,13 +12,11 @@ import type {
   PacketContract,
   BuilderReport,
   EvaluatorReport,
-  RunState,
   RiskRegister,
   ProjectConfig,
   EvaluatorGuide,
   ProposedCriterion,
   AcceptanceCriterion,
-  DevServerConfig,
 } from "./schemas.js";
 import { EvaluatorReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
@@ -84,12 +82,31 @@ export function isIncompleteEvaluation(validation: VerdictValidation): boolean {
   return validation.missingCriterionIds.length > validation.totalCount / 2;
 }
 
-export interface EvaluatorRunnerConfig {
+/**
+ * All configuration and optional context needed to run the evaluator.
+ * Merges what was previously `EvaluatorRunnerConfig` with the optional
+ * positional context params into a single options bag.
+ *
+ * Note: `devServer` is sourced from `ctx.config.devServer` — do not add it
+ * here separately.
+ */
+export interface EvaluatorContext {
+  // Core identity
   repoRoot: string;
   workspaceDir?: string;
   runId: string;
   packetId: string;
   config: ProjectConfig;
+
+  // Rich context (optional)
+  riskRegister?: RiskRegister;
+  evaluatorGuide?: EvaluatorGuide;
+  completionSummaries?: string;
+  gateResultsSummary?: string;
+  recoveryContext?: string;
+  futurePacketsSummary?: string;
+  builderTranscriptPath?: string;
+  resumeSessionId?: string;
 }
 
 export interface EvaluatorRunResult {
@@ -103,39 +120,39 @@ export interface EvaluatorRunResult {
  *
  * Returns the evaluator report or null if the evaluator failed to produce one.
  */
-
 export async function runEvaluator(
   backend: AgentBackend,
   contract: PacketContract,
   builderReport: BuilderReport,
-  runnerConfig: EvaluatorRunnerConfig,
-  riskRegister?: RiskRegister,
-  evaluatorGuide?: EvaluatorGuide,
-  completionSummaries?: string,
-  gateResultsSummary?: string,
-  recoveryContext?: string,
-  futurePacketsSummary?: string,
-  devServer?: DevServerConfig,
-  resumeSessionId?: string,
-  builderTranscriptPath?: string,
+  ctx: EvaluatorContext,
 ): Promise<EvaluatorRunResult> {
-  const effectiveWorkspaceDir = runnerConfig.workspaceDir && runnerConfig.workspaceDir !== runnerConfig.repoRoot
-    ? runnerConfig.workspaceDir
+  const effectiveWorkspaceDir = ctx.workspaceDir && ctx.workspaceDir !== ctx.repoRoot
+    ? ctx.workspaceDir
     : undefined;
 
-  const prompt = resumeSessionId
+  const prompt = ctx.resumeSessionId
     ? CONTINUATION_PROMPT
-    : buildEvaluatorPrompt(contract, builderReport, riskRegister, evaluatorGuide, effectiveWorkspaceDir, completionSummaries, gateResultsSummary, recoveryContext, futurePacketsSummary, devServer, builderTranscriptPath);
+    : buildEvaluatorPrompt(contract, builderReport, {
+        riskRegister: ctx.riskRegister,
+        evaluatorGuide: ctx.evaluatorGuide,
+        workspaceDir: effectiveWorkspaceDir,
+        completionSummaries: ctx.completionSummaries,
+        gateResultsSummary: ctx.gateResultsSummary,
+        recoveryContext: ctx.recoveryContext,
+        futurePacketsSummary: ctx.futurePacketsSummary,
+        devServer: ctx.config.devServer,
+        builderTranscriptPath: ctx.builderTranscriptPath,
+      });
 
   const workerResult = await runWorker(
     backend,
     {
       prompt,
-      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-      cwd: runnerConfig.workspaceDir ?? runnerConfig.repoRoot,
+      ...(ctx.resumeSessionId ? { resume: ctx.resumeSessionId } : {}),
+      cwd: ctx.workspaceDir ?? ctx.repoRoot,
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
-      ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
+      ...(ctx.config.model ? { model: ctx.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
       mcpServers: [createValidationMcpServer(contract.acceptance.map((ac) => ac.id))],
@@ -151,12 +168,12 @@ export async function runEvaluator(
       },
     },
     {
-      repoRoot: runnerConfig.repoRoot,
-      runId: runnerConfig.runId,
+      repoRoot: ctx.repoRoot,
+      runId: ctx.runId,
       role: "evaluator",
-      packetId: runnerConfig.packetId,
-      artifactDir: `packets/${runnerConfig.packetId}/evaluator`,
-      workspaceDir: runnerConfig.workspaceDir,
+      packetId: ctx.packetId,
+      artifactDir: `packets/${ctx.packetId}/evaluator`,
+      workspaceDir: ctx.workspaceDir,
     },
     EvaluatorReportSchema,
   );
@@ -168,7 +185,7 @@ export async function runEvaluator(
 
     if (!verdictValidation.complete) {
       console.log(
-        `[${runnerConfig.runId}] Evaluator verdict map incomplete for ${runnerConfig.packetId}: ` +
+        `[${ctx.runId}] Evaluator verdict map incomplete for ${ctx.packetId}: ` +
         `${verdictValidation.coveredCount}/${verdictValidation.totalCount} criteria covered. ` +
         `Missing: ${verdictValidation.missingCriterionIds.join(", ")}`,
       );
@@ -176,8 +193,8 @@ export async function runEvaluator(
 
     if (verdictValidation.blockingSkipCount > 0) {
       console.log(
-        `[${runnerConfig.runId}] Evaluator skipped ${verdictValidation.blockingSkipCount} blocking criteria ` +
-        `for ${runnerConfig.packetId}`,
+        `[${ctx.runId}] Evaluator skipped ${verdictValidation.blockingSkipCount} blocking criteria ` +
+        `for ${ctx.packetId}`,
       );
     }
 
@@ -188,7 +205,7 @@ export async function runEvaluator(
       isIncompleteEvaluation(verdictValidation)
     ) {
       console.log(
-        `[${runnerConfig.runId}] Overriding evaluator pass → fail for ${runnerConfig.packetId}: ` +
+        `[${ctx.runId}] Overriding evaluator pass → fail for ${ctx.packetId}: ` +
         `majority of criteria missing from verdict map (${verdictValidation.missingCriterionIds.length}/${verdictValidation.totalCount})`,
       );
       workerResult.payload = {
@@ -217,8 +234,8 @@ export async function runEvaluator(
         workerResult.payload,
         contract,
         verdictValidation,
-        runnerConfig.runId,
-        runnerConfig.packetId,
+        ctx.runId,
+        ctx.packetId,
       );
     }
   }

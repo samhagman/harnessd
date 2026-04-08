@@ -525,6 +525,8 @@ export const EventTypeSchema = z.enum([
   "gate.blocked",
   // Criterion expansion events
   "evaluator.criteria_expanded",
+  // Operator control events
+  "packet.fix_counter_reset",
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -778,6 +780,8 @@ export const InboxMessageSchema = z.object({
     "pivot_agent",
     "approve_round2",
     "skip_qa",
+    "force_approve",
+    "reset_fix_counter",
   ]),
   createdAt: z.string(),
   message: z.string().optional(),

@@ -15,6 +15,25 @@ import type {
   EvaluatorGuide,
   DevServerConfig,
 } from "../schemas.js";
+
+/**
+ * Options bag for `buildEvaluatorPrompt`.
+ *
+ * All fields except the base contract + builder report are optional context
+ * that enriches the prompt when available.
+ */
+export interface EvaluatorPromptOptions {
+  riskRegister?: RiskRegister;
+  evaluatorGuide?: EvaluatorGuide;
+  /** Effective workspace dir (already collapsed — pass undefined if same as repoRoot). */
+  workspaceDir?: string;
+  completionSummaries?: string;
+  gateResultsSummary?: string;
+  recoveryContext?: string;
+  futurePacketsSummary?: string;
+  devServer?: DevServerConfig;
+  builderTranscriptPath?: string;
+}
 import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
@@ -28,16 +47,20 @@ import {
 export function buildEvaluatorPrompt(
   contract: PacketContract,
   builderReport: BuilderReport,
-  riskRegister?: RiskRegister,
-  evaluatorGuide?: EvaluatorGuide,
-  workspaceDir?: string,
-  completionSummaries?: string,
-  gateResultsSummary?: string,
-  recoveryContext?: string,
-  futurePacketsSummary?: string,
-  devServer?: DevServerConfig,
-  builderTranscriptPath?: string,
+  opts: EvaluatorPromptOptions = {},
 ): string {
+  const {
+    riskRegister,
+    evaluatorGuide,
+    workspaceDir,
+    completionSummaries,
+    gateResultsSummary,
+    recoveryContext,
+    futurePacketsSummary,
+    devServer,
+    builderTranscriptPath,
+  } = opts;
+
   const sections: string[] = [];
 
   // 0a. Builder transcript access (for investigating builder's reasoning)
@@ -532,6 +555,18 @@ as "skip" with a skipReason explaining why you could not verify it.
 
 If the builder's self-check says "pass" but you cannot independently reproduce the
 evidence, the criterion verdict is "skip", not "pass".
+
+**Skips are expensive.** Every \`skip\` on a blocking criterion forces the operator to
+intervene manually or wastes a fix loop (the builder cannot fix "missing credentials").
+Before marking ANY criterion as \`skip\`:
+1. Check the workspace \`.env\` file for the required credentials
+2. Attempt to start the dev server — if credentials are in \`.env\`, the server should work
+3. Only mark \`skip\` if the server genuinely cannot start for reasons beyond your control
+4. If you mark \`skip\`, explain EXACTLY what credential or service is missing and why
+
+A \`skip\` verdict means "I tried and could not verify" — NOT "I chose not to try."
+Code-path analysis alone does NOT satisfy scenario criteria when runtime verification
+is possible. Start the dev server. Make the HTTP request. Observe the actual response.
 
 ### Criteria Requiring Verdicts
 

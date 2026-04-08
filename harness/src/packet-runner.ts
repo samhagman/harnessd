@@ -28,12 +28,29 @@ import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 
-export interface PacketRunnerConfig {
+/**
+ * All configuration and optional context needed to run the builder.
+ * Merges what was previously `PacketRunnerConfig` with the optional
+ * positional context params into a single options bag.
+ *
+ * Note: `devServer` is sourced from `ctx.config.devServer` — do not add it
+ * here separately.
+ */
+export interface BuilderContext {
+  // Core identity
   repoRoot: string;
   workspaceDir?: string;
   runId: string;
   packetId: string;
   config: ProjectConfig;
+
+  // Build context (optional)
+  spec: string;
+  riskRegister?: RiskRegister;
+  priorEvalReport?: EvaluatorReport;
+  contextOverrides?: string;
+  completionSummaries?: string;
+  resumeSessionId?: string;
 }
 
 export interface BuilderRunResult {
@@ -48,37 +65,38 @@ export interface BuilderRunResult {
 export async function runBuilder(
   backend: AgentBackend,
   contract: PacketContract,
-  runnerConfig: PacketRunnerConfig,
-  spec: string,
-  riskRegister?: RiskRegister,
-  priorEvalReport?: EvaluatorReport,
-  contextOverrides?: string,
-  completionSummaries?: string,
-  resumeSessionId?: string,
+  ctx: BuilderContext,
 ): Promise<BuilderRunResult> {
   // Build the nudge file path — the builder will check this periodically
-  const runDir = getRunDir(runnerConfig.repoRoot, runnerConfig.runId);
-  const nudgeFilePath = path.join(runDir, "packets", runnerConfig.packetId, "nudge.md");
+  const runDir = getRunDir(ctx.repoRoot, ctx.runId);
+  const nudgeFilePath = path.join(runDir, "packets", ctx.packetId, "nudge.md");
 
-  const effectiveWorkspaceDir = runnerConfig.workspaceDir && runnerConfig.workspaceDir !== runnerConfig.repoRoot
-    ? runnerConfig.workspaceDir
+  const effectiveWorkspaceDir = ctx.workspaceDir && ctx.workspaceDir !== ctx.repoRoot
+    ? ctx.workspaceDir
     : undefined;
 
-  const prompt = resumeSessionId
+  const prompt = ctx.resumeSessionId
     ? CONTINUATION_PROMPT
-    : buildBuilderPrompt(
-        contract, spec, riskRegister, priorEvalReport, contextOverrides, nudgeFilePath, effectiveWorkspaceDir, completionSummaries, runnerConfig.config.devServer,
-      );
+    : buildBuilderPrompt(contract, {
+        spec: ctx.spec,
+        riskRegister: ctx.riskRegister,
+        priorEvalReport: ctx.priorEvalReport,
+        contextOverrides: ctx.contextOverrides,
+        nudgeFilePath,
+        workspaceDir: effectiveWorkspaceDir,
+        completionSummaries: ctx.completionSummaries,
+        devServer: ctx.config.devServer,
+      });
 
   const workerResult = await runWorker(
     backend,
     {
       prompt,
-      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-      cwd: runnerConfig.workspaceDir ?? runnerConfig.repoRoot,
+      ...(ctx.resumeSessionId ? { resume: ctx.resumeSessionId } : {}),
+      cwd: ctx.workspaceDir ?? ctx.repoRoot,
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
-      ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
+      ...(ctx.config.model ? { model: ctx.config.model } : {}),
       mcpServers: [createValidationMcpServer()],
       sandboxMode: "workspace-write",
       hooks: {
@@ -88,20 +106,20 @@ export async function runBuilder(
       },
     },
     {
-      repoRoot: runnerConfig.repoRoot,
-      runId: runnerConfig.runId,
+      repoRoot: ctx.repoRoot,
+      runId: ctx.runId,
       role: "builder",
-      packetId: runnerConfig.packetId,
-      artifactDir: `packets/${runnerConfig.packetId}/builder`,
-      heartbeatIntervalSeconds: runnerConfig.config.heartbeatWriteSeconds,
-      workspaceDir: runnerConfig.workspaceDir,
+      packetId: ctx.packetId,
+      artifactDir: `packets/${ctx.packetId}/builder`,
+      heartbeatIntervalSeconds: ctx.config.heartbeatWriteSeconds,
+      workspaceDir: ctx.workspaceDir,
     },
     BuilderReportSchema,
   );
 
   // Write builder report artifact
   if (workerResult.payload) {
-    const reportPath = path.join(runDir, "packets", runnerConfig.packetId, "builder", "builder-report.json");
+    const reportPath = path.join(runDir, "packets", ctx.packetId, "builder", "builder-report.json");
     atomicWriteJson(reportPath, workerResult.payload);
   }
 
