@@ -56,6 +56,24 @@ Before planning, use your web search tools to research:
 - **Technical best practices**: Search for current best practices, recommended libraries, and common patterns for the tech stack involved.
 Use perplexity_search or perplexity_ask to find real, current information. Ground your plan in research, not assumptions.`);
 
+  // 1b. Mandatory validate_envelope gate
+  sections.push(`## MANDATORY: Validate Before Emitting
+
+You MUST validate your result envelope BEFORE emitting it. This is not optional.
+If you emit without validating, your output will be REJECTED and you will have to redo your work.
+
+**Option 1 — MCP tool (preferred):**
+Call \`validate_envelope\` with schema_name="PlannerOutput" and json_string=<your JSON>
+
+**Option 2 — CLI (if MCP tool unavailable):**
+\`\`\`bash
+echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema PlannerOutput --json -
+\`\`\`
+
+If validation returns {valid: false}, FIX the errors and validate again.
+ONLY after getting {valid: true} should you emit the envelope.
+Do NOT skip this step. Do NOT emit first and hope it works.`);
+
   // 2. Planning constraints
   sections.push(`## Planning Constraints
 
@@ -123,6 +141,35 @@ Set this to \`true\` for packets that:
 
 The operator can toggle this during plan review.`);
 
+  // 4d. Dev server discovery
+  sections.push(`## Dev Server Discovery
+
+Examine the project's package.json scripts to identify how to start the development server.
+Look for: "dev", "dev:web", "start", or similar scripts.
+
+Determine:
+- The exact command to start both frontend and backend
+- The frontend port (typically 5173 for Vite, 3000 for Next.js)
+- The backend/API port if separate (typically 3000, 3001)
+- A ready pattern in stdout that indicates the server is up (e.g., "Local:" for Vite)
+
+If the dev script supports port flags, set explicit ports to avoid conflicts:
+  e.g., "pnpm dev:web --api-port 3101 --web-port 5174"
+       "npm run dev -- --port 5174"
+       "vite --port 5174"
+
+**You MUST test the dev server before finalizing:**
+1. Run the dev command with run_in_background=true
+2. Wait for the ready pattern in the output
+3. Verify the frontend port responds (curl http://localhost:{port})
+4. Kill the dev server (find PID via lsof, then kill)
+5. Restart it to confirm it starts cleanly a second time
+6. Kill it again — leave a clean environment for the builder
+
+If the test fails, adjust the command/ports and try again.
+
+Include the verified devServer config in your output envelope.`);
+
   // 5. Required outputs
   sections.push(`## Required Outputs
 
@@ -187,7 +234,45 @@ judges the builder's work. Think deeply about:
   security-sensitive or user-facing work where failures are costly.
 
 ### 5. Plan Summary (markdown)
-A short (5-10 line) human-readable summary optimized for quick review.`);
+A short (5-10 line) human-readable summary optimized for quick review.
+
+### 6. Integration Scenarios (JSON)
+For any feature with MULTIPLE VIEWS, MULTI-STEP FLOWS, or CROSS-PACKET DEPENDENCIES,
+generate integration scenarios that test end-to-end user journeys spanning multiple packets.
+These catch bugs that per-packet testing misses:
+- State loss when navigating between views built in different packets
+- Data not being passed correctly between components
+- Forward-and-backward navigation breaking state
+
+Return an object with a \`scenarios\` array. Each scenario:
+- \`id\`: "IS-001", "IS-002", etc.
+- \`name\`: short descriptive name of the user journey
+- \`description\`: full scenario narrative including what state should persist
+- \`packetDependencies\`: array of packet IDs involved in this journey
+- \`steps\`: array of { action: string, expected: string } describing each step
+
+Example:
+\`\`\`json
+{
+  "scenarios": [
+    {
+      "id": "IS-001",
+      "name": "Complete form creation from PDF upload",
+      "description": "User uploads PDF, reviews annotations, builds form, then navigates back. All state must persist across view transitions.",
+      "packetDependencies": ["PKT-003", "PKT-004", "PKT-005"],
+      "steps": [
+        { "action": "Upload a PDF file", "expected": "Auto-detected fields appear as annotations" },
+        { "action": "Edit an annotation (rename a field)", "expected": "Field name updates in real-time" },
+        { "action": "Click Build Form", "expected": "Form editor opens with generated form definition" },
+        { "action": "Click Back to Annotations", "expected": "All annotations including the renamed field are preserved" }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+Generate at least one integration scenario for every multi-view or multi-step feature.
+If the project is simple with no cross-packet flows, return \`{ "scenarios": [] }\`.`);
 
   // 6. Packet type guidance
   sections.push(`## Packet Type Reference
@@ -285,7 +370,26 @@ ${RESULT_START_SENTINEL}
     ],
     "skepticismLevel": "high"
   },
-  "planSummary": "(your plan-summary.md content as a string)"
+  "planSummary": "(your plan-summary.md content as a string)",
+  "integrationScenarios": {
+    "scenarios": [
+      {
+        "id": "IS-001",
+        "name": "...",
+        "description": "...",
+        "packetDependencies": ["PKT-001", "PKT-002"],
+        "steps": [
+          { "action": "...", "expected": "..." }
+        ]
+      }
+    ]
+  },
+  "devServer": {
+    "command": "pnpm dev:web --api-port 3101 --web-port 5174",
+    "port": 5174,
+    "backendPort": 3101,
+    "readyPattern": "Local:"
+  }
 }
 ${RESULT_END_SENTINEL}
 
@@ -293,8 +397,8 @@ ${RESULT_END_SENTINEL}
 - No commentary after the end marker
 - All string fields that contain markdown should use \\n for newlines
 
-**IMPORTANT:** Before emitting the envelope, call the \`validate_envelope\` MCP tool with
-schema_name="PacketContract" (for packets) to check your JSON is valid. Fix any errors it reports before emitting.`);
+**IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
+from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
 
   return sections.join("\n\n");
 }

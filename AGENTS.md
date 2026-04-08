@@ -1,6 +1,6 @@
 # Harnessd
 
-**A contract-driven harness for Claude Code to handle long-running autonomous tasks.**
+**A contract-driven harness for Codex to handle long-running autonomous tasks.**
 
 ---
 
@@ -58,48 +58,22 @@ Harnessd enables AI agents to work autonomously on complex, multi-session tasks 
 
 ---
 
-## Architecture (v2.2)
+## Architecture (v2)
 
 ### Orchestrator
-The top-level state machine. Drives planning → plan review → packet selection → contract negotiation → build → tool gates → evaluate → fix loops → QA → round 2+ planning → completion. Handles rate limits, pokes, nudges, resume, session recovery, and status rendering.
+The top-level state machine. Drives planning → packet selection → contract negotiation → build → evaluate → fix loops → completion. Handles rate limits, pokes, resume, and status rendering.
 
 ### Planner mode
-Read-only agent that expands a user objective into `SPEC.md`, `packets.json`, `risk-register.json`, and `plan-summary.md`. Supports web research via perplexity, interactive interviews (`--interview`), and prior-run context.
-
-### Plan Reviewer
-Adversarial review of planner output (via Codex/GPT-5.4 by default). Multi-round negotiation with the planner. Max rounds configurable (`maxPlanReviewRounds`).
+Read-only agent that expands a user objective into `SPEC.md`, `packets.json`, `risk-register.json`, and `plan-summary.md`.
 
 ### Contract negotiation
-Multi-round loop: contract builder proposes, contract linter validates, contract evaluator reviews. Supports accept/revise/split/escalate decisions. Max 10 rounds (configurable).
+Multi-round loop: contract builder proposes, contract linter validates, contract evaluator reviews. Supports accept/revise/split/escalate decisions. Max 4 rounds (5 for risky packet types).
 
 ### Builder
-The only repo writer. Implements one packet at a time against a finalized contract. Self-checks all acceptance criteria before claiming done. Receives completion summaries from prior packets, context overrides, and nudge files.
-
-### Tool Gates
-Automated quality gates between builder and evaluator. Default gates: typecheck (`tsc --noEmit`) and test (`vitest run`). Custom gates configurable per-project. Failures route back to builder fix loop.
+The only repo writer. Implements one packet at a time against a finalized contract. Self-checks all acceptance criteria before claiming done.
 
 ### Evaluator
-Strictly read-only. Disconfirms completion claims. Reports hard failures (with `diagnosticHypothesis`, `filesInvolved`, `rootCauseLayer`), rubric scores, and contract gaps. Must call `validate_envelope` before emitting. Anti-rationalization rule prevents dismissing unexpected state as "pre-existing."
-
-### QA Runner
-Holistic end-to-end testing after all R1 packets complete. Browser-based verification. Reports issues with diagnostic hypotheses. Multi-round: `maxRounds` configurable (default 10).
-
-### Round 2+ Planner
-Generates targeted fix packets from QA findings. Verifies root causes before creating packets. Round-specific packet IDs (`PKT-R{round}-NNN`).
-
-### Session Recovery
-Native SDK session resume (`resume: sessionId`) for Claude agents — full context on crash recovery. Codex agents fall back to a recovery agent that summarizes prior transcript.
-
-### Completion Summary
-Cross-packet context propagation — summaries of completed packets are passed to subsequent builders and evaluators.
-
-### Multi-Model Backend
-```
-BackendFactory.forRole(role) → AgentBackend
-  ├── ClaudeSdkBackend — planner, builder, contract_builder (session resume, MCP tools)
-  ├── CodexCliBackend  — evaluator, qa_agent, contract_evaluator (CLI validate, no resume)
-  └── FakeBackend      — tests (zero quota, deterministic replay)
-```
+Strictly read-only. Disconfirms completion claims. Reports hard failures, rubric scores, and contract gaps. If a contract gap is found, the packet returns to negotiation (not just a fix loop).
 
 ---
 
@@ -112,9 +86,6 @@ BackendFactory.forRole(role) → AgentBackend
 | **Acceptance criteria** | Mix of hard gates (commands, scenarios, invariants) and rubrics |
 | **Packet types** | bugfix, ui_feature, backend_feature, migration, refactor, long_running_job, integration, tooling |
 | **Result envelope** | `===HARNESSD_RESULT_START===` ... JSON ... `===HARNESSD_RESULT_END===` |
-| **Tool gates** | Automated quality checks (typecheck, test) between builder and evaluator |
-| **QA round** | Holistic e2e testing after all packets; triggers round 2+ fix planning |
-| **Session resume** | Native SDK resume for Claude; transcript-summary fallback for Codex |
 | **AgentBackend** | Abstraction over SDK — enables testing with FakeBackend (zero quota) |
 | **Linear execution** | One packet at a time; parallelism only inside the active builder |
 
@@ -124,26 +95,19 @@ BackendFactory.forRole(role) → AgentBackend
 
 ```
 harnessd/
-├── CLAUDE.md                        # This file
+├── AGENTS.md                        # This file
 ├── HARNESS-BEST-PRACTICES.md        # Core harness philosophy
 │
 ├── harness/                         # The harness implementation
-│   ├── src/                         # Source modules
+│   ├── src/                         # v2 source modules
 │   │   ├── main.ts                  # CLI entry point
 │   │   ├── orchestrator.ts          # Main state machine
 │   │   ├── worker.ts                # Generic agent session runner
 │   │   ├── planner.ts               # Planner mode
-│   │   ├── plan-reviewer.ts         # Adversarial plan review
 │   │   ├── contract-negotiator.ts   # Multi-round negotiation
 │   │   ├── contract-linter.ts       # Pre-evaluator contract validation
 │   │   ├── packet-runner.ts         # Builder execution
 │   │   ├── evaluator-runner.ts      # Read-only evaluator
-│   │   ├── tool-gates.ts            # Typecheck/test gates between builder & evaluator
-│   │   ├── qa-runner.ts             # Holistic e2e QA testing
-│   │   ├── round2-planner.ts        # Targeted fix packets from QA findings
-│   │   ├── completion-summary.ts    # Cross-packet context propagation
-│   │   ├── recovery-agent.ts        # Transcript summary for Codex crash recovery
-│   │   ├── session-recovery.ts      # Native SDK session resume
 │   │   ├── schemas.ts               # Zod schemas + types
 │   │   ├── state-store.ts           # .harnessd/ file management
 │   │   ├── event-log.ts             # Append-only JSONL events
@@ -151,28 +115,19 @@ harnessd/
 │   │   ├── permissions.ts           # Role-based tool restrictions
 │   │   ├── templates.ts             # Acceptance criteria templates
 │   │   ├── background-jobs.ts       # Long-running command tracker
-│   │   ├── validation-tool.ts       # MCP validate_envelope tool
-│   │   ├── prompts/                 # Prompt builders per role (8 files)
+│   │   ├── prompts/                 # Prompt builders per role
 │   │   │   ├── planner-prompt.ts
-│   │   │   ├── plan-review-prompt.ts
 │   │   │   ├── builder-prompt.ts
 │   │   │   ├── evaluator-prompt.ts
-│   │   │   ├── qa-prompt.ts
-│   │   │   ├── round2-planner-prompt.ts
 │   │   │   ├── contract-builder-prompt.ts
 │   │   │   └── contract-evaluator-prompt.ts
 │   │   ├── backend/                 # Agent backend abstraction
 │   │   │   ├── types.ts             # AgentBackend + AgentSession interfaces
-│   │   │   ├── claude-sdk.ts        # Real SDK implementation (session resume)
-│   │   │   ├── codex-cli.ts         # Codex CLI backend (GPT-5.4)
-│   │   │   ├── backend-factory.ts   # Per-role backend selection
+│   │   │   ├── Codex-sdk.ts        # Real SDK implementation (v2 sessions)
 │   │   │   └── fake-backend.ts      # Test double (zero quota, sessions)
 │   │   └── test/                    # vitest test suite
-│   │       ├── unit/                # 11 unit test files
+│   │       ├── unit/                # 8 unit test files
 │   │       └── scenarios/           # 2 scenario test files
-│   │
-│   ├── bin/
-│   │   └── validate-envelope.mts    # CLI validate_envelope for Codex agents
 │   │
 │   ├── run.sh                       # Launch harness
 │   ├── tail.sh                      # Tail logs (multiple modes)
@@ -212,26 +167,13 @@ cd harness && npx tsx src/main.ts --interview "your objective"
 # Agents work in a separate workspace
 cd harness && npx tsx src/main.ts --workspace /tmp/my-project "your objective"
 
-# Name a run explicitly
-cd harness && npx tsx src/main.ts --run-id my-project "your objective"
-
-# Use Codex for adversarial roles
-cd harness && npx tsx src/main.ts --codex-roles evaluator,qa_agent,contract_evaluator "your objective"
-cd harness && npx tsx src/main.ts --codex-model gpt-5.4 --codex-roles evaluator "your objective"
-
-# Override model for all agents
-cd harness && npx tsx src/main.ts --model claude-haiku-4-5-20251001 "your objective"
-
 # Resume an interrupted run
-cd harness && npx tsx src/main.ts --resume [run-id]
+cd harness && npx tsx src/main.ts --resume
 
 # Check status
 ./harness/status.sh
 ./harness/status.sh --json
 ./harness/status.sh --watch
-
-# Send a nudge to a running builder
-./harness/nudge.sh "fix the mobile layout for AC-6"
 
 # Poke a running harness
 ./harness/poke.sh "summarize current packet"
@@ -245,7 +187,7 @@ cd harness && npx tsx src/main.ts --resume [run-id]
 ./harness/tail.sh --evaluator  # latest evaluator transcript
 
 # Tests
-cd harness && npx vitest run           # all tests
+cd harness && npx vitest run           # all tests (148 passing)
 cd harness && npx tsc --noEmit         # typecheck
 ```
 
@@ -298,25 +240,16 @@ cd harness && npx tsc --noEmit         # typecheck
 
 ```json
 {
-  "maxNegotiationRounds": 10,
-  "maxNegotiationRoundsRisky": 10,
-  "maxFixLoopsPerPacket": 10,
+  "maxNegotiationRounds": 6,
+  "maxNegotiationRoundsRisky": 8,
+  "maxFixLoopsPerPacket": 3,
   "staleWorkerMinutes": 15,
   "heartbeatWriteSeconds": 20,
   "resumeBackoffMinutes": [5, 15, 30, 60],
-  "maxConsecutiveResumeFailures": 8,
   "allowBuilderMicroFanout": true,
   "maxBuilderMicroFanoutAgents": 3,
   "allowDirectEditSubagents": false,
-  "renderStatusOnEveryEvent": true,
-  "maxRounds": 10,
-  "qaPassThreshold": { "maxCritical": 0, "maxMajor": 0, "maxMinor": 5 },
-  "skipQA": false,
-  "skipPlanReview": false,
-  "maxPlanReviewRounds": 10,
-  "enableDefaultGates": true,
-  "toolGates": [],
-  "devServer": null
+  "renderStatusOnEveryEvent": true
 }
 ```
 

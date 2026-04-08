@@ -42,6 +42,24 @@ whether it meets quality standards before the builder starts implementation.
 Be rigorous. A weak contract leads to weak implementation and wasted builder cycles.
 Only accept contracts that are specific, testable, and properly scoped.`);
 
+  // 1b. Mandatory validate_envelope gate
+  sections.push(`## MANDATORY: Validate Before Emitting
+
+You MUST validate your result envelope BEFORE emitting it. This is not optional.
+If you emit without validating, your output will be REJECTED and you will have to redo your work.
+
+**Option 1 — MCP tool (preferred):**
+Call \`validate_envelope\` with schema_name="ContractReview" and json_string=<your JSON>
+
+**Option 2 — CLI (if MCP tool unavailable):**
+\`\`\`bash
+echo '<your JSON>' | npx tsx /Users/sam/projects/harnessd/harness/bin/validate-envelope.mts --schema ContractReview --json -
+\`\`\`
+
+If validation returns {valid: false}, FIX the errors and validate again.
+ONLY after getting {valid: true} should you emit the envelope.
+Do NOT skip this step. Do NOT emit first and hope it works.`);
+
   // 2. Packet type expectations
   const isUserVisible = USER_VISIBLE_TYPES.includes(proposal.packetType);
   const isRisky = RISKY_PACKET_TYPES.includes(proposal.packetType);
@@ -150,8 +168,8 @@ This is round ${proposal.round}. ${pragmatismNote(proposal.round)}
 
 Emit the envelope ONCE at the end. No commentary after the end marker.
 
-**IMPORTANT:** Before emitting the envelope, call the \`validate_envelope\` MCP tool with
-schema_name="ContractReview" and your JSON to check it's valid. Fix any errors before emitting.`);
+**IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
+from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
 
   return sections.join("\n\n");
 }

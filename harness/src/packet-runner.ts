@@ -40,6 +40,9 @@ export interface BuilderRunResult {
   workerResult: WorkerResult<BuilderReport>;
 }
 
+const CONTINUATION_PROMPT =
+  "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
+
 /**
  * Run the builder agent on a single packet.
  */
@@ -51,24 +54,34 @@ export async function runBuilder(
   riskRegister?: RiskRegister,
   priorEvalReport?: EvaluatorReport,
   contextOverrides?: string,
+  completionSummaries?: string,
+  resumeSessionId?: string,
 ): Promise<BuilderRunResult> {
   // Build the nudge file path — the builder will check this periodically
   const runDir = getRunDir(runnerConfig.repoRoot, runnerConfig.runId);
   const nudgeFilePath = path.join(runDir, "packets", runnerConfig.packetId, "nudge.md");
 
-  const prompt = buildBuilderPrompt(
-    contract, spec, riskRegister, priorEvalReport, contextOverrides, nudgeFilePath,
-  );
+  const effectiveWorkspaceDir = runnerConfig.workspaceDir && runnerConfig.workspaceDir !== runnerConfig.repoRoot
+    ? runnerConfig.workspaceDir
+    : undefined;
+
+  const prompt = resumeSessionId
+    ? CONTINUATION_PROMPT
+    : buildBuilderPrompt(
+        contract, spec, riskRegister, priorEvalReport, contextOverrides, nudgeFilePath, effectiveWorkspaceDir, completionSummaries, runnerConfig.config.devServer,
+      );
 
   const workerResult = await runWorker(
     backend,
     {
       prompt,
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       cwd: runnerConfig.workspaceDir ?? runnerConfig.repoRoot,
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
       mcpServers: [createValidationMcpServer()],
+      sandboxMode: "workspace-write",
       hooks: {
         PreToolUse: [
           { matcher: "Bash", hooks: [makeBuilderHook()] },
@@ -82,6 +95,7 @@ export async function runBuilder(
       packetId: runnerConfig.packetId,
       artifactDir: `packets/${runnerConfig.packetId}/builder`,
       heartbeatIntervalSeconds: runnerConfig.config.heartbeatWriteSeconds,
+      workspaceDir: runnerConfig.workspaceDir,
     },
     BuilderReportSchema,
   );

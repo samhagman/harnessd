@@ -13,16 +13,29 @@ import type {
   EventEntry,
   StatusSnapshot,
   WorkerRole,
+  AcceptanceCriterion,
 } from "./schemas.js";
 
 // ------------------------------------
 // Status snapshot generation
 // ------------------------------------
 
+/**
+ * Optional criteria context for the current packet. When provided, the
+ * renderer computes a negotiated / evaluator-added / effective breakdown.
+ */
+export interface CriteriaContext {
+  /** All effective acceptance criteria (negotiated + evaluator-added). */
+  criteria: AcceptanceCriterion[];
+  /** Set of criterion IDs that have been verified as passing. */
+  passingIds: Set<string>;
+}
+
 export function renderStatus(
   runState: RunState,
   events: EventEntry[],
   packets: Packet[],
+  criteriaCtx?: CriteriaContext,
 ): StatusSnapshot {
   const now = new Date();
   const startedAt = new Date(runState.createdAt);
@@ -71,6 +84,21 @@ export function renderStatus(
       }
     : null;
 
+  // Compute criteria breakdown when context is available
+  let criteriaBreakdown: StatusSnapshot["criteriaBreakdown"] = null;
+  if (criteriaCtx && criteriaCtx.criteria.length > 0) {
+    const negotiated = criteriaCtx.criteria.filter((c) => c.source !== "evaluator");
+    const evaluatorAdded = criteriaCtx.criteria.filter((c) => c.source === "evaluator");
+    criteriaBreakdown = {
+      negotiatedPass: negotiated.filter((c) => criteriaCtx.passingIds.has(c.id)).length,
+      negotiatedTotal: negotiated.length,
+      evaluatorPass: evaluatorAdded.filter((c) => criteriaCtx.passingIds.has(c.id)).length,
+      evaluatorTotal: evaluatorAdded.length,
+      effectivePass: criteriaCtx.criteria.filter((c) => criteriaCtx.passingIds.has(c.id)).length,
+      effectiveTotal: criteriaCtx.criteria.length,
+    };
+  }
+
   return {
     runId: runState.runId,
     phase: runState.phase,
@@ -86,6 +114,7 @@ export function renderStatus(
     lastEvent,
     alerts,
     nextAction,
+    criteriaBreakdown,
     updatedAt: now.toISOString(),
   };
 }
@@ -103,6 +132,11 @@ export function renderStatusMarkdown(snapshot: StatusSnapshot): string {
   lines.push(`**Phase:** \`${snapshot.phase}\``);
   lines.push(`**Elapsed:** ${snapshot.elapsed}`);
   lines.push(`**Progress:** ${snapshot.packetsComplete}/${snapshot.packetsTotal} packets`);
+  // Show round indicator for QA/R2 phases
+  if (snapshot.phase === "qa_review" || snapshot.phase === "round2_planning" ||
+      snapshot.phase === "awaiting_round2_approval") {
+    lines.push(`**Round:** QA/R2 in progress`);
+  }
   lines.push("");
 
   // Current packet
@@ -113,6 +147,10 @@ export function renderStatusMarkdown(snapshot: StatusSnapshot): string {
     lines.push(`- **Status:** ${snapshot.currentPacket.status}`);
     if (snapshot.contractRound !== null) {
       lines.push(`- **Contract Round:** ${snapshot.contractRound}`);
+    }
+    if (snapshot.criteriaBreakdown) {
+      const cb = snapshot.criteriaBreakdown;
+      lines.push(`- **Criteria:** ${cb.negotiatedPass}/${cb.negotiatedTotal} negotiated | ${cb.evaluatorPass}/${cb.evaluatorTotal} evaluator-added | ${cb.effectivePass}/${cb.effectiveTotal} effective`);
     }
     lines.push("");
   }
@@ -190,8 +228,16 @@ function describeNextAction(runState: RunState): string {
     case "needs_human":
       return "Waiting for human input. Check outbox/ for details.";
     case "completed":
-      return "Run completed successfully.";
+      return "Run completed successfully.\n\n---\n## Ready for deferred work report!";
     case "failed":
-      return "Run failed. Check events.jsonl and outbox/ for details.";
+      return "Run failed. Check events.jsonl and outbox/ for details.\n\n---\n## Ready for deferred work report!";
+    case "qa_review":
+      return `QA agent is testing the complete feature end-to-end (round ${runState.round ?? 1}).`;
+    case "round2_planning":
+      return "Round 2 planner is creating targeted fix packets based on QA findings.";
+    case "awaiting_round2_approval":
+      return "Round 2 plan ready for review. Approve via inbox to continue.";
+    case "plan_review":
+      return "Codex is reviewing the plan for technical issues.";
   }
 }

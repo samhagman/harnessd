@@ -16,7 +16,7 @@
 
 import type { PacketContract, PacketType, AcceptanceTemplate, CriterionKind } from "./schemas.js";
 import { PacketContractSchema, RISKY_PACKET_TYPES } from "./schemas.js";
-import { getTemplate } from "./templates.js";
+import { getTemplate, getUxQualityCriteriaIds } from "./templates.js";
 
 export interface LintResult {
   valid: boolean;
@@ -29,6 +29,7 @@ const MAX_LIKELY_FILES_BY_SIZE = {
   S: 8,
   M: 20,
   L: 50,
+  XL: 80,
 };
 
 /**
@@ -39,7 +40,7 @@ const MAX_LIKELY_FILES_BY_SIZE = {
 export function lintContract(
   proposal: unknown,
   packetType: PacketType,
-  estimatedSize?: "S" | "M" | "L",
+  estimatedSize?: "S" | "M" | "L" | "XL",
 ): LintResult {
   const errors: string[] = [];
 
@@ -139,6 +140,23 @@ export function lintContract(
         threshold: 3,
         dimensions: ["quality", "consistency", "polish"],
       };
+    }
+  }
+
+  // 11. UX quality checklist for ui_feature packets
+  //     Warn (not error) if a ui_feature contract is missing UX quality criteria.
+  //     This is advisory — the contract builder may have valid reasons to omit some,
+  //     but the linter should surface the gap.
+  if (packetType === "ui_feature") {
+    const uxCriteriaIds = getUxQualityCriteriaIds();
+    const presentIds = new Set(contract.acceptance.map((c) => c.id));
+    const missingUxIds = uxCriteriaIds.filter((id) => !presentIds.has(id));
+    if (missingUxIds.length > 0) {
+      errors.push(
+        `ui_feature contract is missing UX quality criteria: ${missingUxIds.join(", ")}. ` +
+        `Consider adding these to ensure navigation, state persistence, console health, ` +
+        `loading states, empty states, and error handling are verified.`,
+      );
     }
   }
 
