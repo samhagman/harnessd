@@ -25,6 +25,20 @@ export interface LintResult {
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
 
+/** Evidence that requires the app to actually run (not just reading source). */
+const RUNTIME_EVIDENCE_KEYWORDS =
+  /runtime|browser|curl|http|screenshot|dev.server|navigate|response|status.code|observed|console|running|start.*server|fetch|api.call/i;
+
+/** Domain stop-words filtered from objective/outOfScope overlap detection. */
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "will", "into",
+  "must", "should", "when", "each", "all", "any", "new", "add", "update",
+  "create", "implement", "support", "use", "using", "user", "request",
+  "response", "data", "service", "component", "page", "error", "feature",
+  "validation", "test", "system", "flow", "state", "check", "handle",
+  "manage", "process", "perform",
+]);
+
 const MAX_LIKELY_FILES_BY_SIZE = {
   S: 8,
   M: 20,
@@ -149,14 +163,61 @@ export function lintContract(
   //     but the linter should surface the gap.
   if (packetType === "ui_feature") {
     const uxCriteriaIds = getUxQualityCriteriaIds();
-    const presentIds = new Set(contract.acceptance.map((c) => c.id));
-    const missingUxIds = uxCriteriaIds.filter((id) => !presentIds.has(id));
+    const presentIds = contract.acceptance.map((c) => c.id);
+    // Match if any criterion ID ends with the UX criterion ID (e.g. "AC-006-ux-navigation" satisfies "ux-navigation")
+    const missingUxIds = uxCriteriaIds.filter((uxId) => !presentIds.some((pid) => pid === uxId || pid.endsWith(uxId)));
     if (missingUxIds.length > 0) {
       errors.push(
         `ui_feature contract is missing UX quality criteria: ${missingUxIds.join(", ")}. ` +
         `Consider adding these to ensure navigation, state persistence, console health, ` +
         `loading states, empty states, and error handling are verified.`,
       );
+    }
+  }
+
+  // 12. Runtime evidence check for scenario/api criteria on user-visible packets.
+  //     Evaluators cannot verify runtime behavior from code review alone — evidence
+  //     must include something that requires the app to actually run.
+  if (USER_VISIBLE_TYPES.includes(packetType)) {
+    for (const criterion of contract.acceptance) {
+      if (criterion.kind === "scenario" || criterion.kind === "api") {
+        const hasRuntimeEvidence = criterion.evidenceRequired.some((e) =>
+          RUNTIME_EVIDENCE_KEYWORDS.test(e),
+        );
+
+        if (!hasRuntimeEvidence) {
+          errors.push(
+            `Scenario/API criterion '${criterion.id}' has no runtime evidence. ` +
+              `Add runtime verification (curl output, browser observation, dev server response).`,
+          );
+        }
+      }
+    }
+  }
+
+  // 13. Warn if outOfScope items overlap with the packet objective.
+  //     A common authoring mistake: excluding "error handling" or "auth flows" in
+  //     outOfScope while the packet objective is to implement exactly those flows.
+  if (contract.objective && contract.outOfScope.length > 0) {
+    const objectiveWords = new Set(
+      contract.objective
+        .toLowerCase()
+        .match(/\b[a-z]{3,}\b/g)
+        ?.filter((w) => !STOP_WORDS.has(w)) ?? [],
+    );
+
+    for (const item of contract.outOfScope) {
+      const itemWords = item.toLowerCase().match(/\b[a-z]{3,}\b/g) ?? [];
+      const overlapping = itemWords.filter((w) => objectiveWords.has(w));
+      // Flag only when 2+ significant words overlap — avoids noise from coincidental
+      // single-word matches (e.g. "user" appears everywhere).
+      if (overlapping.length >= 2) {
+        const truncated = item.length > 80 ? `${item.substring(0, 80)}...` : item;
+        errors.push(
+          `Out-of-scope item '${truncated}' shares keywords with the packet objective (${overlapping.slice(0, 3).join(", ")}). ` +
+            `Verify this doesn't exclude testing the primary flow.`,
+        );
+      }
     }
   }
 

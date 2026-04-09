@@ -787,6 +787,8 @@ export const InboxMessageSchema = z.object({
   message: z.string().optional(),
   packetId: z.string().optional(),
   context: z.string().optional(),
+  /** force_approve only: set to true to acknowledge any blocking skips being overridden */
+  blockingSkipsAcknowledged: z.boolean().optional(),
 });
 
 export type InboxMessage = z.infer<typeof InboxMessageSchema>;

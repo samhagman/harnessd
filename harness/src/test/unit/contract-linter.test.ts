@@ -278,4 +278,174 @@ describe("lintContract", () => {
     const result = lintContract(contract, "tooling");
     expect(result.valid).toBe(true);
   });
+
+  // Rule 12: Runtime evidence for scenario/api criteria
+
+  it("scenario criterion with only code-review evidence fails on user-visible packet", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "POST /api/items creates a record",
+            blocking: true,
+            evidenceRequired: ["code review"], // no runtime evidence
+          },
+          {
+            id: "AC-002",
+            kind: "negative",
+            description: "Malformed request returns 400",
+            blocking: true,
+            evidenceRequired: ["code review"],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /runtime verification/i.test(e))).toBe(true);
+  });
+
+  it("scenario criterion with runtime evidence passes on user-visible packet", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "POST /api/items creates a record",
+            blocking: true,
+            evidenceRequired: ["curl output showing 201 status code"],
+          },
+          {
+            id: "AC-002",
+            kind: "negative",
+            description: "Malformed request returns 400",
+            blocking: true,
+            evidenceRequired: ["curl response body"],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    // May still fail for other reasons (e.g. missing UX criteria for ui_feature)
+    // but must NOT fail for the runtime evidence rule
+    expect(result.errors.every((e) => !/runtime verification/i.test(e))).toBe(true);
+  });
+
+  it("scenario criterion with code-review evidence on non-user-visible packet passes rule 12", () => {
+    // tooling packets are not user-visible — the runtime evidence rule should NOT fire
+    const contract = makeContract({
+      acceptance: [
+        {
+          id: "AC-001",
+          kind: "command",
+          description: "Script runs",
+          blocking: true,
+          evidenceRequired: ["code review"],
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.errors.every((e) => !/runtime verification/i.test(e))).toBe(true);
+  });
+
+  // Rule 13: Out-of-scope overlaps with objective
+
+  it("outOfScope item that overlaps heavily with objective fails", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        objective: "Implement authentication login endpoint with session tokens",
+        outOfScope: [
+          "Authentication token validation and session management", // heavily overlaps
+          "Deployment automation",
+        ],
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "Login endpoint returns token",
+            blocking: true,
+            evidenceRequired: ["curl output showing 200 and token in response"],
+          },
+          {
+            id: "AC-002",
+            kind: "negative",
+            description: "Invalid credentials rejected",
+            blocking: true,
+            evidenceRequired: ["curl response showing 401"],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    expect(result.errors.some((e) => /shares keywords/i.test(e))).toBe(true);
+  });
+
+  it("outOfScope item with only one shared word does not trigger overlap warning", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        objective: "Implement search endpoint with pagination",
+        outOfScope: [
+          "Full-text search ranking algorithms", // only "search" overlaps (1 word)
+        ],
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "Search returns paginated results",
+            blocking: true,
+            evidenceRequired: ["curl output showing paginated response"],
+          },
+          {
+            id: "AC-002",
+            kind: "negative",
+            description: "Empty query returns 400",
+            blocking: true,
+            evidenceRequired: ["curl response body"],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    expect(result.errors.every((e) => !/shares keywords/i.test(e))).toBe(true);
+  });
+
+  it("outOfScope overlap check is skipped when objective is absent", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        objective: "",
+        outOfScope: ["authentication session management login tokens"],
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "Endpoint responds",
+            blocking: true,
+            evidenceRequired: ["curl output"],
+          },
+          {
+            id: "AC-002",
+            kind: "negative",
+            description: "Bad input rejected",
+            blocking: true,
+            evidenceRequired: ["curl response"],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    expect(result.errors.every((e) => !/shares keywords/i.test(e))).toBe(true);
+  });
 });

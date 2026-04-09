@@ -379,6 +379,26 @@ Run \`/code-review\` (but don't post to GitHub — just review locally and fix a
 
 ### Then: Final verification`);
 
+  // 11b. Runtime verification mandate for scenario criteria
+  sections.push(`## Runtime Verification Is Mandatory for Scenario Criteria
+
+If a criterion has kind "scenario" or "api", you MUST attempt runtime verification before marking it as "pass":
+
+1. Start the dev server if it is not already running
+2. Execute the scenario: make the HTTP call, navigate the browser, or run the test
+3. Capture the output as evidence (HTTP status code, response body, screenshot, test output)
+
+You may ONLY mark a scenario criterion as "untested" if:
+- The dev server genuinely cannot start (missing dependencies, build failure)
+- Required credentials are unavailable AND you verified they are not in .env
+- The scenario requires a third-party service that is unreachable
+
+Marking a scenario criterion as "pass" based solely on reading the code is NEVER acceptable.
+Code that typechecks and looks correct can still fail at runtime. You must execute it.
+
+If you mark 3 or more scenario criteria as "untested", include a section in your report
+explaining what would be needed to test them (credentials, services, configuration).`);
+
   // 12. Self-check + output
   sections.push(`## Self-Check & Output
 
