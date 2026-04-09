@@ -45,5 +45,6 @@ research/
 .agents/
 .playwright-mcp/
 .claude/skills/
+!.claude/skills/contributing-to-harnessd.md
 .claude/scheduled_tasks.lock
 skills-lock.json

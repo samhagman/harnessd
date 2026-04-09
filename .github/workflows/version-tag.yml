@@ -1,0 +1,33 @@
+name: Auto Version Tag
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Bump version tag
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag
+        uses: anothrNick/github-tag-action@1.73.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          # Use #major, #minor, or #patch in PR title to control bump level.
+          # Default is patch if none specified.
+
+      - name: Tag summary
+        run: echo "Tagged ${{ steps.tag.outputs.new_tag }} (was ${{ steps.tag.outputs.old_tag }})"
