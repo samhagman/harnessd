@@ -32,7 +32,7 @@ const PlannerOutputSchema = z.object({
   evaluatorGuide: EvaluatorGuideSchema,
   planSummary: z.string(),
   integrationScenarios: IntegrationScenarioListSchema.default({ scenarios: [] }),
-  devServer: DevServerConfigSchema.optional(),
+  devServer: DevServerConfigSchema.nullish(),
 });
 
 type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
@@ -194,7 +194,7 @@ export async function runPlanner(
         riskRegister: output.riskRegister,
         evaluatorGuide: output.evaluatorGuide,
         integrationScenarios: output.integrationScenarios,
-        devServer: output.devServer,
+        devServer: output.devServer ?? undefined,
         specPath,
         success: true,
       };

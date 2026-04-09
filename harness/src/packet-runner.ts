@@ -85,7 +85,7 @@ export async function runBuilder(
         nudgeFilePath,
         workspaceDir: effectiveWorkspaceDir,
         completionSummaries: ctx.completionSummaries,
-        devServer: ctx.config.devServer,
+        devServer: ctx.config.devServer ?? undefined,
       });
 
   const workerResult = await runWorker(

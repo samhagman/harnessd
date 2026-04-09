@@ -105,13 +105,14 @@ A contract is acceptable ONLY when ALL of these are true:
 1. Objective aligns with packet + spec
 2. Scope is explicit and bounded
 3. Out-of-scope is explicit (not empty)
-4. Acceptance criteria are specific and testable
-5. User-visible packets have at least one behavior/scenario criterion
-6. Risky packets have at least one negative/invariant criterion
-7. Long-running packets have heartbeat/completion verification
-8. Rubric criteria have thresholds
-9. Commands and evidence plans are reproducible
-10. Packet is small enough to finish in one builder cycle`);
+4. **Out-of-scope does not contradict the objective.** If an outOfScope item excludes testing or verification of the primary flow described in the objective, flag it. Example: objective says "implement auth login" but outOfScope says "authentication token validation" — that's a contradiction.
+5. Acceptance criteria are specific and testable
+6. User-visible packets have at least one behavior/scenario criterion
+7. Risky packets have at least one negative/invariant criterion
+8. Long-running packets have heartbeat/completion verification
+9. Rubric criteria have thresholds
+10. Commands and evidence plans are reproducible
+11. Packet is small enough to finish in one builder cycle`);
 
   // 6. Output format
   sections.push(`## Output Format

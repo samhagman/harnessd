@@ -678,7 +678,7 @@ export const ProjectConfigSchema = z.object({
   maxRounds: z.number().int().default(10),
   qaPassThreshold: QAPassThresholdSchema.default({ maxCritical: 0, maxMajor: 0, maxMinor: 5 }),
   skipQA: z.boolean().default(false),
-  devServer: DevServerConfigSchema.optional(),
+  devServer: DevServerConfigSchema.nullish(),
   /** Custom tool gates to run between builder and evaluator */
   toolGates: z.array(ToolGateConfigSchema).default([]),
   /** Enable default gates (typecheck + test). Defaults to true. */

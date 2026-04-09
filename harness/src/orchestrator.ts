@@ -1266,7 +1266,7 @@ async function handleQAReview(
     integrationScenarios,
     { repoRoot, workspaceDir, runId: runState.runId, config },
     round,
-    config.devServer,
+    config.devServer ?? undefined,
     resumeSessionId ?? undefined,
   );
 
