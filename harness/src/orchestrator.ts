@@ -379,7 +379,7 @@ async function handlePlanning(
 ): Promise<RunState | null> {
   appendEvent(repoRoot, runState.runId, { event: "planning.started", phase: "planning" });
 
-  // Load planning context if it exists (from --interview or operator skill)
+  // Load planning context if it exists (from --context or operator skill)
   const planningContext = readPlanningContext(repoRoot, runState.runId);
 
   // Attempt SDK resume if the planner crashed on a prior attempt

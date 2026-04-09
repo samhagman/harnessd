@@ -33,17 +33,44 @@ Objective: "Add authentication with Clerk to the Next.js app"
 
 ## Quick Start
 
+### 1. Clone and install
+
 ```bash
-# Clone and install
 git clone https://github.com/samhagman/harnessd.git
 cd harnessd/harness
 npm install
+```
 
+### 2. Open your AI coding agent in the harnessd directory
+
+Harnessd ships with an **operator skill** that guides you through launching, monitoring, and steering runs. Open your preferred AI coding agent (Claude Code, Codex CLI, etc.) from the repo root:
+
+```bash
+cd harnessd
+claude        # Claude Code
+codex         # Codex CLI
+```
+
+The operator skill is automatically discovered from `.claude/skills/` or `.agents/skills/`. Tell your agent you want to start a new run — it will walk you through:
+
+1. **Workspace setup** — create or choose a project directory for agents to work in
+2. **Run naming** — pick a descriptive name for the run
+3. **API keys** — ensure `ANTHROPIC_API_KEY` is set (and `OPENAI_API_KEY` if using Codex evaluators)
+4. **Context preparation** — add a `CLAUDE.md`/`AGENTS.md`, reference material, design docs, and API specs to the workspace so agents have rich context from the start
+5. **Planning context** — optionally create a `planning-context.json` with your vision, tech preferences, things to avoid, and definition of done
+6. **Launch** — start the run with the right flags for your objective
+7. **Monitoring** — set up automated 15-minute deep-dive checks
+
+> **Tip:** Prepared workspaces with good context dramatically reduce wasted agent cycles. The operator skill recommends this approach and helps you set it up.
+
+### 3. Or launch directly from the CLI
+
+```bash
 # Run the harness on an objective
 npx tsx src/main.ts --workspace /path/to/your/project "your objective here"
 
-# Interactive planning (interview before planning)
-npx tsx src/main.ts --workspace /path/to/project --interview "your objective"
+# With planning context (vision, tech prefs, things to avoid)
+npx tsx src/main.ts --workspace /path/to/project --context planning-context.json "your objective"
 
 # Plan only (review before building)
 npx tsx src/main.ts --workspace /path/to/project --plan-only "your objective"
@@ -52,8 +79,8 @@ npx tsx src/main.ts --workspace /path/to/project --plan-only "your objective"
 ### Prerequisites
 
 - Node.js 20+
-- An Anthropic API key (set `ANTHROPIC_API_KEY`)
-- Optional: [Codex CLI](https://github.com/openai/codex) for adversarial evaluator roles
+- An Anthropic API key (`ANTHROPIC_API_KEY`)
+- Optional: [Codex CLI](https://github.com/openai/codex) for adversarial evaluator roles (`OPENAI_API_KEY`)
 
 ---
 

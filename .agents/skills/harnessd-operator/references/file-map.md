@@ -53,8 +53,8 @@ Every harnessd run writes its entire state to `.harnessd/runs/<run-id>/`. This i
         │   │   calibrationExamples, skepticismLevel.
         │   │   Operator can edit mid-run — next evaluator picks it up.
         │   │
-        │   ├── planning-context.json        # OPERATOR INTERVIEW
-        │   │   Optional. Written by --interview flag or operator skill.
+        │   ├── planning-context.json        # PLANNING CONTEXT
+        │   │   Optional. Written by --context flag or operator skill.
         │   │   { vision, techPreferences, designReferences,
         │   │   avoidList, doneDefinition, customNotes }
         │   │

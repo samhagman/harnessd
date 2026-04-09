@@ -97,7 +97,7 @@ STATE: .harnessd/runs/<run-id>/
 The top-level state machine. Drives planning → plan review → packet selection → contract negotiation → build → tool gates → evaluate → fix loops → QA → round 2+ planning → completion. Handles rate limits, pokes, nudges, resume, session recovery, and status rendering.
 
 ### Planner mode
-Read-only agent that expands a user objective into `SPEC.md`, `packets.json`, `risk-register.json`, and `plan-summary.md`. Supports web research via perplexity, interactive interviews (`--interview`), and prior-run context.
+Read-only agent that expands a user objective into `SPEC.md`, `packets.json`, `risk-register.json`, and `plan-summary.md`. Supports web research via perplexity, planning context files (`--context`), and prior-run context.
 
 ### Plan Reviewer
 Adversarial review of planner output (via Codex/GPT-5.4 by default). Multi-round negotiation with the planner. Max rounds configurable (`maxPlanReviewRounds`).
@@ -240,8 +240,8 @@ cd harness && npx tsx src/main.ts "your objective here"
 # Plan only (don't build)
 cd harness && npx tsx src/main.ts --plan-only "your objective"
 
-# Interactive planning (interview before planning)
-cd harness && npx tsx src/main.ts --interview "your objective"
+# Load planning context (vision, tech prefs, things to avoid)
+cd harness && npx tsx src/main.ts --context planning-context.json "your objective"
 
 # Agents work in a separate workspace
 cd harness && npx tsx src/main.ts --workspace /tmp/my-project "your objective"

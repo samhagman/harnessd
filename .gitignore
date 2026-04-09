@@ -42,9 +42,13 @@ harness/output/
 research/
 
 # Local tool state
-.agents/
+.agents/*
+!.agents/skills
+.agents/skills/*
+!.agents/skills/harnessd-operator
 .playwright-mcp/
-.claude/skills/
+.claude/skills/*
 !.claude/skills/contributing-to-harnessd.md
+!.claude/skills/harnessd-operator
 .claude/scheduled_tasks.lock
 skills-lock.json

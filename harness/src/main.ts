@@ -3,19 +3,18 @@
  * Harnessd v2 — CLI entry point.
  *
  * Usage:
- *   npx tsx src/main.ts "objective text"             # Run with objective
- *   npx tsx src/main.ts --plan-only "objective"       # Plan only, don't build
- *   npx tsx src/main.ts --resume [run-id]             # Resume a run
- *   npx tsx src/main.ts --status [run-id]             # Show status
- *   npx tsx src/main.ts --workspace <dir> "objective"  # Agents work in <dir>
- *   npx tsx src/main.ts --interview "objective"        # Interactive planning context
- *   npx tsx src/main.ts --run-id <name> "objective"    # Use a specific run directory name
+ *   npx tsx src/main.ts "objective text"                        # Run with objective
+ *   npx tsx src/main.ts --plan-only "objective"                  # Plan only, don't build
+ *   npx tsx src/main.ts --resume [run-id]                        # Resume a run
+ *   npx tsx src/main.ts --status [run-id]                        # Show status
+ *   npx tsx src/main.ts --workspace <dir> "objective"             # Agents work in <dir>
+ *   npx tsx src/main.ts --context <file.json> "objective"         # Load planning context from file
+ *   npx tsx src/main.ts --run-id <name> "objective"               # Use a specific run directory name
  */
 
 import process from "node:process";
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
 
 import { ClaudeSdkBackend } from "./backend/claude-sdk.js";
 import { BackendFactory } from "./backend/backend-factory.js";
@@ -24,40 +23,6 @@ import { getLatestRunId, getRunDir, createRun, loadRun, atomicWriteJson } from "
 import type { PlanningContext } from "./schemas.js";
 import type { RoleBackendMap } from "./schemas.js";
 import { defaultProjectConfig } from "./schemas.js";
-
-// ------------------------------------
-// Interactive interview
-// ------------------------------------
-
-async function ask(rl: readline.Interface, question: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => resolve(answer.trim()));
-  });
-}
-
-async function collectPlanningContext(): Promise<PlanningContext> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  console.log("\n--- Planning Interview ---\n");
-
-  const vision = await ask(rl, "What's your vision for this project? (high-level goal)\n> ");
-  const techRaw = await ask(rl, "Any tech preferences? (e.g., TypeScript, CSS modules, no external UI libs) comma-separated:\n> ");
-  const designRaw = await ask(rl, "Design references or inspiration? (URLs or descriptions) comma-separated:\n> ");
-  const avoidRaw = await ask(rl, "Anything to avoid? (e.g., no Tailwind, no SSR) comma-separated:\n> ");
-  const doneDefinition = await ask(rl, "What does 'done' look like? (acceptance definition)\n> ");
-  const customNotes = await ask(rl, "Any other notes for the planner?\n> ");
-
-  rl.close();
-  console.log("\n--- Interview complete ---\n");
-
-  return {
-    vision: vision || undefined,
-    techPreferences: techRaw ? techRaw.split(",").map((s) => s.trim()).filter(Boolean) : [],
-    designReferences: designRaw ? designRaw.split(",").map((s) => s.trim()).filter(Boolean) : [],
-    avoidList: avoidRaw ? avoidRaw.split(",").map((s) => s.trim()).filter(Boolean) : [],
-    doneDefinition: doneDefinition || undefined,
-    customNotes: customNotes || undefined,
-  };
-}
 
 // ------------------------------------
 // Main
@@ -117,12 +82,11 @@ async function main(): Promise<void> {
   // --plan-only
   const planOnly = args.includes("--plan-only");
 
-  // --interview [file.json]: interactive planning, or load from file
-  const interviewIdx = args.indexOf("--interview");
-  const interview = interviewIdx !== -1;
-  let interviewFile: string | undefined;
-  if (interview && args[interviewIdx + 1] && !args[interviewIdx + 1]!.startsWith("--")) {
-    interviewFile = path.resolve(args[interviewIdx + 1]!);
+  // --context <file.json>: load planning context from a JSON file
+  const contextIdx = args.indexOf("--context");
+  let contextFile: string | undefined;
+  if (contextIdx !== -1 && args[contextIdx + 1] && !args[contextIdx + 1]!.startsWith("--")) {
+    contextFile = path.resolve(args[contextIdx + 1]!);
   }
 
   // --workspace <dir>: agents work here instead of repo root
@@ -166,7 +130,7 @@ async function main(): Promise<void> {
 
   const filteredArgs = args.filter((a, i) =>
     !a.startsWith("--") &&
-    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--interview" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model")),
+    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model")),
   );
   const objective = filteredArgs.join(" ").trim();
 
@@ -174,7 +138,7 @@ async function main(): Promise<void> {
     console.log(`Usage:
   npx tsx src/main.ts "your objective"
   npx tsx src/main.ts --plan-only "your objective"
-  npx tsx src/main.ts --interview "your objective"
+  npx tsx src/main.ts --context planning-context.json "your objective"
   npx tsx src/main.ts --resume [run-id]
   npx tsx src/main.ts --status [run-id]
   npx tsx src/main.ts --workspace <dir> "your objective"
@@ -188,25 +152,16 @@ async function main(): Promise<void> {
   console.log(`Objective: ${objective}`);
   console.log(`Repo root: ${repoRoot}`);
   if (planOnly) console.log("Mode: plan-only");
-  if (interview) console.log("Mode: interactive planning");
+  if (contextFile) console.log(`Planning context: ${contextFile}`);
   console.log("============================================================\n");
 
-  // Collect planning context if --interview flag is set
+  // Load planning context from file if --context was provided
   let planningContext: PlanningContext | undefined;
-  if (interview) {
-    if (interviewFile) {
-      // Load from file (non-interactive mode)
-      const { PlanningContextSchema } = await import("./schemas.js");
-      const raw = JSON.parse(fs.readFileSync(interviewFile, "utf-8"));
-      planningContext = PlanningContextSchema.parse(raw);
-      console.log(`Loaded planning context from ${interviewFile}`);
-    } else if (process.stdin.isTTY) {
-      // Interactive mode — ask questions
-      planningContext = await collectPlanningContext();
-    } else {
-      console.error("--interview requires a TTY or a file path: --interview context.json");
-      process.exit(1);
-    }
+  if (contextFile) {
+    const { PlanningContextSchema } = await import("./schemas.js");
+    const raw = JSON.parse(fs.readFileSync(contextFile, "utf-8"));
+    planningContext = PlanningContextSchema.parse(raw);
+    console.log(`Loaded planning context from ${contextFile}`);
   }
 
   const claudeBackend = new ClaudeSdkBackend();
