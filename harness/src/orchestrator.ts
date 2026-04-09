@@ -1266,7 +1266,7 @@ async function handleQAReview(
     integrationScenarios,
     { repoRoot, workspaceDir, runId: runState.runId, config },
     round,
-    config.devServer,
+    config.devServer ?? undefined,
     resumeSessionId ?? undefined,
   );
 
@@ -2120,10 +2120,64 @@ async function processInbox(
             break;
           }
 
+          // Read evaluator result to report what's being overridden
+          let forceApproveDetail = `Force-approved by operator: ${msg.message ?? "no reason given"}`;
+          {
+            let evalReport: EvaluatorReport | null = null;
+            try {
+              evalReport = readArtifact(repoRoot, runState.runId, `packets/${packetId}/evaluator/evaluator-report.json`, EvaluatorReportSchema);
+            } catch {
+              // No evaluator result available — force_approve without prior evaluation
+            }
+
+            if (evalReport) {
+              const hardFailureCount = evalReport.hardFailures.length;
+              const skipVerdicts = (evalReport.criterionVerdicts ?? []).filter(
+                (v) => v.verdict === "skip",
+              );
+
+              // Cross-reference skipped criteria with the contract to find blocking ones
+              const blockingSkipIds: string[] = [];
+              try {
+                const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
+                const blockingCriterionIds = new Set(
+                  contract.acceptance.filter((ac) => ac.blocking).map((ac) => ac.id),
+                );
+                for (const v of skipVerdicts) {
+                  if (blockingCriterionIds.has(v.criterionId)) {
+                    blockingSkipIds.push(v.criterionId);
+                  }
+                }
+              } catch {
+                // Contract unavailable — count all skips as potentially blocking
+                blockingSkipIds.push(...skipVerdicts.map((v) => v.criterionId));
+              }
+
+              const overrideParts: string[] = [];
+              if (hardFailureCount > 0) overrideParts.push(`${hardFailureCount} hard failure(s)`);
+              if (blockingSkipIds.length > 0) {
+                overrideParts.push(`${blockingSkipIds.length} blocking skip(s) [${blockingSkipIds.join(", ")}]`);
+              }
+
+              const overrideStr = overrideParts.length > 0
+                ? `overriding: ${overrideParts.join(", ")}`
+                : "no hard failures or blocking skips";
+              forceApproveDetail = `Force-approved by operator (${overrideStr}): ${msg.message ?? "no reason given"}`;
+
+              if (blockingSkipIds.length > 0 && !msg.blockingSkipsAcknowledged) {
+                appendEvent(repoRoot, runState.runId, {
+                  event: "poke.responded",
+                  packetId,
+                  detail: `WARNING: force_approve overriding ${blockingSkipIds.length} blocking skip(s) [${blockingSkipIds.join(", ")}] without acknowledgment. Consider adding blockingSkipsAcknowledged: true to the force_approve message.`,
+                });
+              }
+            }
+          }
+
           appendEvent(repoRoot, runState.runId, {
             event: "evaluator.passed",
             packetId,
-            detail: `Force-approved by operator: ${msg.message ?? "no reason given"}`,
+            detail: forceApproveDetail,
           });
           appendEvent(repoRoot, runState.runId, {
             event: "packet.done",
@@ -2152,6 +2206,32 @@ async function processInbox(
             failedPacketIds: runState.failedPacketIds.filter((id) => id !== packetId),
             ...compUpdateForceApprove,
           });
+
+          // Track cumulative force-approve rate
+          {
+            const allEvents = readEvents(repoRoot, runState.runId);
+            let totalPasses = 0;
+            let forceApproveCount = 0;
+            for (const e of allEvents) {
+              if (e.event === "evaluator.passed") {
+                totalPasses++;
+                if (e.detail?.startsWith("Force-approved by operator")) {
+                  forceApproveCount++;
+                }
+              }
+            }
+
+            if (totalPasses > 0) {
+              const rate = (forceApproveCount / totalPasses) * 100;
+              if (rate > 50) {
+                appendEvent(repoRoot, runState.runId, {
+                  event: "poke.responded",
+                  detail: `High force-approve rate: ${rate.toFixed(0)}% (${forceApproveCount}/${totalPasses}). Consider improving evaluation environment tooling.`,
+                });
+              }
+            }
+          }
+
           break;
         }
 

@@ -568,6 +568,27 @@ A \`skip\` verdict means "I tried and could not verify" — NOT "I chose not to 
 Code-path analysis alone does NOT satisfy scenario criteria when runtime verification
 is possible. Start the dev server. Make the HTTP request. Observe the actual response.
 
+## Evidence Strength Hierarchy
+
+For scenario and api criteria, evidence quality is ranked:
+
+1. **Runtime proof** (curl output, browser screenshot, dev server response, HTTP status codes) — STRONGEST
+2. **Test suite proof** (vitest/jest output showing the scenario executes and passes) — STRONG
+3. **Code inspection** (reading source, confirming logic looks correct) — WEAK
+
+Code inspection is acceptable ONLY when runtime verification is genuinely blocked (sandbox restrictions, missing credentials that cannot be obtained).
+
+**Critical rule:** If a scenario criterion's evidenceRequired lists runtime verification (e.g., "curl output", "browser observation", "HTTP response") but you only performed code inspection, the verdict MUST be "skip" (not "pass"), even if the code looks correct.
+
+Code that typechecks and looks correct can still fail at runtime due to:
+- Missing service wiring (service not in Layer composition)
+- Wrong redirect URLs (API returns URL that doesn't work in browser)
+- Third-party API behavior differences (test vs production)
+- Race conditions only visible at runtime
+- CSS/layout issues invisible in source code
+
+"I read the code and it looks right" is NOT evidence that it works.
+
 ### Criteria Requiring Verdicts
 
 ${contract.acceptance

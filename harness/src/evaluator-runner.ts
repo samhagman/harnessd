@@ -140,7 +140,7 @@ export async function runEvaluator(
         gateResultsSummary: ctx.gateResultsSummary,
         recoveryContext: ctx.recoveryContext,
         futurePacketsSummary: ctx.futurePacketsSummary,
-        devServer: ctx.config.devServer,
+        devServer: ctx.config.devServer ?? undefined,
         builderTranscriptPath: ctx.builderTranscriptPath,
       });
 

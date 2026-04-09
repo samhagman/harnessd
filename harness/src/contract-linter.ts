@@ -25,6 +25,11 @@ export interface LintResult {
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
 
+/** Evidence that requires the app to actually run (not just reading source). */
+const RUNTIME_EVIDENCE_KEYWORDS =
+  /runtime|browser|curl|http|screenshot|dev.server|navigate|response|status.code|observed|console|running|start.*server|fetch|api.call/i;
+
+
 const MAX_LIKELY_FILES_BY_SIZE = {
   S: 8,
   M: 20,
@@ -149,8 +154,9 @@ export function lintContract(
   //     but the linter should surface the gap.
   if (packetType === "ui_feature") {
     const uxCriteriaIds = getUxQualityCriteriaIds();
-    const presentIds = new Set(contract.acceptance.map((c) => c.id));
-    const missingUxIds = uxCriteriaIds.filter((id) => !presentIds.has(id));
+    const presentIds = contract.acceptance.map((c) => c.id);
+    // Match if any criterion ID ends with the UX criterion ID (e.g. "AC-006-ux-navigation" satisfies "ux-navigation")
+    const missingUxIds = uxCriteriaIds.filter((uxId) => !presentIds.some((pid) => pid === uxId || pid.endsWith(uxId)));
     if (missingUxIds.length > 0) {
       errors.push(
         `ui_feature contract is missing UX quality criteria: ${missingUxIds.join(", ")}. ` +
@@ -159,6 +165,27 @@ export function lintContract(
       );
     }
   }
+
+  // 12. Runtime evidence check for scenario/api criteria on user-visible packets.
+  //     Evaluators cannot verify runtime behavior from code review alone — evidence
+  //     must include something that requires the app to actually run.
+  if (USER_VISIBLE_TYPES.includes(packetType)) {
+    for (const criterion of contract.acceptance) {
+      if (criterion.kind === "scenario" || criterion.kind === "api") {
+        const hasRuntimeEvidence = criterion.evidenceRequired.some((e) =>
+          RUNTIME_EVIDENCE_KEYWORDS.test(e),
+        );
+
+        if (!hasRuntimeEvidence) {
+          errors.push(
+            `Scenario/API criterion '${criterion.id}' has no runtime evidence. ` +
+              `Add runtime verification (curl output, browser observation, dev server response).`,
+          );
+        }
+      }
+    }
+  }
+
 
   return {
     valid: errors.length === 0,
