@@ -91,7 +91,7 @@ STATE: .harnessd/runs/<run-id>/
 
 ---
 
-## Architecture (v2.2)
+## Architecture
 
 ### Orchestrator
 The top-level state machine. Drives planning → plan review → packet selection → contract negotiation → build → tool gates → evaluate → fix loops → QA → round 2+ planning → completion. Handles rate limits, pokes, nudges, resume, session recovery, and status rendering.

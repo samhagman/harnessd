@@ -2,6 +2,29 @@
 
 All notable changes to Harnessd are documented in this file.
 
+## [v2.3] - 2026-04-09
+
+### Added
+- **Contract linter rule 12**: Require runtime evidence (curl, browser, dev server) for scenario/api criteria on user-visible packets — code-review-only evidence is rejected at negotiation time
+- **Force-approve transparency**: Reads evaluator report to surface hard failures and blocking skips being overridden, warns on unacknowledged blocking skips, tracks cumulative force-approve rate (>50% warning)
+- **Evidence strength hierarchy**: Evaluator prompt now ranks evidence quality (runtime > tests > code inspection)
+- **Runtime verification mandate**: Builder prompt requires actual execution for scenario criteria — "pass" requires runtime proof, not just code reading
+- **blockingSkipsAcknowledged**: New inbox field for explicit force-approve acknowledgment of blocking skips
+
+### Changed
+- Contract linter rule 11: UX criteria matching now uses `endsWith` for prefixed IDs (e.g. `AC-006-ux-navigation` satisfies `ux-navigation`)
+- OutOfScope/objective contradiction check moved from linter (stop-word heuristic) to contract evaluator prompt (semantic analysis by LLM)
+- Force-approve handler uses `readArtifact` utility instead of manual file reads; reads correct `evaluator-report.json` path
+- `devServer` schema changed from `.optional()` to `.nullish()` — planners emit `null` when no dev server is needed
+- Version removed from CLAUDE.md/AGENTS.md headings — canonical version is the git tag
+
+### Validated
+- Smoke test: full pipeline (plan → review → contract negotiation → build → gates → evaluate → QA) completed with 2 packets
+- Contract linter rule 12 correctly caught missing runtime evidence in round 1, contract builder fixed it in round 2
+- 281 unit tests pass, typecheck clean
+
+---
+
 ## [v2.2] - 2026-04-08
 
 ### Added
