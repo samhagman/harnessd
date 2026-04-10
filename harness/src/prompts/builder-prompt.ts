@@ -31,6 +31,8 @@ export interface BuilderPromptOptions {
   workspaceDir?: string;
   completionSummaries?: string;
   devServer?: DevServerConfig;
+  /** Packet IDs of packets that have already been built and evaluated (for harness context). */
+  completedPacketIds?: string[];
 }
 import {
   RESULT_START_SENTINEL,
@@ -40,6 +42,8 @@ import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
   buildDevServerSetupSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export function buildBuilderPrompt(
@@ -55,6 +59,7 @@ export function buildBuilderPrompt(
     workspaceDir,
     completionSummaries,
     devServer,
+    completedPacketIds,
   } = opts;
 
   const sections: string[] = [];
@@ -158,16 +163,23 @@ ${evaluatorCriteria
 ${specExcerpt}`);
   }
 
-  // 4b. Previously completed packet summaries
+  // 4b. Prior context from completed packets (static summaries + semantic memory)
   if (completionSummaries) {
-    sections.push(`## Previously Completed Packets
+    sections.push(`## Prior Context from Completed Packets
 
-The following packets have already been completed. Use this context to understand what
+The following context covers packets that have already been completed. Use it to understand what
 exists in the codebase, what patterns were established, and what integration points are
 available. This should eliminate the need to explore the codebase from scratch.
 
 ${completionSummaries}`);
   }
+
+  // 4c. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("builder", {
+    packetId: contract.packetId,
+    completedPacketIds,
+  }));
+  sections.push(buildMemorySearchSection("builder"));
 
   // 5. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
@@ -298,15 +310,17 @@ The evaluator found issues in a previous attempt. You MUST fix everything below.
 
 ### Debugging Protocol
 
-**Before writing any fix**, use an Explore subagent to investigate each hard failure:
-1. Launch a subagent (Agent tool, subagent_type="Explore") for each hard failure
-2. Give it the failure description, evidence, reproduction steps, and diagnostic hypothesis
-3. Have it trace the full request/data flow across ALL involved files
-4. Read the subagent's findings before you start coding
+**Before writing any fix:**
+1. **Search memory** for your prior fix attempts and what went wrong — do NOT repeat the same approach:
+   \`search_memory({query: "builder reasoning fix attempt"})\`
+   \`search_memory({query: "gate failed error"})\`
+2. Launch a subagent (Agent tool, subagent_type="Explore") for each hard failure
+3. Give it the failure description, evidence, reproduction steps, and diagnostic hypothesis
+4. Have it trace the full request/data flow across ALL involved files
+5. Read the subagent's findings before you start coding
 
-This prevents fixing the wrong file. The evaluator tells you WHAT failed and WHY it
-thinks it failed — but you must verify the diagnosis and understand the full code path
-before making changes.
+This prevents repeating the same failed approach. Memory contains your prior reasoning
+and the exact errors — use it to understand what you already tried.
 
 **Overall:** ${priorEvalReport.overall}
 

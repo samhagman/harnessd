@@ -215,6 +215,20 @@ Proactively offer monitoring when:
 
 See `references/monitoring-loop-guide.md` for the full protocol with prompt templates and decision tree.
 
+### Memory Search
+
+Before manually scanning JSONL files, query the run memory for targeted information:
+
+```bash
+./harness/memory.sh "why did evaluator fail PKT-003"
+./harness/memory.sh "builder nudge acknowledgement PKT-002"
+./harness/memory.sh --timeline --since 1h
+```
+
+Memory search is faster than raw transcript reading for discovery tasks ("why did X fail?", "did the builder acknowledge Y?", "what pattern was established?"). Fall back to raw transcript reading for real-time sessions (memory is only populated at phase completion) or for exact line-level detail.
+
+See `references/memvid-memory.md` for query examples and search mode guidance.
+
 ### The Core Principle
 
 Every check spawns a deep-dive agent. Shallow status checks miss stuck loops — the sonnet deep-dive reads actual transcripts and catches them.
@@ -483,3 +497,4 @@ See `references/retrospective-guide.md` for the complete protocol including chun
 | `references/steering-modes.md` | Detailed nudge/pivot/reset mechanics with internal flow diagrams, delivery layers, examples, and decision tree |
 | `references/inbox-protocol.md` | All JSON message types, processing pipeline (poller vs synchronous), phase gating rules, message preservation |
 | `references/file-map.md` | Complete `.harnessd/runs/` directory structure with every file explained |
+| `references/memvid-memory.md` | Run memory search: querying `.mv2` files, common query examples, when to use memvid vs raw transcripts |

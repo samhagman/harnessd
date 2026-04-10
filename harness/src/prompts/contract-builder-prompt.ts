@@ -19,6 +19,8 @@ import {
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export function buildContractBuilderPrompt(
@@ -34,10 +36,14 @@ export function buildContractBuilderPrompt(
   // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0a. Mandatory validate_envelope gate
+  // 0a. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("contract_builder", { packetId: packet.id }));
+  sections.push(buildMemorySearchSection("contract_builder"));
+
+  // 0b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PacketContract"));
 
-  // 0b. Renegotiation context (additive renegotiation after evaluator gap)
+  // 0c. Renegotiation context (additive renegotiation after evaluator gap)
   if (existingContract && evaluatorReport) {
     const hardFailuresFormatted = evaluatorReport.hardFailures.length > 0
       ? evaluatorReport.hardFailures

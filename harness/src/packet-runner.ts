@@ -20,6 +20,8 @@ import type {
   RiskRegister,
   ProjectConfig,
 } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { BuilderReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeBuilderHook } from "./permissions.js";
@@ -27,6 +29,7 @@ import { buildBuilderPrompt } from "./prompts/builder-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 /**
  * All configuration and optional context needed to run the builder.
@@ -50,7 +53,9 @@ export interface BuilderContext {
   priorEvalReport?: EvaluatorReport;
   contextOverrides?: string;
   completionSummaries?: string;
+  completedPacketIds?: string[];
   resumeSessionId?: string;
+  memory?: RunMemory | null;
 }
 
 export interface BuilderRunResult {
@@ -86,7 +91,10 @@ export async function runBuilder(
         workspaceDir: effectiveWorkspaceDir,
         completionSummaries: ctx.completionSummaries,
         devServer: ctx.config.devServer ?? undefined,
+        completedPacketIds: ctx.completedPacketIds,
       });
+
+  const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
 
   const workerResult = await runWorker(
     backend,
@@ -97,7 +105,10 @@ export async function runBuilder(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
-      mcpServers: [createValidationMcpServer()],
+      mcpServers: [
+        createValidationMcpServer(),
+        ...(ctx.memory ? [createMemorySearchMcpServer(ctx.memory)] : []),
+      ],
       sandboxMode: "workspace-write",
       hooks: {
         PreToolUse: [
@@ -113,6 +124,7 @@ export async function runBuilder(
       artifactDir: `packets/${ctx.packetId}/builder`,
       heartbeatIntervalSeconds: ctx.config.heartbeatWriteSeconds,
       workspaceDir: ctx.workspaceDir,
+      memvidBuffer,
     },
     BuilderReportSchema,
   );

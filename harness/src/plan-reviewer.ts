@@ -10,17 +10,21 @@
 
 import type { AgentBackend } from "./backend/types.js";
 import type { PlanReview, ProjectConfig } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { PlanReviewSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildPlanReviewPrompt } from "./prompts/plan-review-prompt.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 export interface PlanReviewRunnerConfig {
   repoRoot: string;
   workspaceDir?: string;
   runId: string;
   config: ProjectConfig;
+  memory?: RunMemory | null;
 }
 
 export interface PlanReviewResult {
@@ -53,6 +57,8 @@ export async function runPlanReview(
     planningContext,
   );
 
+  const memvidBuffer = opts.memory ? new MemvidBuffer(opts.memory) : null;
+
   const workerResult: WorkerResult<PlanReview> = await runWorker(
     backend,
     {
@@ -63,7 +69,10 @@ export async function runPlanReview(
       ...(opts.config.model ? { model: opts.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-      mcpServers: [createValidationMcpServer()],
+      mcpServers: [
+        createValidationMcpServer(),
+        ...(opts.memory ? [createMemorySearchMcpServer(opts.memory)] : []),
+      ],
       hooks: {
         PreToolUse: [
           { matcher: "Bash", hooks: [makeReadOnlyHook()] },
@@ -79,6 +88,7 @@ export async function runPlanReview(
       artifactDir: "spec/plan-review",
       heartbeatIntervalSeconds: opts.config.heartbeatWriteSeconds,
       workspaceDir: opts.workspaceDir,
+      memvidBuffer,
     },
     PlanReviewSchema,
   );

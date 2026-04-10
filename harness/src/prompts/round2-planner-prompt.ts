@@ -19,6 +19,8 @@ import {
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export interface Round2PlannerPromptContext {
@@ -46,6 +48,10 @@ Use this path for all file operations.`);
 
   // 0b. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
+
+  // 0c. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("round2_planner", { round }));
+  sections.push(buildMemorySearchSection("round2_planner"));
 
   // 1. Role
   sections.push(`## Your Role

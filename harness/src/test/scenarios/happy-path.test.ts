@@ -35,8 +35,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   // Allow transcript write streams from worker.ts to flush before deleting.
-  await new Promise((r) => setTimeout(r, 100));
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  // Use 500ms to give background encoding (native SDK) time to release file handles.
+  await new Promise((r) => setTimeout(r, 500));
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
 });
 
 // ------------------------------------

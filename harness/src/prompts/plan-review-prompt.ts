@@ -17,6 +17,8 @@ import {
 } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export function buildPlanReviewPrompt(
@@ -31,6 +33,10 @@ export function buildPlanReviewPrompt(
 
   // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
+
+  // 0a. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("plan_reviewer"));
+  sections.push(buildMemorySearchSection("plan_reviewer"));
 
   // 1. Role
   sections.push(`## Your Role

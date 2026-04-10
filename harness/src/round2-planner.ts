@@ -20,6 +20,8 @@ import type {
   QAReport,
   ProjectConfig,
 } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { PacketSchema, RiskRegisterSchema, EvaluatorGuideSchema } from "./schemas.js";
 import { runWorker } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
@@ -27,6 +29,7 @@ import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { buildRound2PlannerPrompt, type Round2PlannerPromptContext } from "./prompts/round2-planner-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 // Schema for the round 2 planner's structured output
 const Round2PlannerOutputSchema = z.object({
@@ -45,6 +48,7 @@ export interface Round2PlannerConfig {
   maxRetries?: number;
   /** Current round number (2, 3, 4...). Used for packet ID generation. */
   round?: number;
+  memory?: RunMemory | null;
 }
 
 export interface Round2PlannerResult {
@@ -105,6 +109,8 @@ export async function runRound2Planner(
         : buildRound2PlannerPrompt(promptContext);
     }
 
+    const memvidBuffer = plannerConfig.memory ? new MemvidBuffer(plannerConfig.memory) : null;
+
     const workerResult = await runWorker(
       backend,
       {
@@ -116,7 +122,10 @@ export async function runRound2Planner(
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [createValidationMcpServer()],
+        mcpServers: [
+          createValidationMcpServer(),
+          ...(plannerConfig.memory ? [createMemorySearchMcpServer(plannerConfig.memory)] : []),
+        ],
         hooks: {
           PreToolUse: [
             { matcher: "Bash", hooks: [makeReadOnlyHook()] },
@@ -130,6 +139,7 @@ export async function runRound2Planner(
         artifactDir: "spec",
         heartbeatIntervalSeconds: plannerConfig.config.heartbeatWriteSeconds,
         workspaceDir: plannerConfig.workspaceDir,
+        memvidBuffer,
       },
       Round2PlannerOutputSchema,
     );

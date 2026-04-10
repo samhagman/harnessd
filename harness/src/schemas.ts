@@ -527,6 +527,9 @@ export const EventTypeSchema = z.enum([
   "evaluator.criteria_expanded",
   // Operator control events
   "packet.fix_counter_reset",
+  // Memory events
+  "memory.encoded",
+  "memory.error",
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;

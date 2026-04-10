@@ -171,9 +171,18 @@ async function main(): Promise<void> {
     const { runPlanner } = await import("./planner.js");
     const { appendEvent, readEvents } = await import("./event-log.js");
     const { renderStatus, renderStatusMarkdown } = await import("./status-renderer.js");
+    const { createRunMemory, getMemoryPath, specToDocuments } = await import("./memvid.js");
 
     const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel };
     const runState = createRun(repoRoot, objective, config, customRunId, workspaceDir);
+
+    // Initialize run memory for plan-only mode
+    let memory: import("./memvid.js").RunMemory | null = null;
+    try {
+      const memoryPath = getMemoryPath(repoRoot, runState.runId);
+      memory = await createRunMemory(memoryPath, repoRoot, runState.runId);
+      if (memory) console.log("[memvid] Memory initialized");
+    } catch { /* non-fatal */ }
 
     // Write planning context if provided
     if (planningContext) {
@@ -197,6 +206,7 @@ async function main(): Promise<void> {
       workspaceDir,
       runId: runState.runId,
       config,
+      memory,
     }, undefined, undefined, planningContext);
 
     if (result.success) {
@@ -213,6 +223,13 @@ async function main(): Promise<void> {
       atomicWriteJson(path.join(runDir, "status.json"), snapshot);
       fs.writeFileSync(path.join(runDir, "status.md"), renderStatusMarkdown(snapshot));
 
+      // Encode spec artifacts into memory
+      if (memory) {
+        memory.encodeInBackground(specToDocuments(runDir));
+        try { await memory.waitForPendingWrites(); } catch { /* non-fatal */ }
+        console.log("[memvid] Planning artifacts encoded into memory");
+      }
+
       console.log(`\nPlanning complete. ${result.packets.length} packets created.`);
       console.log(`Spec: ${result.specPath}`);
       console.log(`Run dir: ${runDir}`);
@@ -222,6 +239,10 @@ async function main(): Promise<void> {
         phase: "planning",
         detail: result.error,
       });
+      // Wait for any buffered memory writes
+      if (memory) {
+        try { await memory.waitForPendingWrites(); } catch { /* non-fatal */ }
+      }
       console.error(`\nPlanning failed: ${result.error}`);
       process.exit(1);
     }

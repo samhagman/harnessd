@@ -175,6 +175,13 @@ The sonnet deep-dive prompt template (Claude fills in `<brackets>` at runtime):
 You are a diagnostic agent for harnessd run <RUN_ID>.
 Read what happened since the last monitoring check and assess health.
 
+## Memory Search (if available)
+Before reading raw transcripts, query the run memory for targeted information:
+./harness/memory.sh "current builder progress on <PKT_ID>"
+./harness/memory.sh "evaluator failures for <PKT_ID>"
+Use results to focus your transcript reading on relevant sections.
+If the memory file does not exist or the query returns no results, skip this step and proceed directly to transcript reading.
+
 ## Current State
 Phase: <PHASE> | Packet: <PKT_ID> | Role: <ROLE> | Round: <ROUND>
 Process: <alive/dead> | Last heartbeat: <AGE>

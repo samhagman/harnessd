@@ -16,6 +16,8 @@ import { z } from "zod";
 
 import type { AgentBackend } from "./backend/types.js";
 import type { Packet, RiskRegister, EvaluatorGuide, ProjectConfig, PlanningContext, PlanReview, IntegrationScenarioList, DevServerConfig } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { PacketSchema, RiskRegisterSchema, EvaluatorGuideSchema, IntegrationScenarioListSchema, DevServerConfigSchema } from "./schemas.js";
 import { runWorker } from "./worker.js";
 import { makePlannerHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
@@ -23,6 +25,7 @@ import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { buildPlannerPrompt } from "./prompts/planner-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 // Schema for the planner's structured output
 const PlannerOutputSchema = z.object({
@@ -44,6 +47,7 @@ export interface PlannerConfig {
   runId: string;
   config: ProjectConfig;
   maxRetries?: number;
+  memory?: RunMemory | null;
 }
 
 export interface PlannerResult {
@@ -125,6 +129,8 @@ export async function runPlanner(
       );
     }
 
+    const memvidBuffer = plannerConfig.memory ? new MemvidBuffer(plannerConfig.memory) : null;
+
     const workerResult = await runWorker(
       backend,
       {
@@ -136,7 +142,10 @@ export async function runPlanner(
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [createValidationMcpServer()],
+        mcpServers: [
+          createValidationMcpServer(),
+          ...(plannerConfig.memory ? [createMemorySearchMcpServer(plannerConfig.memory)] : []),
+        ],
         hooks: {
           PreToolUse: [
             { matcher: "Bash", hooks: [makePlannerHook()] },
@@ -150,6 +159,7 @@ export async function runPlanner(
         artifactDir: "spec",
         heartbeatIntervalSeconds: plannerConfig.config.heartbeatWriteSeconds,
         workspaceDir: plannerConfig.workspaceDir,
+        memvidBuffer,
       },
       PlannerOutputSchema,
     );

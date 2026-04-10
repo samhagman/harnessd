@@ -16,6 +16,8 @@
 import type { AgentBackend } from "./backend/types.js";
 import type { PacketContract } from "./schemas.js";
 import { extractPartialProgress, formatPriorProgress } from "./session-recovery.js";
+import { MemvidBuffer, agentMessageToDocuments } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import fs from "node:fs";
 
 // ------------------------------------
@@ -41,6 +43,7 @@ export async function recoverFromCrashedSession(
   backend: AgentBackend,
   transcriptPath: string,
   contract: PacketContract,
+  memory?: RunMemory | null,
 ): Promise<string | null> {
   // 1. Read the crashed transcript
   let transcriptContent: string;
@@ -119,6 +122,9 @@ Reply with ONLY the markdown summary. No preamble, no envelope.`;
   try {
     let summaryText = "";
 
+    const memvidBuffer = memory ? new MemvidBuffer(memory) : null;
+    let turnIndex = 0;
+
     const session = backend.runSession({
       prompt,
       cwd: process.cwd(),
@@ -133,10 +139,19 @@ Reply with ONLY the markdown summary. No preamble, no envelope.`;
       maxBudgetUsd: RECOVERY_MAX_BUDGET_USD,
     });
 
-    for await (const msg of session) {
-      if (msg.type === "assistant" && msg.text) {
-        summaryText += msg.text;
+    try {
+      for await (const msg of session) {
+        if (msg.type === "assistant" && msg.text) {
+          summaryText += msg.text;
+        }
+        if (memvidBuffer) {
+          if (msg.type === 'assistant' && msg.text) turnIndex++;
+          const docs = agentMessageToDocuments(msg, { role: 'recovery_agent', packetId: contract.packetId, turnIndex });
+          if (docs.length > 0) memvidBuffer.addMany(docs);
+        }
       }
+    } finally {
+      if (memvidBuffer) memvidBuffer.stop();
     }
 
     const trimmed = summaryText.trim();

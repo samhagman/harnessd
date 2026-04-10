@@ -15,6 +15,8 @@ import type { PlanningContext } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export function buildPlannerPrompt(
@@ -27,6 +29,11 @@ export function buildPlannerPrompt(
 
   // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
+
+  // 0b. Harness pipeline context + memory search guidance
+  // (round 1 only — round 2+ uses buildRound2PlannerPrompt which handles its own context)
+  sections.push(buildHarnessContextSection("planner", { round: 1 }));
+  sections.push(buildMemorySearchSection("planner"));
 
   // 1. Role
   sections.push(`## Your Role

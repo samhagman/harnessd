@@ -18,12 +18,15 @@ import type {
   ProposedCriterion,
   AcceptanceCriterion,
 } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { EvaluatorReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeEvaluatorHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildEvaluatorPrompt } from "./prompts/evaluator-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 // ------------------------------------
 // Verdict validation
@@ -106,7 +109,9 @@ export interface EvaluatorContext {
   recoveryContext?: string;
   futurePacketsSummary?: string;
   builderTranscriptPath?: string;
+  completedPacketIds?: string[];
   resumeSessionId?: string;
+  memory?: RunMemory | null;
 }
 
 export interface EvaluatorRunResult {
@@ -142,7 +147,10 @@ export async function runEvaluator(
         futurePacketsSummary: ctx.futurePacketsSummary,
         devServer: ctx.config.devServer ?? undefined,
         builderTranscriptPath: ctx.builderTranscriptPath,
+        completedPacketIds: ctx.completedPacketIds,
       });
+
+  const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
 
   const workerResult = await runWorker(
     backend,
@@ -155,7 +163,10 @@ export async function runEvaluator(
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-      mcpServers: [createValidationMcpServer(contract.acceptance.map((ac) => ac.id))],
+      mcpServers: [
+        createValidationMcpServer(contract.acceptance.map((ac) => ac.id)),
+        ...(ctx.memory ? [createMemorySearchMcpServer(ctx.memory)] : []),
+      ],
       // "workspace-write" allows Codex evaluator to run commands (dev server, curl, etc.)
       // File-edit enforcement is handled by the prompt + hooks (Claude) or prompt-only (Codex)
       sandboxMode: "workspace-write",
@@ -174,6 +185,7 @@ export async function runEvaluator(
       packetId: ctx.packetId,
       artifactDir: `packets/${ctx.packetId}/evaluator`,
       workspaceDir: ctx.workspaceDir,
+      memvidBuffer,
     },
     EvaluatorReportSchema,
   );

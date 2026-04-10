@@ -24,6 +24,8 @@ import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
   buildDevServerSetupSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export interface QAPromptContext {
@@ -117,6 +119,16 @@ ${specExcerpt}`);
     sections.push(`## What Was Built
 
 ${summaries.join("\n\n")}`);
+  }
+
+  // 4b. Harness pipeline context + memory search guidance
+  {
+    const completedPacketIds = ctx.contracts.map((c) => c.packetId);
+    sections.push(buildHarnessContextSection("qa_agent", {
+      completedPacketIds,
+      round: ctx.round,
+    }));
+    sections.push(buildMemorySearchSection("qa_agent"));
   }
 
   // 5. Integration scenarios

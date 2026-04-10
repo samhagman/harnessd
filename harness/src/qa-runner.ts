@@ -18,12 +18,15 @@ import type {
   IntegrationScenario,
   DevServerConfig,
 } from "./schemas.js";
+import { MemvidBuffer } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import { QAReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildQAPrompt, type QAPromptContext } from "./prompts/qa-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 // ------------------------------------
 // Config and types
@@ -34,6 +37,7 @@ export interface QARunnerConfig {
   workspaceDir?: string;
   runId: string;
   config: ProjectConfig;
+  memory?: RunMemory | null;
 }
 
 export interface QARunResult {
@@ -83,6 +87,8 @@ export async function runQA(
 
   const prompt = resumeSessionId ? CONTINUATION_PROMPT : buildQAPrompt(promptContext);
 
+  const memvidBuffer = runnerConfig.memory ? new MemvidBuffer(runnerConfig.memory) : null;
+
   const workerResult = await runWorker(
     backend,
     {
@@ -94,7 +100,10 @@ export async function runQA(
       ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-      mcpServers: [createValidationMcpServer()],
+      mcpServers: [
+        createValidationMcpServer(),
+        ...(runnerConfig.memory ? [createMemorySearchMcpServer(runnerConfig.memory)] : []),
+      ],
       // "workspace-write" allows Codex QA agent to run commands (dev server, tests, etc.)
       // File-edit enforcement is handled by the prompt + hooks (Claude) or prompt-only (Codex)
       sandboxMode: "workspace-write",
@@ -112,6 +121,7 @@ export async function runQA(
       role: "qa_agent",
       artifactDir: `spec/qa-r${round}`,
       workspaceDir: runnerConfig.workspaceDir,
+      memvidBuffer,
     },
     QAReportSchema,
   );

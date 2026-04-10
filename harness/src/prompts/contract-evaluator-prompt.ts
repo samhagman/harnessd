@@ -17,6 +17,8 @@ import {
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
@@ -29,6 +31,10 @@ export function buildContractEvaluatorPrompt(
 
   // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
+
+  // 0a. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("contract_evaluator", { packetId: proposal.packetId }));
+  sections.push(buildMemorySearchSection("contract_evaluator"));
 
   // 1. Review stance
   sections.push(`## Your Role

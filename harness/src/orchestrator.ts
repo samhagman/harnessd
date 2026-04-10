@@ -81,6 +81,24 @@ import {
   type GateRunResult,
 } from "./tool-gates.js";
 
+import type { RunMemory, MemvidDocument } from "./memvid.js";
+import {
+  createRunMemory,
+  openRunMemory,
+  getMemoryPath,
+  eventsToDocuments,
+  transcriptToDocuments,
+  specToDocuments,
+  contractToDocument,
+  builderReportToDocument,
+  evalReportToDocument,
+  qaReportToDocument,
+  completionSummaryToDocument,
+  queryMemoryContext,
+  planReviewToDocument,
+  inboxMessageToDocument,
+} from "./memvid.js";
+
 import { z } from "zod";
 
 // ------------------------------------
@@ -187,13 +205,28 @@ export async function runOrchestrator(
     });
   }
 
+  // Initialize run memory (returns null if @memvid/sdk not installed)
+  let memory: RunMemory | null = null;
+  try {
+    const memoryPath = getMemoryPath(repoRoot, runState.runId);
+    console.log(`[memvid] Initializing memory at ${memoryPath}`);
+    // Try to open existing memory on resume; fall back to creating fresh
+    memory = orchConfig.resumeRunId
+      ? (await openRunMemory(memoryPath, repoRoot, runState.runId)
+         ?? await createRunMemory(memoryPath, repoRoot, runState.runId))
+      : await createRunMemory(memoryPath, repoRoot, runState.runId);
+    console.log(`[memvid] Memory initialized: ${memory ? 'active' : 'disabled (SDK not found)'}`);
+  } catch (err) {
+    console.log(`[memvid] Warning: could not initialize memory: ${(err as Error).message}`);
+  }
+
   // Retry tracking — resets whenever the phase advances
   let lastPhase: RunPhase = runState.phase;
   let consecutiveRetries = 0;
 
   // Start global background inbox poller for nudges — runs during all phases
   // Uses the Claude backend directly since only Claude supports live nudges via streamInput
-  const globalNudgePoller = startGlobalNudgePoller(repoRoot, runState.runId, factory.claudeBackend);
+  const globalNudgePoller = startGlobalNudgePoller(repoRoot, runState.runId, factory.claudeBackend, memory);
 
   // Main phase loop — resilient, never dies from agent crashes
   while (runState.phase !== "completed" && runState.phase !== "failed") {
@@ -204,7 +237,7 @@ export async function runOrchestrator(
     }
 
     // Process inbox (may mutate runState phase for gate approvals)
-    runState = await processInbox(repoRoot, runState);
+    runState = await processInbox(repoRoot, runState, memory);
 
     // Update status
     await writeStatusFiles(repoRoot, runState);
@@ -229,7 +262,7 @@ export async function runOrchestrator(
     }
 
     try {
-      const nextState = await executePhase(factory, repoRoot, workspaceDir, runState, config);
+      const nextState = await executePhase(factory, repoRoot, workspaceDir, runState, config, memory);
 
       if (nextState) {
         // Phase handler succeeded and returned a new state
@@ -286,6 +319,16 @@ export async function runOrchestrator(
   // Stop the global nudge poller
   globalNudgePoller.stop();
 
+  // Wait for any pending memory encoding to complete (up to 10s — non-fatal)
+  if (memory) {
+    try {
+      await Promise.race([
+        memory.waitForPendingWrites(),
+        new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+    } catch { /* non-fatal */ }
+  }
+
   // Final status write
   lastStatusPhase = null; // force write
   await writeStatusFiles(repoRoot, runState);
@@ -309,13 +352,14 @@ async function executePhase(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   switch (runState.phase) {
     case "planning":
-      return handlePlanning(factory, repoRoot, workspaceDir, runState, config);
+      return handlePlanning(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "plan_review":
-      return handlePlanReview(factory, repoRoot, workspaceDir, runState, config);
+      return handlePlanReview(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "awaiting_plan_approval":
       return handleAwaitingPlanApproval(repoRoot, runState);
@@ -324,16 +368,16 @@ async function executePhase(
       return handlePacketSelection(repoRoot, runState, config);
 
     case "negotiating_contract":
-      return handleContractNegotiation(factory, repoRoot, workspaceDir, runState, config);
+      return handleContractNegotiation(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "building_packet":
-      return handleBuilding(factory, repoRoot, workspaceDir, runState, config);
+      return handleBuilding(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "evaluating_packet":
-      return handleEvaluation(factory, repoRoot, workspaceDir, runState, config);
+      return handleEvaluation(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "fixing_packet":
-      return handleFixing(factory, repoRoot, workspaceDir, runState, config);
+      return handleFixing(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "awaiting_human_review":
       return handleAwaitingHumanReview(runState);
@@ -352,10 +396,10 @@ async function executePhase(
       return runState;
 
     case "qa_review":
-      return handleQAReview(factory, repoRoot, workspaceDir, runState, config);
+      return handleQAReview(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "round2_planning":
-      return handleRound2Planning(factory, repoRoot, workspaceDir, runState, config);
+      return handleRound2Planning(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "awaiting_round2_approval":
       return handleAwaitingRound2Approval(repoRoot, runState);
@@ -376,6 +420,7 @@ async function handlePlanning(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   appendEvent(repoRoot, runState.runId, { event: "planning.started", phase: "planning" });
 
@@ -392,6 +437,7 @@ async function handlePlanning(
     workspaceDir,
     runId: runState.runId,
     config,
+    memory,
   }, undefined, undefined, planningContext, undefined, resumeSessionId ?? undefined);
 
   if (!result.success) {
@@ -418,6 +464,20 @@ async function handlePlanning(
     phase: "planning",
     detail: `${result.packets.length} packets planned`,
   });
+
+  // Encode spec artifacts and planning.completed event into run memory
+  if (memory) {
+    const runDir = getRunDir(repoRoot, runState.runId);
+    memory.encodeInBackground([
+      ...specToDocuments(runDir),
+      ...eventsToDocuments([{
+        ts: new Date().toISOString(),
+        event: "planning.completed",
+        phase: "planning",
+        detail: `${result.packets.length} packets planned`,
+      }]),
+    ]);
+  }
 
   const packetOrder = result.packets.map((p) => p.id);
 
@@ -452,6 +512,7 @@ async function handlePlanReview(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const maxRounds = config.maxPlanReviewRounds;
 
@@ -505,7 +566,7 @@ async function handlePlanReview(
     integrationScenariosContent,
     planningContextContent,
     runState.objective,
-    { repoRoot, workspaceDir, runId: runState.runId, config },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory },
   );
 
   if (!reviewResult.success || !reviewResult.review) {
@@ -521,6 +582,11 @@ async function handlePlanReview(
     path.join(specDir, `plan-review-r${reviewRound}.json`),
     review,
   );
+
+  // Encode plan review into run memory
+  if (memory && review) {
+    memory.encodeInBackground([planReviewToDocument(review, reviewRound)]);
+  }
 
   if (review.verdict === "approve") {
     appendEvent(repoRoot, runState.runId, {
@@ -591,7 +657,7 @@ async function handlePlanReview(
   const planResult = await runPlanner(
     factory.forRole("planner"),
     runState.objective,
-    { repoRoot, workspaceDir, runId: runState.runId, config },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory },
     undefined,
     undefined,
     planningContext,
@@ -705,6 +771,7 @@ async function handleContractNegotiation(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
   const allPackets = readAllPackets(repoRoot, runState.runId);
@@ -750,11 +817,23 @@ async function handleContractNegotiation(
     runId: runState.runId,
     config,
     specExcerpt: readSpec(repoRoot, runState.runId),
+    memory,
   }, existingContract, evalReport);
 
   switch (outcome.kind) {
-    case "accepted":
+    case "accepted": {
+      if (memory) {
+        try {
+          const acceptedContract = readArtifact(
+            repoRoot, runState.runId,
+            `packets/${packetId}/contract/final.json`,
+            PacketContractSchema,
+          );
+          memory.encodeInBackground([contractToDocument(acceptedContract, packetId)]);
+        } catch { /* contract file may not be written yet in edge cases */ }
+      }
       return updateRun(repoRoot, runState.runId, { phase: "building_packet" });
+    }
 
     case "split":
       appendEvent(repoRoot, runState.runId, {
@@ -787,12 +866,27 @@ async function executeBuilder(
   config: ProjectConfig,
   evalReport?: EvaluatorReport,
   resumeSessionId?: string | null,
+  memory?: RunMemory | null,
 ): Promise<BuilderRunResult> {
   const packetId = runState.currentPacketId!;
   const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
   const contextOverrides = readContextOverrides(repoRoot, runState.runId);
   const allCompletedIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
   const completionSummaries = readCompletionSummaries(repoRoot, runState.runId, allCompletedIds);
+
+  // Query memvid for semantically relevant context from prior packets
+  let memoryContext: string | undefined;
+  if (memory) {
+    try {
+      memoryContext = await queryMemoryContext(memory, contract, 'builder');
+    } catch (err) {
+      console.log(`[memvid] Warning: builder memory context query failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Combine: memory context appended after completion summaries
+  const combinedContext = [completionSummaries, memoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
+
   const builderCtx: BuilderContext = {
     repoRoot,
     workspaceDir,
@@ -803,8 +897,10 @@ async function executeBuilder(
     riskRegister: readRiskRegister(repoRoot, runState.runId),
     priorEvalReport: evalReport,
     contextOverrides,
-    completionSummaries,
+    completionSummaries: combinedContext,
+    completedPacketIds: allCompletedIds,
     resumeSessionId: resumeSessionId ?? undefined,
+    memory,
   };
   return runBuilder(factory.forRole("builder"), contract, builderCtx);
 }
@@ -815,6 +911,7 @@ async function handleBuilding(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
 
@@ -830,7 +927,7 @@ async function handleBuilding(
     `packets/${packetId}/builder`,
   );
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId);
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId, memory);
 
   if (result.report?.claimsDone) {
     appendEvent(repoRoot, runState.runId, {
@@ -838,6 +935,16 @@ async function handleBuilding(
       phase: "building_packet",
       packetId,
     });
+
+    // Encode builder artifacts into run memory
+    if (memory && result.report) {
+      const docs: MemvidDocument[] = [builderReportToDocument(result.report, packetId)];
+      const latestTranscript = findLatestTranscript(repoRoot, runState.runId, packetId, "builder");
+      if (latestTranscript) {
+        docs.push(...transcriptToDocuments(latestTranscript, packetId, "builder"));
+      }
+      memory.encodeInBackground(docs);
+    }
 
     // Run tool gates before proceeding to evaluator
     const gateTransition = await runGatesBetweenBuilderAndEvaluator(
@@ -867,6 +974,7 @@ async function handleEvaluation(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
 
@@ -885,6 +993,19 @@ async function handleEvaluation(
 
   const allCompletedIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
   const completionSummaries = readCompletionSummaries(repoRoot, runState.runId, allCompletedIds);
+
+  // Query memvid for semantically relevant context from prior packets
+  let evalMemoryContext: string | undefined;
+  if (memory) {
+    try {
+      evalMemoryContext = await queryMemoryContext(memory, contract, 'evaluator');
+    } catch (err) {
+      console.log(`[memvid] Warning: evaluator memory context query failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Combine: memory context appended after completion summaries
+  const combinedCompletionContext = [completionSummaries, evalMemoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
 
   // Load gate results to inject into evaluator context
   const gateResultsSummary = readGateResultsSummary(repoRoot, runState.runId, packetId);
@@ -917,6 +1038,7 @@ async function handleEvaluation(
           factory.claudeBackend,
           priorTranscript,
           contract,
+          memory,
         );
         if (recoveryContext) {
           console.log(
@@ -942,12 +1064,14 @@ async function handleEvaluation(
     config,
     riskRegister: readRiskRegister(repoRoot, runState.runId),
     evaluatorGuide,
-    completionSummaries,
+    completionSummaries: combinedCompletionContext,
     gateResultsSummary,
     recoveryContext: recoveryContext ?? undefined,
     futurePacketsSummary,
-    resumeSessionId: resumeSessionId ?? undefined,
     builderTranscriptPath: builderTranscriptPath ?? undefined,
+    completedPacketIds: allCompletedIds,
+    resumeSessionId: resumeSessionId ?? undefined,
+    memory,
   };
   const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, evaluatorCtx);
 
@@ -1050,6 +1174,23 @@ async function handleEvaluation(
     // Generate and store completion summary for cross-packet context
     writeCompletionSummary(repoRoot, runState.runId, packetId, contract, builderReport, result.report);
 
+    // Encode evaluator artifacts into run memory (completion summary is now written)
+    if (memory) {
+      const docs: MemvidDocument[] = [evalReportToDocument(result.report, packetId)];
+      const latestTranscript = findLatestTranscript(repoRoot, runState.runId, packetId, "evaluator");
+      if (latestTranscript) {
+        docs.push(...transcriptToDocuments(latestTranscript, packetId, "evaluator"));
+      }
+      const summaryPath = path.join(
+        getRunDir(repoRoot, runState.runId), "packets", packetId, "completion-summary.md",
+      );
+      try {
+        const summary = fs.readFileSync(summaryPath, "utf-8");
+        docs.push(completionSummaryToDocument(summary, packetId));
+      } catch { /* summary not available */ }
+      memory.encodeInBackground(docs);
+    }
+
     // Check if this packet requires human review
     const allPkts = readAllPackets(repoRoot, runState.runId);
     const packet = allPkts.find((p) => p.id === packetId);
@@ -1102,6 +1243,16 @@ async function handleEvaluation(
     detail: `${result.report.hardFailures.length} hard failures${verdictSummary}`,
   });
 
+  // Encode evaluator artifacts into run memory (fail path — no completion summary)
+  if (memory) {
+    const docs: MemvidDocument[] = [evalReportToDocument(result.report, packetId)];
+    const latestTranscript = findLatestTranscript(repoRoot, runState.runId, packetId, "evaluator");
+    if (latestTranscript) {
+      docs.push(...transcriptToDocuments(latestTranscript, packetId, "evaluator"));
+    }
+    memory.encodeInBackground(docs);
+  }
+
   if (hasContractGap(result.report)) {
     return updateRun(repoRoot, runState.runId, { phase: "negotiating_contract" });
   }
@@ -1115,6 +1266,7 @@ async function handleFixing(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
 
@@ -1181,9 +1333,19 @@ async function handleFixing(
     detail: `Fix attempt ${fixAttempts + 1}/${config.maxFixLoopsPerPacket}${resumeSessionId ? " (resuming)" : ""}`,
   });
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId);
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory);
 
   if (result.report?.claimsDone) {
+    // Encode builder artifacts into run memory (fix phase)
+    if (memory && result.report) {
+      const docs: MemvidDocument[] = [builderReportToDocument(result.report, packetId)];
+      const latestTranscript = findLatestTranscript(repoRoot, runState.runId, packetId, "builder");
+      if (latestTranscript) {
+        docs.push(...transcriptToDocuments(latestTranscript, packetId, "builder"));
+      }
+      memory.encodeInBackground(docs);
+    }
+
     // Run tool gates before proceeding to evaluator
     const gateTransition = await runGatesBetweenBuilderAndEvaluator(
       repoRoot, workspaceDir, runState, config, packetId,
@@ -1236,6 +1398,7 @@ async function handleQAReview(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   const round = runState.round;
   appendEvent(repoRoot, runState.runId, {
@@ -1264,7 +1427,7 @@ async function handleQAReview(
     builderReports,
     evaluatorGuide,
     integrationScenarios,
-    { repoRoot, workspaceDir, runId: runState.runId, config },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory },
     round,
     config.devServer ?? undefined,
     resumeSessionId ?? undefined,
@@ -1282,6 +1445,11 @@ async function handleQAReview(
     path.join(getRunDir(repoRoot, runState.runId), reportPath),
     result.report,
   );
+
+  // Encode QA report into run memory
+  if (memory) {
+    memory.encodeInBackground([qaReportToDocument(result.report, round)]);
+  }
 
   if (qaPassesThreshold(result.report, config.qaPassThreshold)) {
     appendEvent(repoRoot, runState.runId, {
@@ -1330,6 +1498,7 @@ async function handleRound2Planning(
   workspaceDir: string,
   runState: RunState,
   config: ProjectConfig,
+  memory: RunMemory | null,
 ): Promise<RunState | null> {
   appendEvent(repoRoot, runState.runId, {
     event: "round2.planning.started",
@@ -1367,7 +1536,7 @@ async function handleRound2Planning(
     spec,
     originalPackets,
     evaluatorGuide,
-    { repoRoot, workspaceDir, runId: runState.runId, config, round: runState.round },
+    { repoRoot, workspaceDir, runId: runState.runId, config, round: runState.round, memory },
     resumeSessionId ?? undefined,
   );
 
@@ -1923,6 +2092,7 @@ function requiredPhaseForMessage(type: string): RunPhase | null {
 async function processInbox(
   repoRoot: string,
   runState: RunState,
+  memory: RunMemory | null,
 ): Promise<RunState> {
   const inboxDir = path.join(getRunDir(repoRoot, runState.runId), "inbox");
   const files = readInboxFiles(inboxDir);
@@ -1941,6 +2111,11 @@ async function processInbox(
       // Skip messages handled exclusively by the global nudge poller
       if (msg.type === "send_to_agent" || msg.type === "pivot_agent") {
         continue;
+      }
+
+      // Encode inbox message into run memory before consuming it
+      if (memory) {
+        memory.encodeInBackground([inboxMessageToDocument(msg, runState.currentPacketId ?? undefined)]);
       }
 
       appendEvent(repoRoot, runState.runId, {
@@ -2284,6 +2459,7 @@ function startGlobalNudgePoller(
   repoRoot: string,
   runId: string,
   backend: AgentBackend,
+  memory: RunMemory | null,
 ): { stop: () => void } {
   const inboxDir = path.join(getRunDir(repoRoot, runId), "inbox");
   const intervalMs = 3000;
@@ -2313,6 +2489,11 @@ function startGlobalNudgePoller(
 
         // Only handle nudge/pivot/inject here. Others are for processInbox.
         if (msg.type !== "send_to_agent" && msg.type !== "inject_context" && msg.type !== "pivot_agent") continue;
+
+        // Encode operator message into run memory
+        if (memory) {
+          memory.encodeInBackground([inboxMessageToDocument(msg, currentPacketId ?? undefined)]);
+        }
 
         if (msg.type === "send_to_agent" && msg.message) {
           // Queue for live injection via streamInput (drained inside for-await loop)

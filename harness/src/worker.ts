@@ -24,6 +24,8 @@ import {
   type Heartbeat,
 } from "./schemas.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
+import type { MemvidBuffer } from "./memvid.js";
+import { agentMessageToDocuments, promptToDocuments } from "./memvid.js";
 
 // ------------------------------------
 // Types
@@ -40,6 +42,8 @@ export interface WorkerConfig {
   heartbeatIntervalSeconds?: number;
   /** Workspace directory — when set and different from repoRoot, a workspace preamble is prepended to the prompt */
   workspaceDir?: string;
+  /** Optional MemvidBuffer for real-time per-turn encoding */
+  memvidBuffer?: MemvidBuffer | null;
 }
 
 export interface WorkerResult<T = unknown> {
@@ -183,6 +187,15 @@ export async function runWorker<T = unknown>(
   const heartbeatMs = (config.heartbeatIntervalSeconds ?? 20) * 1000;
   let lastHeartbeat = Date.now();
 
+  const memvidBuffer = config.memvidBuffer ?? null;
+  let memvidTurnIndex = 0;
+
+  // Encode the initial prompt into memory
+  if (memvidBuffer) {
+    const promptDocs = promptToDocuments(sessionOptions.prompt, config.role, config.packetId);
+    memvidBuffer.addMany(promptDocs);
+  }
+
   const writeHeartbeat = () => {
     const hb: Heartbeat = {
       sessionId,
@@ -217,6 +230,17 @@ export async function runWorker<T = unknown>(
       // Log to transcript and raw event log
       logMessage(msg);
       logRawEvent(msg);
+
+      // Real-time memvid encoding
+      if (memvidBuffer) {
+        if (msg.type === 'assistant' && msg.text) memvidTurnIndex++;
+        const docs = agentMessageToDocuments(msg, {
+          role: config.role,
+          packetId: config.packetId,
+          turnIndex: memvidTurnIndex,
+        });
+        if (docs.length > 0) memvidBuffer.addMany(docs);
+      }
 
       // Capture session ID
       if (msg.sessionId && !sessionId) {
@@ -258,6 +282,7 @@ export async function runWorker<T = unknown>(
     transcriptStream.end();
     legacyStream.end();
     rawEventStream.end();
+    if (memvidBuffer) memvidBuffer.stop();
   }
 
   // Final heartbeat

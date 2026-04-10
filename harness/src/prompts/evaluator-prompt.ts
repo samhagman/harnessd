@@ -33,6 +33,8 @@ export interface EvaluatorPromptOptions {
   futurePacketsSummary?: string;
   devServer?: DevServerConfig;
   builderTranscriptPath?: string;
+  /** Packet IDs of packets that have already been built and evaluated (for harness context). */
+  completedPacketIds?: string[];
 }
 import {
   RESULT_START_SENTINEL,
@@ -42,6 +44,8 @@ import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
   buildDevServerSetupSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
 } from "./shared.js";
 
 export function buildEvaluatorPrompt(
@@ -59,6 +63,7 @@ export function buildEvaluatorPrompt(
     futurePacketsSummary,
     devServer,
     builderTranscriptPath,
+    completedPacketIds,
   } = opts;
 
   const sections: string[] = [];
@@ -213,9 +218,9 @@ ${builderReport.selfCheckResults
 ### Remaining Concerns from Builder
 ${builderReport.remainingConcerns.length > 0 ? builderReport.remainingConcerns.map((c) => `- ${c}`).join("\n") : "(none)"}`);
 
-  // 5b. Previously completed packet summaries
+  // 5b. Prior context from completed packets (static summaries + semantic memory)
   if (completionSummaries) {
-    sections.push(`## Previously Completed Packets
+    sections.push(`## Prior Context from Completed Packets
 
 These packets were completed before this one. Use this context to understand what
 already exists in the codebase and what patterns the builder should have followed.
@@ -223,6 +228,13 @@ If the builder deviated from established patterns without justification, flag it
 
 ${completionSummaries}`);
   }
+
+  // 5b2. Harness pipeline context + memory search guidance
+  sections.push(buildHarnessContextSection("evaluator", {
+    packetId: contract.packetId,
+    completedPacketIds,
+  }));
+  sections.push(buildMemorySearchSection("evaluator"));
 
   // 5c. Automated gate results
   if (gateResultsSummary) {

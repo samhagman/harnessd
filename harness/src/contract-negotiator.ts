@@ -20,6 +20,8 @@ import type {
   ProjectConfig,
   EvaluatorReport,
 } from "./schemas.js";
+import { MemvidBuffer, contractRoundToDocument } from "./memvid.js";
+import type { RunMemory } from "./memvid.js";
 import {
   PacketContractSchema,
   ContractReviewSchema,
@@ -34,6 +36,7 @@ import { getTemplate } from "./templates.js";
 import { buildContractBuilderPrompt } from "./prompts/contract-builder-prompt.js";
 import { buildContractEvaluatorPrompt } from "./prompts/contract-evaluator-prompt.js";
 import { createValidationMcpServer } from "./validation-tool.js";
+import { createMemorySearchMcpServer } from "./memory-tool.js";
 
 export interface NegotiationConfig {
   repoRoot: string;
@@ -41,6 +44,7 @@ export interface NegotiationConfig {
   runId: string;
   config: ProjectConfig;
   specExcerpt: string;
+  memory?: RunMemory | null;
 }
 
 export type NegotiationOutcome =
@@ -100,6 +104,8 @@ export async function negotiateContract(
       evaluatorReport,
     );
 
+    const contractBuilderBuffer = negConfig.memory ? new MemvidBuffer(negConfig.memory) : null;
+
     const builderResult = await runWorker(
       contractBuilderBackend,
       {
@@ -110,7 +116,10 @@ export async function negotiateContract(
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [createValidationMcpServer()],
+        mcpServers: [
+          createValidationMcpServer(),
+          ...(negConfig.memory ? [createMemorySearchMcpServer(negConfig.memory)] : []),
+        ],
         sandboxMode: "read-only",
       },
       {
@@ -120,6 +129,7 @@ export async function negotiateContract(
         packetId: packet.id,
         artifactDir: `packets/${packet.id}/contract`,
         workspaceDir: negConfig.workspaceDir,
+        memvidBuffer: contractBuilderBuffer,
       },
       PacketContractSchema,
     );
@@ -138,6 +148,11 @@ export async function negotiateContract(
       path.join(contractDir, `proposal.r${String(round).padStart(2, "0")}.json`),
       proposal,
     );
+
+    // Encode proposal into memory
+    if (negConfig.memory) {
+      negConfig.memory.encodeInBackground([contractRoundToDocument('proposal', round, packet.id, proposal)]);
+    }
 
     // 2. Lint pass (no model call needed)
     const lintResult = lintContract(proposal, packet.type, packet.estimatedSize);
@@ -171,6 +186,8 @@ export async function negotiateContract(
     // 3. Contract evaluator reviews
     const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister);
 
+    const contractEvaluatorBuffer = negConfig.memory ? new MemvidBuffer(negConfig.memory) : null;
+
     const evaluatorResult = await runWorker(
       contractEvaluatorBackend,
       {
@@ -181,7 +198,10 @@ export async function negotiateContract(
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [createValidationMcpServer()],
+        mcpServers: [
+          createValidationMcpServer(),
+          ...(negConfig.memory ? [createMemorySearchMcpServer(negConfig.memory)] : []),
+        ],
         sandboxMode: "read-only",
       },
       {
@@ -191,6 +211,7 @@ export async function negotiateContract(
         packetId: packet.id,
         artifactDir: `packets/${packet.id}/contract`,
         workspaceDir: negConfig.workspaceDir,
+        memvidBuffer: contractEvaluatorBuffer,
       },
       ContractReviewSchema,
     );
@@ -209,6 +230,11 @@ export async function negotiateContract(
       path.join(contractDir, `review.r${String(round).padStart(2, "0")}.json`),
       review,
     );
+
+    // Encode review into memory
+    if (negConfig.memory) {
+      negConfig.memory.encodeInBackground([contractRoundToDocument('review', round, packet.id, review)]);
+    }
 
     await appendEvent(negConfig.repoRoot, negConfig.runId, {
       event: "contract.round.reviewed",
