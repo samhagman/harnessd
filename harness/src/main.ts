@@ -23,6 +23,7 @@ import { getLatestRunId, getRunDir, createRun, loadRun, atomicWriteJson } from "
 import type { PlanningContext } from "./schemas.js";
 import type { RoleBackendMap } from "./schemas.js";
 import { defaultProjectConfig } from "./schemas.js";
+import { resolveResearchToolAvailability } from "./research-tools.js";
 
 // ------------------------------------
 // Main
@@ -128,6 +129,15 @@ async function main(): Promise<void> {
     codexModel = args[codexModelIdx + 1]!;
   }
 
+  // --perplexity: enable Perplexity research tools (requires PERPLEXITY_API_KEY)
+  const enablePerplexity = args.includes("--perplexity");
+
+  // --no-memory: disable run memory (no .mv2 file, no search_memory tool)
+  const disableMemory = args.includes("--no-memory");
+
+  // --no-context7: disable Context7 research tool
+  const disableContext7 = args.includes("--no-context7");
+
   const filteredArgs = args.filter((a, i) =>
     !a.startsWith("--") &&
     (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model")),
@@ -142,7 +152,10 @@ async function main(): Promise<void> {
   npx tsx src/main.ts --resume [run-id]
   npx tsx src/main.ts --status [run-id]
   npx tsx src/main.ts --workspace <dir> "your objective"
-  npx tsx src/main.ts --run-id <name> "your objective"`);
+  npx tsx src/main.ts --run-id <name> "your objective"
+  npx tsx src/main.ts --perplexity "your objective"
+  npx tsx src/main.ts --no-memory "your objective"
+  npx tsx src/main.ts --no-context7 "your objective"`);
     process.exit(1);
   }
 
@@ -173,16 +186,24 @@ async function main(): Promise<void> {
     const { renderStatus, renderStatusMarkdown } = await import("./status-renderer.js");
     const { createRunMemory, getMemoryPath, specToDocuments } = await import("./memvid.js");
 
-    const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel };
+    const researchTools = {
+      context7: !disableContext7,
+      perplexity: enablePerplexity,
+    };
+    const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
+    // Resolve research tool availability (check env vars, log summary)
+    config.researchTools = resolveResearchToolAvailability(config);
     const runState = createRun(repoRoot, objective, config, customRunId, workspaceDir);
 
-    // Initialize run memory for plan-only mode
+    // Initialize run memory for plan-only mode (skip if disabled)
     let memory: import("./memvid.js").RunMemory | null = null;
-    try {
-      const memoryPath = getMemoryPath(repoRoot, runState.runId);
-      memory = await createRunMemory(memoryPath, repoRoot, runState.runId);
-      if (memory) console.log("[memvid] Memory initialized");
-    } catch { /* non-fatal */ }
+    if (config.enableMemory) {
+      try {
+        const memoryPath = getMemoryPath(repoRoot, runState.runId);
+        memory = await createRunMemory(memoryPath, repoRoot, runState.runId);
+        if (memory) console.log("[memvid] Memory initialized");
+      } catch { /* non-fatal */ }
+    }
 
     // Write planning context if provided
     if (planningContext) {
@@ -226,7 +247,20 @@ async function main(): Promise<void> {
       // Encode spec artifacts into memory
       if (memory) {
         memory.encodeInBackground(specToDocuments(runDir));
-        try { await memory.waitForPendingWrites(); } catch { /* non-fatal */ }
+        try {
+          await Promise.race([
+            memory.waitForPendingWrites(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 10_000),
+            ),
+          ]);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === "timeout") {
+            console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
+          }
+          // non-fatal either way
+        }
         console.log("[memvid] Planning artifacts encoded into memory");
       }
 
@@ -241,7 +275,20 @@ async function main(): Promise<void> {
       });
       // Wait for any buffered memory writes
       if (memory) {
-        try { await memory.waitForPendingWrites(); } catch { /* non-fatal */ }
+        try {
+          await Promise.race([
+            memory.waitForPendingWrites(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 10_000),
+            ),
+          ]);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === "timeout") {
+            console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
+          }
+          // non-fatal either way
+        }
       }
       console.error(`\nPlanning failed: ${result.error}`);
       process.exit(1);
@@ -249,7 +296,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const orchConfig = { ...(model ? { model } : {}), roleBackends, codexModel };
+  const researchTools = {
+    context7: !disableContext7,
+    perplexity: enablePerplexity,
+  };
+  const orchConfig = { ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
 
   // Full run — create run (with optional custom ID), write planning context, then go
   if (planningContext || customRunId) {

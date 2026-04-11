@@ -18,6 +18,7 @@ import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS }
 import { buildPlanReviewPrompt } from "./prompts/plan-review-prompt.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 export interface PlanReviewRunnerConfig {
   repoRoot: string;
@@ -55,6 +56,7 @@ export async function runPlanReview(
     riskRegister,
     integrationScenarios,
     planningContext,
+    opts.config.enableMemory,
   );
 
   const memvidBuffer = opts.memory ? new MemvidBuffer(opts.memory) : null;
@@ -69,10 +71,11 @@ export async function runPlanReview(
       ...(opts.config.model ? { model: opts.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-      mcpServers: [
-        createValidationMcpServer(),
-        ...(opts.memory ? [createMemorySearchMcpServer(opts.memory)] : []),
-      ],
+      mcpServers: {
+        "harnessd-validation": createValidationMcpServer(),
+        ...(opts.memory ? { "harnessd-memory": createMemorySearchMcpServer(opts.memory) } : {}),
+        ...createResearchMcpServerRecord(opts.config.researchTools),
+      },
       hooks: {
         PreToolUse: [
           { matcher: "Bash", hooks: [makeReadOnlyHook()] },

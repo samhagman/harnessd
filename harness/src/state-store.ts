@@ -57,6 +57,20 @@ export function getRunDir(repoRoot: string, runId: string): string {
   return path.join(getRunsDir(repoRoot), runId);
 }
 
+/**
+ * Walk up from startDir looking for a .harnessd directory.
+ * Returns the directory containing .harnessd, or null if not found.
+ */
+export function findRepoRoot(startDir?: string): string | null {
+  let dir = startDir ?? process.cwd();
+  while (true) {
+    if (fs.existsSync(path.join(dir, HARNESSD_DIR))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 // ------------------------------------
 // Run ID generation
 // ------------------------------------

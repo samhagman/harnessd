@@ -30,6 +30,7 @@ import { buildRound2PlannerPrompt, type Round2PlannerPromptContext } from "./pro
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 // Schema for the round 2 planner's structured output
 const Round2PlannerOutputSchema = z.object({
@@ -95,6 +96,7 @@ export async function runRound2Planner(
       evaluatorGuide,
       workspaceDir: effectiveWorkspaceDir,
       round: plannerConfig.round,
+      enableMemory: plannerConfig.config.enableMemory,
     };
 
     let prompt: string;
@@ -122,10 +124,11 @@ export async function runRound2Planner(
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [
-          createValidationMcpServer(),
-          ...(plannerConfig.memory ? [createMemorySearchMcpServer(plannerConfig.memory)] : []),
-        ],
+        mcpServers: {
+          "harnessd-validation": createValidationMcpServer(),
+          ...(plannerConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(plannerConfig.memory) } : {}),
+          ...createResearchMcpServerRecord(plannerConfig.config.researchTools),
+        },
         hooks: {
           PreToolUse: [
             { matcher: "Bash", hooks: [makeReadOnlyHook()] },

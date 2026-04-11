@@ -26,6 +26,7 @@ const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_featur
 export function buildContractEvaluatorPrompt(
   proposal: PacketContract,
   riskRegister?: RiskRegister,
+  enableMemory?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -33,8 +34,8 @@ export function buildContractEvaluatorPrompt(
   sections.push(AUTONOMOUS_PREAMBLE);
 
   // 0a. Harness pipeline context + memory search guidance
-  sections.push(buildHarnessContextSection("contract_evaluator", { packetId: proposal.packetId }));
-  sections.push(buildMemorySearchSection("contract_evaluator"));
+  sections.push(buildHarnessContextSection("contract_evaluator", { packetId: proposal.packetId, memoryEnabled: enableMemory }));
+  sections.push(buildMemorySearchSection("contract_evaluator", enableMemory));
 
   // 1. Review stance
   sections.push(`## Your Role

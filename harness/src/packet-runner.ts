@@ -30,6 +30,7 @@ import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 /**
  * All configuration and optional context needed to run the builder.
@@ -92,6 +93,8 @@ export async function runBuilder(
         completionSummaries: ctx.completionSummaries,
         devServer: ctx.config.devServer ?? undefined,
         completedPacketIds: ctx.completedPacketIds,
+        researchTools: ctx.config.researchTools,
+        enableMemory: ctx.config.enableMemory,
       });
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
@@ -105,10 +108,11 @@ export async function runBuilder(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
-      mcpServers: [
-        createValidationMcpServer(),
-        ...(ctx.memory ? [createMemorySearchMcpServer(ctx.memory)] : []),
-      ],
+      mcpServers: {
+        "harnessd-validation": createValidationMcpServer(),
+        ...(ctx.memory ? { "harnessd-memory": createMemorySearchMcpServer(ctx.memory) } : {}),
+        ...createResearchMcpServerRecord(ctx.config.researchTools),
+      },
       sandboxMode: "workspace-write",
       hooks: {
         PreToolUse: [

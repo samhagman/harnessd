@@ -27,6 +27,7 @@ import { buildQAPrompt, type QAPromptContext } from "./prompts/qa-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 // ------------------------------------
 // Config and types
@@ -83,6 +84,7 @@ export async function runQA(
     round,
     devServer,
     workspaceDir: effectiveWorkspaceDir,
+    enableMemory: runnerConfig.config.enableMemory,
   };
 
   const prompt = resumeSessionId ? CONTINUATION_PROMPT : buildQAPrompt(promptContext);
@@ -100,10 +102,11 @@ export async function runQA(
       ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-      mcpServers: [
-        createValidationMcpServer(),
-        ...(runnerConfig.memory ? [createMemorySearchMcpServer(runnerConfig.memory)] : []),
-      ],
+      mcpServers: {
+        "harnessd-validation": createValidationMcpServer(),
+        ...(runnerConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(runnerConfig.memory) } : {}),
+        ...createResearchMcpServerRecord(runnerConfig.config.researchTools),
+      },
       // "workspace-write" allows Codex QA agent to run commands (dev server, tests, etc.)
       // File-edit enforcement is handled by the prompt + hooks (Claude) or prompt-only (Codex)
       sandboxMode: "workspace-write",

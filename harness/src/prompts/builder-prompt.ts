@@ -13,6 +13,7 @@ import type {
   RiskRegister,
   DevServerConfig,
 } from "../schemas.js";
+import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
 /**
  * Options bag for `buildBuilderPrompt`.
@@ -33,6 +34,10 @@ export interface BuilderPromptOptions {
   devServer?: DevServerConfig;
   /** Packet IDs of packets that have already been built and evaluated (for harness context). */
   completedPacketIds?: string[];
+  /** Research tool availability — drives dynamic research tools section. */
+  researchTools?: ResearchToolAvailability;
+  /** When false, suppresses search_memory guidance and memory sections. */
+  enableMemory?: boolean;
 }
 import {
   RESULT_START_SENTINEL,
@@ -44,6 +49,7 @@ import {
   buildDevServerSetupSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildResearchToolsSection,
 } from "./shared.js";
 
 export function buildBuilderPrompt(
@@ -60,6 +66,8 @@ export function buildBuilderPrompt(
     completionSummaries,
     devServer,
     completedPacketIds,
+    researchTools,
+    enableMemory,
   } = opts;
 
   const sections: string[] = [];
@@ -178,8 +186,9 @@ ${completionSummaries}`);
   sections.push(buildHarnessContextSection("builder", {
     packetId: contract.packetId,
     completedPacketIds,
+    memoryEnabled: enableMemory,
   }));
-  sections.push(buildMemorySearchSection("builder"));
+  sections.push(buildMemorySearchSection("builder", enableMemory));
 
   // 5. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
@@ -188,30 +197,12 @@ ${completionSummaries}`);
 ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}\n  Mitigation: ${r.mitigation}`).join("\n")}`);
   }
 
-  // 6. Research tools (MCP)
-  sections.push(`## Research Tools
-
-You have access to these research tools. Use them — don't guess at APIs.
-
-### Context7 (Library Documentation)
-When you need to look up API documentation for libraries (React, Effect-TS, Jotai, etc.),
-use the Context7 MCP tools:
-1. Call \`resolve-library-id\` with the library name to find the library ID
-2. Call \`query-docs\` with the library ID and your specific question to fetch current documentation
-This is more reliable than guessing at API signatures. Your training data may be outdated —
-Context7 gives you CURRENT documentation.
-Use Context7 for: API syntax, configuration, version migration, setup instructions.
-
-### Perplexity (Web Search)
-For current best practices or recent API changes, use Perplexity's tools:
-- \`perplexity_search\` for quick factual lookups and finding URLs
-- \`perplexity_ask\` for AI-answered questions with citations
-- \`perplexity_research\` for in-depth multi-source investigation
-Use Perplexity for: design patterns, browser compatibility, real-world examples, domain content
-(colors, typography, real data), and anything beyond library-specific docs.
-
-Prefer Context7 over Perplexity for library-specific questions.
-Prefer Perplexity over Context7 for design, patterns, and domain knowledge.`);
+  // 6. Research tools (dynamic based on availability)
+  const researchSection = buildResearchToolsSection(
+    researchTools ?? DEFAULT_RESEARCH_TOOLS,
+    "builder",
+  );
+  if (researchSection) sections.push(researchSection);
 
   // 6a. Browser self-testing (all packets)
   sections.push(`## Browser Self-Testing

@@ -37,6 +37,8 @@ export interface QAPromptContext {
   round: number;
   devServer?: DevServerConfig;
   workspaceDir?: string;
+  /** When false, suppresses search_memory guidance and memory sections. */
+  enableMemory?: boolean;
 }
 
 export function buildQAPrompt(ctx: QAPromptContext): string {
@@ -127,8 +129,9 @@ ${summaries.join("\n\n")}`);
     sections.push(buildHarnessContextSection("qa_agent", {
       completedPacketIds,
       round: ctx.round,
+      memoryEnabled: ctx.enableMemory,
     }));
-    sections.push(buildMemorySearchSection("qa_agent"));
+    sections.push(buildMemorySearchSection("qa_agent", ctx.enableMemory));
   }
 
   // 5. Integration scenarios

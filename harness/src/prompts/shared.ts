@@ -11,9 +11,11 @@
  * 4. buildDevServerSetupSection
  * 5. buildHarnessContextSection  — where the agent sits in the pipeline
  * 6. buildMemorySearchSection    — how to use search_memory effectively
+ * 7. buildResearchToolsSection   — dynamic research tool instructions
  */
 
 import type { DevServerConfig } from "../schemas.js";
+import type { ResearchToolAvailability } from "../research-tools.js";
 
 // ---------------------------------------------------------------------------
 // AUTONOMOUS_PREAMBLE
@@ -211,6 +213,7 @@ ${cleanDataNote}`;
  * @param opts.packetId       - Current packet (for packet-scoped agents)
  * @param opts.completedPacketIds - Packets already finished (for context)
  * @param opts.round          - Round number (for planner/round2_planner)
+ * @param opts.memoryEnabled  - When false, strip search_memory example lines (default: true)
  */
 export function buildHarnessContextSection(
   role: string,
@@ -218,12 +221,15 @@ export function buildHarnessContextSection(
     packetId?: string;
     completedPacketIds?: string[];
     round?: number;
+    memoryEnabled?: boolean;
   },
 ): string {
   const packetId = opts?.packetId;
   const completedPacketIds = opts?.completedPacketIds ?? [];
   const round = opts?.round ?? 1;
+  const memoryEnabled = opts?.memoryEnabled;
 
+  let result: string;
   switch (role) {
     case "builder": {
       const priorBuilderSearch = completedPacketIds.length > 0
@@ -233,7 +239,7 @@ export function buildHarnessContextSection(
         ? completedPacketIds.join(", ")
         : "(none — you are the first builder)";
 
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **builder** for packet ${packetId ?? "(current packet)"} in a multi-packet harness run.
 
@@ -255,10 +261,11 @@ You are the **builder** for packet ${packetId ?? "(current packet)"} in a multi-
 - **Tool Gates** — automated typecheck + test suite run on your changes
 - **Evaluator** — a separate read-only agent will independently verify every acceptance
   criterion. It cannot write code — it can only read, test, and report.`;
+      break;
     }
 
     case "evaluator": {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **evaluator** for packet ${packetId ?? "(current packet)"}. Your job is to independently
 verify the builder's claims — you are adversarial, not collaborative.
@@ -278,31 +285,12 @@ verify the builder's claims — you are adversarial, not collaborative.
 - **Pass** → packet marked done, next packet starts
 - **Fail** → builder gets your diagnostic hypothesis and tries again
 - **Contract Gap** → back to contract negotiation with your findings`;
+      break;
     }
 
     case "planner": {
-      if (round > 1) {
-        return `## Your Place in the Harness
-
-You are the **round ${round} planner** re-planning after QA round ${round - 1} found issues.
-
-### What happened before you:
-1. **Round 1 Planner** — created the original spec, packets, and risk register
-2. **Plan Reviewer** — adversarially reviewed and approved the original plan
-3. **Builders** (all R1 packets) — implemented each packet against negotiated contracts
-4. **Evaluators** (all R1 packets) — independently verified each packet. All passed.
-5. **Tool Gates** — typecheck + tests passed for every R1 packet
-6. **QA Agent (round ${round - 1})** — ran holistic E2E testing and found issues to fix
-
-You have access to the FULL memory of everything that happened in round 1.
-Search for QA findings: \`search_memory({query: "QA findings issues round ${round - 1}"})\`
-Search for R1 builder decisions: \`search_memory({query: "builder reasoning implementation"})\`
-
-### What happens after you:
-- Your fix packets go through contract negotiation → building → evaluation → QA again`;
-      }
-
-      return `## Your Place in the Harness
+      // Note: round > 1 planning uses the "round2_planner" role, not "planner".
+      result = `## Your Place in the Harness
 
 You are the **first agent** in this harness pipeline. Memory is mostly empty at this point
 because no other agents have run yet.
@@ -315,11 +303,12 @@ because no other agents have run yet.
 - **Evaluation** — evaluators independently verify each completed packet
 - **QA** — holistic E2E testing after all packets complete
 
-Ground your plan in research using the perplexity tools before planning.`;
+Ground your plan in research using available research tools before planning.`;
+      break;
     }
 
     case "round2_planner": {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **round ${round} planner** creating targeted fix packets from QA findings.
 
@@ -338,13 +327,14 @@ Search for evaluator findings: \`search_memory({query: "evaluator report hard fa
 
 ### What happens after you:
 - Your fix packets go through contract negotiation → building → evaluation → QA again`;
+      break;
     }
 
     case "qa_agent": {
       const allPackets = completedPacketIds.length > 0
         ? completedPacketIds.join(", ")
         : "(all R1 packets)";
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **QA agent** running holistic end-to-end testing after ALL packets are built.
 
@@ -363,10 +353,11 @@ Search: \`search_memory({query: "cross-packet integration decisions architectura
 ### What happens after you:
 - **Pass** → run complete
 - **Fail** → your findings generate targeted fix packets in round ${round + 1}`;
+      break;
     }
 
     case "contract_builder": {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **contract builder** proposing a contract for packet ${packetId ?? "(current packet)"}.
 You translate a planned packet into actionable scope with explicit acceptance criteria.
@@ -383,10 +374,11 @@ You translate a planned packet into actionable scope with explicit acceptance cr
 - **Contract Evaluator** — reviews your proposal for quality. May require revisions.
 - **Builder** — implements against the finalized contract. Vague criteria = wasted build cycles.
 - **Evaluator** — verifies the implementation against your criteria.`;
+      break;
     }
 
     case "contract_evaluator": {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **contract evaluator** reviewing a contract proposal for packet ${packetId ?? "(current packet)"}.
 Your job is to ensure the contract is specific, testable, and properly scoped before building starts.
@@ -402,10 +394,11 @@ Your job is to ensure the contract is specific, testable, and properly scoped be
 - **Accept** → builder gets this contract and starts implementing
 - **Revise** → contract builder revises and you review again (max 10 rounds)
 - A weak contract leads to weak implementation — be rigorous now to save fix loops later.`;
+      break;
     }
 
     case "plan_reviewer": {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are the **plan reviewer** adversarially reviewing the planner's output.
 You are the last checkpoint before the operator sees the plan.
@@ -419,15 +412,112 @@ You are the last checkpoint before the operator sees the plan.
 - **Approve** → operator reviews the plan and can modify/approve it before building starts
 - **Revise** → planner revises and you review again (max ${opts?.round ?? 10} rounds)
 - Problems you catch now cost nothing to fix. Problems you miss cost full build cycles.`;
+      break;
     }
 
     default: {
-      return `## Your Place in the Harness
+      result = `## Your Place in the Harness
 
 You are a **${role}** agent in a multi-phase harness run.
 Memory from prior agent phases is available via \`search_memory\`.`;
+      break;
     }
   }
+
+  // Strip search_memory example lines when memory is disabled.
+  if (memoryEnabled === false) {
+    result = result
+      .split("\n")
+      .filter((line) => !line.includes("search_memory"))
+      .join("\n");
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// buildResearchToolsSection
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the "Research Tools" prompt section based on what tools are available.
+ * Returns role-appropriate guidance. Returns empty string if no tools available.
+ */
+export function buildResearchToolsSection(
+  availability: ResearchToolAvailability,
+  role: "builder" | "evaluator" | "planner",
+): string {
+  const { context7, perplexity } = availability;
+
+  if (!context7 && !perplexity) return "";
+
+  const sections: string[] = [];
+
+  // Header — role-specific framing
+  if (role === "builder") {
+    sections.push(`## Research Tools\n\nYou have access to these research tools. Use them — don't guess at APIs.`);
+  } else if (role === "evaluator") {
+    sections.push(`## Research Tools\n\nYou have access to these tools for VERIFICATION purposes. Use them to verify the builder's work — not to fix problems (you are read-only).`);
+  } else {
+    sections.push(`## Research Tools\n\nYou have access to research tools. Use them to ground your plan in real data.`);
+  }
+
+  // Context7 section
+  if (context7) {
+    if (role === "evaluator") {
+      sections.push(`### Context7 (Library Documentation)
+If you need to verify that an implementation follows library conventions, use Context7
+to check the current docs:
+1. Call \`resolve-library-id\` with the library name
+2. Call \`query-docs\` with the library ID and your verification question
+Use this when an implementation looks suspicious or uses unfamiliar API patterns.`);
+    } else {
+      sections.push(`### Context7 (Library Documentation)
+When you need to look up API documentation for libraries (React, Effect-TS, Jotai, etc.),
+use the Context7 MCP tools:
+1. Call \`resolve-library-id\` with the library name to find the library ID
+2. Call \`query-docs\` with the library ID and your specific question to fetch current documentation
+This is more reliable than guessing at API signatures. Your training data may be outdated —
+Context7 gives you CURRENT documentation.
+Use Context7 for: API syntax, configuration, version migration, setup instructions.`);
+    }
+  }
+
+  // Perplexity section
+  if (perplexity) {
+    if (role === "evaluator") {
+      sections.push(`### Perplexity (Web Search)
+Use \`perplexity_search\` or \`perplexity_ask\` when you need to:
+- Verify browser compatibility claims
+- Check if an implementation follows current best practices
+- Confirm that the builder's approach is valid for the target platform
+Do NOT use research tools to look up how to fix problems — report what needs fixing instead.`);
+    } else if (role === "planner") {
+      sections.push(`### Perplexity (Web Search)
+Use Perplexity's tools to research before planning:
+- \`perplexity_search\` for quick factual lookups and finding URLs
+- \`perplexity_ask\` for AI-answered questions with citations
+- \`perplexity_research\` for in-depth multi-source investigation
+Research the domain, design inspiration, and technical best practices. Ground your plan in research, not assumptions.`);
+    } else {
+      // builder
+      sections.push(`### Perplexity (Web Search)
+For current best practices or recent API changes, use Perplexity's tools:
+- \`perplexity_search\` for quick factual lookups and finding URLs
+- \`perplexity_ask\` for AI-answered questions with citations
+- \`perplexity_research\` for in-depth multi-source investigation
+Use Perplexity for: design patterns, browser compatibility, real-world examples, domain content
+(colors, typography, real data), and anything beyond library-specific docs.`);
+    }
+  }
+
+  // Preference guidance when both available
+  if (context7 && perplexity) {
+    sections.push(`Prefer Context7 over Perplexity for library-specific questions.
+Prefer Perplexity over Context7 for design, patterns, and domain knowledge.`);
+  }
+
+  return sections.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -441,9 +531,11 @@ Memory from prior agent phases is available via \`search_memory\`.`;
  * Memory is a flat semantic search space — document titles contain role names
  * and packet IDs which can be used to bias results.
  *
- * @param role - Agent role for role-specific search guidance
+ * @param role          - Agent role for role-specific search guidance
+ * @param memoryEnabled - When false, returns empty string (default: true)
  */
-export function buildMemorySearchSection(role: string): string {
+export function buildMemorySearchSection(role: string, memoryEnabled?: boolean): string {
+  if (memoryEnabled === false) return "";
   const roleGuidance = buildRoleSearchGuidance(role);
 
   return `## Run Memory Search

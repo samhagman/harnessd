@@ -11,9 +11,9 @@
  *   npx tsx src/memvid-query.ts --help
  */
 import fs from 'node:fs';
-import path from 'node:path';
 import { openRunMemory, getMemoryPath } from './memvid.js';
 import type { SearchHit, SearchOptions } from './memvid.js';
+import { findRepoRoot, getLatestRunId } from './state-store.js';
 
 // ── Arg parsing ────────────────────────────────────────────────────────────────
 
@@ -124,50 +124,6 @@ function parseDuration(duration: string): number {
   return Math.floor(Date.now() / 1000) - seconds;
 }
 
-function findRepoRoot(): string {
-  // Walk up from cwd looking for .harnessd/ directory
-  let dir = process.cwd();
-  while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, '.harnessd'))) return dir;
-    dir = path.dirname(dir);
-  }
-  // Fall back to the harness package's parent (i.e. project root)
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  return path.resolve(scriptDir, '..', '..');
-}
-
-function resolveRunId(repoRoot: string, explicit?: string): string {
-  if (explicit) return explicit;
-
-  const runsDir = path.join(repoRoot, '.harnessd', 'runs');
-  if (!fs.existsSync(runsDir)) {
-    console.error('No .harnessd/runs/ directory found');
-    console.error(`  Looked in: ${runsDir}`);
-    process.exit(1);
-  }
-
-  const entries = fs.readdirSync(runsDir)
-    .filter(d => {
-      try {
-        return fs.statSync(path.join(runsDir, d)).isDirectory();
-      } catch {
-        return false;
-      }
-    })
-    .sort((a, b) => {
-      const sa = fs.statSync(path.join(runsDir, a));
-      const sb = fs.statSync(path.join(runsDir, b));
-      return sb.mtimeMs - sa.mtimeMs;
-    });
-
-  if (entries.length === 0) {
-    console.error('No runs found in .harnessd/runs/');
-    process.exit(1);
-  }
-
-  return entries[0]!;
-}
-
 // ── Output formatting ──────────────────────────────────────────────────────────
 
 function printResults(results: SearchHit[]): void {
@@ -248,8 +204,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const repoRoot = findRepoRoot();
-  const runId = resolveRunId(repoRoot, cli.runId);
+  const repoRoot = findRepoRoot() ?? process.cwd();
+  const runId = cli.runId ?? getLatestRunId(repoRoot);
+
+  if (!runId) {
+    console.error('No runs found in .harnessd/runs/');
+    process.exit(1);
+  }
 
   const memoryPath = getMemoryPath(repoRoot, runId);
   if (!fs.existsSync(memoryPath)) {

@@ -37,6 +37,7 @@ import { buildContractBuilderPrompt } from "./prompts/contract-builder-prompt.js
 import { buildContractEvaluatorPrompt } from "./prompts/contract-evaluator-prompt.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 export interface NegotiationConfig {
   repoRoot: string;
@@ -102,6 +103,7 @@ export async function negotiateContract(
       priorReview,
       existingContract,
       evaluatorReport,
+      negConfig.config.enableMemory,
     );
 
     const contractBuilderBuffer = negConfig.memory ? new MemvidBuffer(negConfig.memory) : null;
@@ -116,10 +118,11 @@ export async function negotiateContract(
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [
-          createValidationMcpServer(),
-          ...(negConfig.memory ? [createMemorySearchMcpServer(negConfig.memory)] : []),
-        ],
+        mcpServers: {
+          "harnessd-validation": createValidationMcpServer(),
+          ...(negConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(negConfig.memory) } : {}),
+          ...createResearchMcpServerRecord(negConfig.config.researchTools),
+        },
         sandboxMode: "read-only",
       },
       {
@@ -184,7 +187,7 @@ export async function negotiateContract(
     }
 
     // 3. Contract evaluator reviews
-    const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister);
+    const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister, negConfig.config.enableMemory);
 
     const contractEvaluatorBuffer = negConfig.memory ? new MemvidBuffer(negConfig.memory) : null;
 
@@ -198,10 +201,11 @@ export async function negotiateContract(
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [
-          createValidationMcpServer(),
-          ...(negConfig.memory ? [createMemorySearchMcpServer(negConfig.memory)] : []),
-        ],
+        mcpServers: {
+          "harnessd-validation": createValidationMcpServer(),
+          ...(negConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(negConfig.memory) } : {}),
+          ...createResearchMcpServerRecord(negConfig.config.researchTools),
+        },
         sandboxMode: "read-only",
       },
       {

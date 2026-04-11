@@ -26,6 +26,7 @@ import { buildPlannerPrompt } from "./prompts/planner-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 // Schema for the planner's structured output
 const PlannerOutputSchema = z.object({
@@ -126,6 +127,8 @@ export async function runPlanner(
         repoContext,
         effectivePriorContext,
         planningContext,
+        plannerConfig.config.researchTools,
+        plannerConfig.config.enableMemory,
       );
     }
 
@@ -142,10 +145,11 @@ export async function runPlanner(
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
-        mcpServers: [
-          createValidationMcpServer(),
-          ...(plannerConfig.memory ? [createMemorySearchMcpServer(plannerConfig.memory)] : []),
-        ],
+        mcpServers: {
+          "harnessd-validation": createValidationMcpServer(),
+          ...(plannerConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(plannerConfig.memory) } : {}),
+          ...createResearchMcpServerRecord(plannerConfig.config.researchTools),
+        },
         hooks: {
           PreToolUse: [
             { matcher: "Bash", hooks: [makePlannerHook()] },

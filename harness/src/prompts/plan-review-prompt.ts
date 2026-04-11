@@ -28,6 +28,7 @@ export function buildPlanReviewPrompt(
   riskRegister?: string,
   integrationScenarios?: string,
   planningContext?: string,
+  enableMemory?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -35,8 +36,8 @@ export function buildPlanReviewPrompt(
   sections.push(AUTONOMOUS_PREAMBLE);
 
   // 0a. Harness pipeline context + memory search guidance
-  sections.push(buildHarnessContextSection("plan_reviewer"));
-  sections.push(buildMemorySearchSection("plan_reviewer"));
+  sections.push(buildHarnessContextSection("plan_reviewer", { memoryEnabled: enableMemory }));
+  sections.push(buildMemorySearchSection("plan_reviewer", enableMemory));
 
   // 1. Role
   sections.push(`## Your Role

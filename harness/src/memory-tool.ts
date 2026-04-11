@@ -19,7 +19,7 @@ import type { RunMemory } from "./memvid.js";
  *
  * When memory is not available (memvid not installed, empty run), callers
  * should pass null and skip adding this server to mcpServers entirely —
- * use the spread pattern: ...(memory ? [createMemorySearchMcpServer(memory)] : [])
+ * use the spread pattern: ...(memory ? { "harnessd-memory": createMemorySearchMcpServer(memory) } : {})
  */
 export function createMemorySearchMcpServer(memory: RunMemory) {
   return createSdkMcpServer({

@@ -114,17 +114,19 @@ interface SdkModule {
   open(filename: string, kind?: string, options?: { readOnly?: boolean }): Promise<import('@memvid/sdk').Memvid>;
 }
 
+let _sdkPromise: Promise<SdkModule | null> | null = null;
+
 async function loadSdk(): Promise<SdkModule | null> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mod = await import('@memvid/sdk') as any;
-    return {
-      create: mod.create ?? mod.default?.create,
-      open: mod.open ?? mod.default?.open,
-    } as SdkModule;
-  } catch {
-    return null;
+  if (!_sdkPromise) {
+    _sdkPromise = import('@memvid/sdk')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then((mod: any) => ({
+        create: mod.create ?? mod.default?.create,
+        open: mod.open ?? mod.default?.open,
+      }) as SdkModule)
+      .catch(() => null);
   }
+  return _sdkPromise;
 }
 
 // ============================================================
@@ -938,19 +940,25 @@ async function queryMemoryContextImpl(
     queries.push({ label: 'established patterns', query: 'pattern convention decision established' });
   }
 
-  // Execute queries and collect results
+  // Execute queries in parallel and collect results
   const allHits: Array<{ label: string; hit: SearchHit }> = [];
   const seenSnippets = new Set<string>();
+  const hitsPerQuery = Math.max(2, Math.ceil(maxResults / queries.length));
 
-  for (const q of queries) {
-    const hitsPerQuery = Math.max(2, Math.ceil(maxResults / queries.length));
-    const hits = await memory.search(q.query, { k: hitsPerQuery, mode: 'auto', snippetChars: 300 });
+  const queryResults = await Promise.all(
+    queries.map(async (q) => {
+      const hits = await memory.search(q.query, { k: hitsPerQuery, mode: 'auto', snippetChars: 300 });
+      return { label: q.label, hits };
+    }),
+  );
+
+  for (const { label, hits } of queryResults) {
     for (const hit of hits) {
       // Deduplicate by snippet content
       const key = hit.snippet.slice(0, 100);
       if (!seenSnippets.has(key)) {
         seenSnippets.add(key);
-        allHits.push({ label: q.label, hit });
+        allHits.push({ label, hit });
       }
     }
   }

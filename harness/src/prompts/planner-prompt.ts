@@ -17,13 +17,17 @@ import {
   buildValidateEnvelopeSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildResearchToolsSection,
 } from "./shared.js";
+import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
 export function buildPlannerPrompt(
   objective: string,
   repoContext?: string,
   priorRunContext?: string,
   planningContext?: PlanningContext,
+  researchTools?: ResearchToolAvailability,
+  enableMemory?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -32,10 +36,16 @@ export function buildPlannerPrompt(
 
   // 0b. Harness pipeline context + memory search guidance
   // (round 1 only — round 2+ uses buildRound2PlannerPrompt which handles its own context)
-  sections.push(buildHarnessContextSection("planner", { round: 1 }));
-  sections.push(buildMemorySearchSection("planner"));
+  sections.push(buildHarnessContextSection("planner", { round: 1, memoryEnabled: enableMemory }));
+  sections.push(buildMemorySearchSection("planner", enableMemory));
 
   // 1. Role
+  const researchRule = researchTools?.perplexity
+    ? `3. You HAVE web search tools (Perplexity + Context7). USE THEM to research before planning.`
+    : researchTools?.context7
+      ? `3. You HAVE library documentation tools (Context7). Use them to look up API docs before planning.`
+      : `3. Use any available research tools to look up information before planning.`;
+
   sections.push(`## Your Role
 
 You are the PLANNER for a harnessd run. Your job is to take a user objective and produce
@@ -47,18 +57,19 @@ a high-level specification, a linear packet list, and a risk register.
 
 1. You are READ-ONLY. You CANNOT and MUST NOT write any files. No Write, Edit, or Agent tools.
 2. You MAY use Read, Grep, Glob, and read-only Bash to explore the codebase.
-3. You HAVE web search tools (perplexity). USE THEM to research before planning.
+${researchRule}
 4. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
 5. Do NOT try to create plan files, write markdown files, or spawn subagents.
-6. Think through the design, then emit the envelope. That's it.
+6. Think through the design, then emit the envelope. That's it.`);
 
-## Research Phase (DO THIS FIRST)
-
-Before planning, use your web search tools to research:
-- **Domain context**: Look up the subject matter of the objective. If building for a museum, research that museum. If building an API, research best practices for that API domain.
-- **Design inspiration**: For UI work, search for best-in-class examples in the domain. What do the best websites in this category look like? What patterns do they use?
-- **Technical best practices**: Search for current best practices, recommended libraries, and common patterns for the tech stack involved.
-Use perplexity_search or perplexity_ask to find real, current information. Ground your plan in research, not assumptions.`);
+  // 1b. Research phase section (dynamic based on tool availability)
+  const researchPhase = buildResearchToolsSection(
+    researchTools ?? DEFAULT_RESEARCH_TOOLS,
+    "planner",
+  );
+  if (researchPhase) {
+    sections.push(`## Research Phase (DO THIS FIRST)\n\nBefore planning, use your research tools to investigate:\n- **Domain context**: Look up the subject matter of the objective. If building for a museum, research that museum. If building an API, research best practices for that API domain.\n- **Design inspiration**: For UI work, search for best-in-class examples in the domain. What do the best websites in this category look like? What patterns do they use?\n- **Technical best practices**: Search for current best practices, recommended libraries, and common patterns for the tech stack involved.\n\n${researchPhase}`);
+  }
 
   // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));

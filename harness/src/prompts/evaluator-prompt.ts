@@ -15,6 +15,7 @@ import type {
   EvaluatorGuide,
   DevServerConfig,
 } from "../schemas.js";
+import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
 /**
  * Options bag for `buildEvaluatorPrompt`.
@@ -35,6 +36,10 @@ export interface EvaluatorPromptOptions {
   builderTranscriptPath?: string;
   /** Packet IDs of packets that have already been built and evaluated (for harness context). */
   completedPacketIds?: string[];
+  /** Research tool availability — drives dynamic research tools section. */
+  researchTools?: ResearchToolAvailability;
+  /** When false, suppresses search_memory guidance and memory sections. */
+  enableMemory?: boolean;
 }
 import {
   RESULT_START_SENTINEL,
@@ -46,6 +51,7 @@ import {
   buildDevServerSetupSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildResearchToolsSection,
 } from "./shared.js";
 
 export function buildEvaluatorPrompt(
@@ -64,6 +70,8 @@ export function buildEvaluatorPrompt(
     devServer,
     builderTranscriptPath,
     completedPacketIds,
+    researchTools,
+    enableMemory,
   } = opts;
 
   const sections: string[] = [];
@@ -233,8 +241,9 @@ ${completionSummaries}`);
   sections.push(buildHarnessContextSection("evaluator", {
     packetId: contract.packetId,
     completedPacketIds,
+    memoryEnabled: enableMemory,
   }));
-  sections.push(buildMemorySearchSection("evaluator"));
+  sections.push(buildMemorySearchSection("evaluator", enableMemory));
 
   // 5c. Automated gate results
   if (gateResultsSummary) {
@@ -517,10 +526,10 @@ When a failure spans multiple system layers (client → API → middleware → s
 If you don't have time for a full diagnosis, at minimum state which LAYER you think
 is failing (client redirect? middleware auth? handler logic? database query?).`);
 
-  // 7i. MCP research tools
-  sections.push(`## Research Tools
+  // 7i. Browser verification tools (always available)
+  sections.push(`## Browser Verification
 
-You have access to these tools for VERIFICATION purposes. Use them to verify the builder's
+You have access to Playwright MCP tools for browser verification. Use them to verify the builder's
 work — not to fix problems (you are read-only).
 
 ### Browser Verification (Playwright MCP)
@@ -540,21 +549,14 @@ When verifying, use Playwright MCP to actually test in the browser:
   and response bodies match expectations
 - Test at different viewports by resizing the browser window
 Do NOT just read code — actually test in the browser. Static code review alone is
-insufficient.
+insufficient.`);
 
-### Context7 (Library Documentation)
-If you need to verify that an implementation follows library conventions, use Context7
-to check the current docs:
-1. Call \`resolve-library-id\` with the library name
-2. Call \`query-docs\` with the library ID and your verification question
-Use this when an implementation looks suspicious or uses unfamiliar API patterns.
-
-### Perplexity (Web Search)
-Use \`perplexity_search\` or \`perplexity_ask\` when you need to:
-- Verify browser compatibility claims
-- Check if an implementation follows current best practices
-- Confirm that the builder's approach is valid for the target platform
-Do NOT use research tools to look up how to fix problems — report what needs fixing instead.`);
+  // 7j. Research tools (dynamic based on availability)
+  const researchSection = buildResearchToolsSection(
+    researchTools ?? DEFAULT_RESEARCH_TOOLS,
+    "evaluator",
+  );
+  if (researchSection) sections.push(researchSection);
 
   // 8. Mandatory criterion verdicts
   sections.push(`## Mandatory Criterion Verdicts

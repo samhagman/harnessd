@@ -31,6 +31,8 @@ export interface Round2PlannerPromptContext {
   workspaceDir?: string;
   /** Current round number (2, 3, 4...). Used for packet ID prefix. */
   round?: number;
+  /** When false, suppresses search_memory guidance and memory sections. */
+  enableMemory?: boolean;
 }
 
 export function buildRound2PlannerPrompt(ctx: Round2PlannerPromptContext): string {
@@ -50,8 +52,8 @@ Use this path for all file operations.`);
   sections.push(AUTONOMOUS_PREAMBLE);
 
   // 0c. Harness pipeline context + memory search guidance
-  sections.push(buildHarnessContextSection("round2_planner", { round }));
-  sections.push(buildMemorySearchSection("round2_planner"));
+  sections.push(buildHarnessContextSection("round2_planner", { round, memoryEnabled: ctx.enableMemory }));
+  sections.push(buildMemorySearchSection("round2_planner", ctx.enableMemory));
 
   // 1. Role
   sections.push(`## Your Role

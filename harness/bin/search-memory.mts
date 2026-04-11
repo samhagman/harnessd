@@ -14,8 +14,8 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { openRunMemory, getMemoryPath } from "../src/memvid.js";
+import { findRepoRoot, getLatestRunId } from "../src/state-store.js";
 
 // ------------------------------------
 // Arg parsing
@@ -66,45 +66,6 @@ function parseArgs(argv: string[]): CliArgs | null {
 }
 
 // ------------------------------------
-// Repo root + run ID discovery (same pattern as memvid-query.ts)
-// ------------------------------------
-
-function findRepoRoot(): string {
-  let dir = process.cwd();
-  while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, ".harnessd"))) return dir;
-    dir = path.dirname(dir);
-  }
-  // Fall back to the harness package's parent (project root)
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  return path.resolve(scriptDir, "..", "..");
-}
-
-function resolveRunId(repoRoot: string, explicit?: string): string | null {
-  if (explicit) return explicit;
-
-  const runsDir = path.join(repoRoot, ".harnessd", "runs");
-  if (!fs.existsSync(runsDir)) return null;
-
-  const entries = fs
-    .readdirSync(runsDir)
-    .filter((d) => {
-      try {
-        return fs.statSync(path.join(runsDir, d)).isDirectory();
-      } catch {
-        return false;
-      }
-    })
-    .sort((a, b) => {
-      const sa = fs.statSync(path.join(runsDir, a));
-      const sb = fs.statSync(path.join(runsDir, b));
-      return sb.mtimeMs - sa.mtimeMs;
-    });
-
-  return entries[0] ?? null;
-}
-
-// ------------------------------------
 // Main
 // ------------------------------------
 
@@ -116,8 +77,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const repoRoot = findRepoRoot();
-  const runId = resolveRunId(repoRoot, cli.runId);
+  const repoRoot = findRepoRoot() ?? process.cwd();
+  const runId = cli.runId ?? getLatestRunId(repoRoot);
 
   if (!runId) {
     console.log(JSON.stringify({ error: "No runs found in .harnessd/runs/. Memory is populated as the run progresses." }));

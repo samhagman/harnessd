@@ -27,6 +27,7 @@ import { buildEvaluatorPrompt } from "./prompts/evaluator-prompt.js";
 import { CONTINUATION_PROMPT } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
+import { createResearchMcpServerRecord } from "./research-tools.js";
 
 // ------------------------------------
 // Verdict validation
@@ -148,6 +149,8 @@ export async function runEvaluator(
         devServer: ctx.config.devServer ?? undefined,
         builderTranscriptPath: ctx.builderTranscriptPath,
         completedPacketIds: ctx.completedPacketIds,
+        researchTools: ctx.config.researchTools,
+        enableMemory: ctx.config.enableMemory,
       });
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
@@ -163,10 +166,11 @@ export async function runEvaluator(
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-      mcpServers: [
-        createValidationMcpServer(contract.acceptance.map((ac) => ac.id)),
-        ...(ctx.memory ? [createMemorySearchMcpServer(ctx.memory)] : []),
-      ],
+      mcpServers: {
+        "harnessd-validation": createValidationMcpServer(contract.acceptance.map((ac) => ac.id)),
+        ...(ctx.memory ? { "harnessd-memory": createMemorySearchMcpServer(ctx.memory) } : {}),
+        ...createResearchMcpServerRecord(ctx.config.researchTools),
+      },
       // "workspace-write" allows Codex evaluator to run commands (dev server, curl, etc.)
       // File-edit enforcement is handled by the prompt + hooks (Claude) or prompt-only (Codex)
       sandboxMode: "workspace-write",

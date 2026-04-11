@@ -100,6 +100,7 @@ import {
 } from "./memvid.js";
 
 import { z } from "zod";
+import { resolveResearchToolAvailability } from "./research-tools.js";
 
 // ------------------------------------
 // Constants
@@ -183,6 +184,10 @@ export async function runOrchestrator(
   const repoRoot = orchConfig.repoRoot;
   const workspaceDir = orchConfig.workspaceDir ?? repoRoot;
 
+  // Resolve research tool availability (check env vars, log summary)
+  const researchAvailability = resolveResearchToolAvailability(config);
+  config.researchTools = researchAvailability;
+
   // Ensure workspace directory exists
   fs.mkdirSync(workspaceDir, { recursive: true });
 
@@ -205,19 +210,21 @@ export async function runOrchestrator(
     });
   }
 
-  // Initialize run memory (returns null if @memvid/sdk not installed)
+  // Initialize run memory (skip if disabled via config, or if @memvid/sdk not installed)
   let memory: RunMemory | null = null;
-  try {
-    const memoryPath = getMemoryPath(repoRoot, runState.runId);
-    console.log(`[memvid] Initializing memory at ${memoryPath}`);
-    // Try to open existing memory on resume; fall back to creating fresh
-    memory = orchConfig.resumeRunId
-      ? (await openRunMemory(memoryPath, repoRoot, runState.runId)
-         ?? await createRunMemory(memoryPath, repoRoot, runState.runId))
-      : await createRunMemory(memoryPath, repoRoot, runState.runId);
-    console.log(`[memvid] Memory initialized: ${memory ? 'active' : 'disabled (SDK not found)'}`);
-  } catch (err) {
-    console.log(`[memvid] Warning: could not initialize memory: ${(err as Error).message}`);
+  if (config.enableMemory) {
+    try {
+      const memoryPath = getMemoryPath(repoRoot, runState.runId);
+      console.log(`[memvid] Initializing memory at ${memoryPath}`);
+      // Try to open existing memory on resume; fall back to creating fresh
+      memory = orchConfig.resumeRunId
+        ? (await openRunMemory(memoryPath, repoRoot, runState.runId)
+           ?? await createRunMemory(memoryPath, repoRoot, runState.runId))
+        : await createRunMemory(memoryPath, repoRoot, runState.runId);
+      console.log(`[memvid] Memory initialized: ${memory ? 'active' : 'disabled (SDK not found)'}`);
+    } catch (err) {
+      console.log(`[memvid] Warning: could not initialize memory: ${(err as Error).message}`);
+    }
   }
 
   // Retry tracking — resets whenever the phase advances
@@ -320,13 +327,22 @@ export async function runOrchestrator(
   globalNudgePoller.stop();
 
   // Wait for any pending memory encoding to complete (up to 10s — non-fatal)
+  const MEMORY_FLUSH_TIMEOUT_MS = 10_000;
   if (memory) {
     try {
       await Promise.race([
         memory.waitForPendingWrites(),
-        new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), MEMORY_FLUSH_TIMEOUT_MS),
+        ),
       ]);
-    } catch { /* non-fatal */ }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "timeout") {
+        console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
+      }
+      // non-fatal either way
+    }
   }
 
   // Final status write

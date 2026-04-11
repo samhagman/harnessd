@@ -30,6 +30,7 @@ export function buildContractBuilderPrompt(
   priorReview?: ContractReview,
   existingContract?: PacketContract,
   evaluatorReport?: EvaluatorReport,
+  enableMemory?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -37,8 +38,8 @@ export function buildContractBuilderPrompt(
   sections.push(AUTONOMOUS_PREAMBLE);
 
   // 0a. Harness pipeline context + memory search guidance
-  sections.push(buildHarnessContextSection("contract_builder", { packetId: packet.id }));
-  sections.push(buildMemorySearchSection("contract_builder"));
+  sections.push(buildHarnessContextSection("contract_builder", { packetId: packet.id, memoryEnabled: enableMemory }));
+  sections.push(buildMemorySearchSection("contract_builder", enableMemory));
 
   // 0b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PacketContract"));

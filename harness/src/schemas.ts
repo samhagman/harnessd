@@ -694,6 +694,13 @@ export const ProjectConfigSchema = z.object({
   roleBackends: RoleBackendMapSchema,
   /** Model for Codex CLI backend (e.g. "o3", "o4-mini"). Passed as --model flag. */
   codexModel: z.string().optional(),
+  /** Research tool availability: Context7 (always-on) and Perplexity (opt-in). */
+  researchTools: z.object({
+    context7: z.boolean().default(true),
+    perplexity: z.boolean().default(false),
+  }).default({ context7: true, perplexity: false }),
+  /** Enable run memory (memvid). When false, no .mv2 file is created, search_memory is not available, and memory sections are omitted from prompts. */
+  enableMemory: z.boolean().default(true),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
