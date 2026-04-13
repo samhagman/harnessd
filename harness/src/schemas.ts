@@ -183,6 +183,21 @@ export const PacketSchema = z.object({
 
 export type Packet = z.infer<typeof PacketSchema>;
 
+/**
+ * Compact packet summary passed to builder and evaluator prompts.
+ * Contains only the fields needed for plan context — avoids injecting
+ * full Packet objects (which include status metadata, dates, etc.).
+ */
+export interface PacketSummary {
+  id: string;
+  title: string;
+  objective: string;
+  status: string;
+  expectedFiles?: string[];
+  criticalConstraints?: string[];
+  notes?: string[];
+}
+
 // ------------------------------------
 // Acceptance criteria
 // ------------------------------------

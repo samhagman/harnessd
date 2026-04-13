@@ -54,25 +54,47 @@ export interface GateRunResult {
   skipReason?: string;
 }
 
+/**
+ * Minimal gate failure shape stored in events and passed to builder/prompt.
+ * A projection of GateRunResult — only the fields that survive serialization.
+ */
+export type BaselineGateFailure = Pick<GateRunResult, "gate" | "summary" | "errors">;
+
 // ------------------------------------
 // Default gates
 // ------------------------------------
 
+// Module-level caches for detection results — these are stable per workspace directory
+// within a single process run (no need to re-stat on every gate invocation).
+const tsConfigCache = new Map<string, string | null>();
+const testCmdCache = new Map<string, string | null>();
+
 /**
  * Detect whether a tsconfig.json exists in the workspace or a nearby subdirectory.
  * Returns the path to tsconfig.json if found, or null.
+ * Result is memoized per workspaceDir for the lifetime of the process.
  */
 export function detectTsConfig(workspaceDir: string): string | null {
+  const cached = tsConfigCache.get(workspaceDir);
+  if (cached !== undefined) return cached;
+
   // Check workspace root first
   const rootConfig = path.join(workspaceDir, "tsconfig.json");
-  if (fs.existsSync(rootConfig)) return rootConfig;
+  if (fs.existsSync(rootConfig)) {
+    tsConfigCache.set(workspaceDir, rootConfig);
+    return rootConfig;
+  }
 
   // Check common subdirectories (monorepo patterns)
   for (const sub of ["src", "app", "packages"]) {
     const subConfig = path.join(workspaceDir, sub, "tsconfig.json");
-    if (fs.existsSync(subConfig)) return subConfig;
+    if (fs.existsSync(subConfig)) {
+      tsConfigCache.set(workspaceDir, subConfig);
+      return subConfig;
+    }
   }
 
+  tsConfigCache.set(workspaceDir, null);
   return null;
 }
 
@@ -82,11 +104,19 @@ export function detectTsConfig(workspaceDir: string): string | null {
 /**
  * Detect the test runner and command for the workspace.
  * Returns the npm test command if a test script is found, null otherwise.
+ * Result is memoized per workspaceDir for the lifetime of the process.
  */
 export function detectTestCommand(workspaceDir: string): string | null {
-  const pkgJsonPath = path.join(workspaceDir, "package.json");
-  if (!fs.existsSync(pkgJsonPath)) return null;
+  const cached = testCmdCache.get(workspaceDir);
+  if (cached !== undefined) return cached;
 
+  const pkgJsonPath = path.join(workspaceDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
+    testCmdCache.set(workspaceDir, null);
+    return null;
+  }
+
+  let result: string | null = null;
   try {
     const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
     const scripts = pkgJson.scripts ?? {};
@@ -96,28 +126,32 @@ export function detectTestCommand(workspaceDir: string): string | null {
       const testScript = typeof scripts.test === "string" ? scripts.test : "";
       // Direct vitest project — use npx vitest run with --silent to suppress console noise
       if (testScript.includes("vitest")) {
-        return "npx vitest run --silent";
+        result = "npx vitest run --silent";
+      } else if (
+        // Turbo-based monorepo — pass --silent through to vitest via turbo.
+        // "pnpm test -- --silent" → turbo dispatches "vitest --silent" to each package.
+        // This cuts output ~57% (484K → 208K) by suppressing per-test console.log noise.
+        testScript.includes("turbo")
+      ) {
+        result = "pnpm test -- --silent";
+      } else {
+        result = "npm test";
       }
-      // Turbo-based monorepo — pass --silent through to vitest via turbo.
-      // "pnpm test -- --silent" → turbo dispatches "vitest --silent" to each package.
-      // This cuts output ~57% (484K → 208K) by suppressing per-test console.log noise.
-      if (testScript.includes("turbo")) {
-        return "pnpm test -- --silent";
+    } else {
+      // Check for vitest in devDependencies even without test script
+      const devDeps = pkgJson.devDependencies ?? {};
+      if (devDeps.vitest) {
+        result = "npx vitest run --silent";
+      } else if (devDeps.jest || devDeps["@jest/core"]) {
+        result = "npx jest --ci";
       }
-      return "npm test";
     }
-
-    // Check for vitest in devDependencies even without test script
-    const devDeps = pkgJson.devDependencies ?? {};
-    if (devDeps.vitest) return "npx vitest run --silent";
-
-    // Check for jest
-    if (devDeps.jest || devDeps["@jest/core"]) return "npx jest --ci";
-
-    return null;
   } catch {
-    return null;
+    result = null;
   }
+
+  testCmdCache.set(workspaceDir, result);
+  return result;
 }
 
 /** Build the default typecheck gate. */

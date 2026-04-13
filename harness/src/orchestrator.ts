@@ -30,6 +30,7 @@ import type {
   PlanningContext,
   QAReport,
   IntegrationScenario,
+  EventEntry,
 } from "./schemas.js";
 import {
   PacketSchema,
@@ -80,6 +81,7 @@ import {
   synthesizeEvalReportFromGates,
   formatGateResultsForPrompt,
   type GateRunResult,
+  type BaselineGateFailure,
 } from "./tool-gates.js";
 
 import type { RunMemory, MemvidDocument } from "./memvid.js";
@@ -909,7 +911,7 @@ async function executeBuilder(
   evalReport?: EvaluatorReport,
   resumeSessionId?: string | null,
   memory?: RunMemory | null,
-  baselineGateFailures?: Array<{ gate: string; summary: string; errors: string[] }>,
+  baselineGateFailures?: BaselineGateFailure[],
 ): Promise<BuilderRunResult> {
   const packetId = runState.currentPacketId!;
   const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
@@ -931,9 +933,11 @@ async function executeBuilder(
   const combinedContext = [completionSummaries, memoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
 
   // Build full plan context and timeline for builder
+  // Read events once here; pass to buildRunTimeline to avoid a redundant file read.
   const allPackets = readAllPackets(repoRoot, runState.runId);
   const currentPacket = allPackets.find((p) => p.id === packetId);
-  const runTimelineStr = buildRunTimeline(repoRoot, runState.runId);
+  const currentEvents = readEvents(repoRoot, runState.runId);
+  const runTimelineStr = buildRunTimeline(repoRoot, runState.runId, currentEvents);
 
   // Map packets to the shape the builder prompt expects
   const packetSummaries = allPackets.map((p) => ({
@@ -992,12 +996,17 @@ async function handleBuilding(
     (e) => (e.event === "gate.baseline_passed" || e.event === "gate.baseline_failed")
       && e.packetId === packetId,
   );
-  let baselineGateFailures: Array<{ gate: string; summary: string; errors: string[] }> | undefined;
+  let baselineGateFailures: BaselineGateFailure[] | undefined;
   if (priorBaseline.length === 0) {
-    const allPkts = readAllPackets(repoRoot, runState.runId);
-    const pkt = allPkts.find((p) => p.id === packetId);
+    // Read packetType from the finalized contract (already written by this point) rather
+    // than calling readAllPackets() just to get one field.
+    let baselinePacketType: import("./schemas.js").PacketType = "backend_feature";
+    try {
+      const baselineContract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
+      baselinePacketType = baselineContract.packetType;
+    } catch { /* contract missing: use default */ }
     console.log(`[${runState.runId}] Running baseline gate check for ${packetId}...`);
-    const baselineResults = await runToolGates(workspaceDir, pkt?.type ?? "backend_feature", config);
+    const baselineResults = await runToolGates(workspaceDir, baselinePacketType, config);
     const failures = baselineResults.filter((g) => !g.passed && !g.skipped);
     if (failures.length > 0) {
       console.log(`[${runState.runId}] WARNING: Baseline gates failed — pre-existing issues detected`);
@@ -1018,8 +1027,7 @@ async function handleBuilding(
     // Re-read baseline failures from event detail for crash-retry path
     const failEvent = priorBaseline.find((e) => e.event === "gate.baseline_failed");
     if (failEvent?.detail) {
-      const parsed = JSON.parse(failEvent.detail) as Array<{ gate: string; summary: string }>;
-      baselineGateFailures = parsed.map((f) => ({ gate: f.gate, summary: f.summary, errors: [] }));
+      baselineGateFailures = parseBaselineGateFailures(failEvent.detail);
     }
   }
 
@@ -1441,13 +1449,12 @@ async function handleFixing(
 
   // Re-read baseline gate failures (persisted as events in handleBuilding) so fix-loop
   // builders also see the PRE-EXISTING GATE FAILURES section when session resume fails.
-  let baselineGateFailures: Array<{ gate: string; summary: string; errors: string[] }> | undefined;
+  let baselineGateFailures: BaselineGateFailure[] | undefined;
   const baselineEvent = events.find(
     (e) => e.event === "gate.baseline_failed" && e.packetId === packetId,
   );
   if (baselineEvent?.detail) {
-    const parsed = JSON.parse(baselineEvent.detail) as Array<{ gate: string; summary: string }>;
-    baselineGateFailures = parsed.map((f) => ({ gate: f.gate, summary: f.summary, errors: [] }));
+    baselineGateFailures = parseBaselineGateFailures(baselineEvent.detail);
   }
 
   const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory, baselineGateFailures);
@@ -1978,15 +1985,26 @@ function readAllPackets(repoRoot: string, runId: string): Packet[] {
 }
 
 /**
+ * Parse baseline gate failures from a serialized event detail string.
+ * The detail is JSON-encoded as `Array<{ gate: string; summary: string }>`.
+ * `errors` is always set to [] since errors are not persisted in the event log.
+ */
+function parseBaselineGateFailures(detail: string): BaselineGateFailure[] {
+  const parsed = JSON.parse(detail) as Array<{ gate: string; summary: string }>;
+  return parsed.map((f) => ({ gate: f.gate, summary: f.summary, errors: [] }));
+}
+
+/**
  * Build a human-readable run timeline from the event log.
  * This gives the builder context about what has happened in the run so far.
+ * Pass `events` to avoid a redundant file read when the caller already has them.
  */
-export function buildRunTimeline(repoRoot: string, runId: string): string {
-  const events = readEvents(repoRoot, runId);
+export function buildRunTimeline(repoRoot: string, runId: string, events?: EventEntry[]): string {
+  const evts = events ?? readEvents(repoRoot, runId);
   const lines: string[] = [];
   let stepNum = 1;
 
-  for (const event of events) {
+  for (const event of evts) {
     switch (event.event) {
       case "planning.completed":
         lines.push(`${stepNum++}. Planning completed`);
@@ -2765,11 +2783,12 @@ function consumeInboxFile(inboxDir: string, file: string): void {
 }
 
 function isRateLimitError(msg: string): boolean {
-  return /rate.?limit|429|too many requests|overloaded|insufficient.?quota|quota.?exceed|billing.?hard.?limit|daily.?token.?limit|monthly.?limit/i.test(msg);
+  // Transient rate limits only — quota exhaustion handled separately
+  return /rate.?limit|429|too many requests|overloaded/i.test(msg);
 }
 
 function isQuotaExhaustionError(msg: string): boolean {
-  return /insufficient.?quota|billing.?hard.?limit|daily.?token.?limit|monthly.?limit.?exceeded|you.?ve hit your limit/i.test(msg);
+  return /insufficient.?quota|quota.?exceed|billing.?hard.?limit|daily.?token.?limit|monthly.?limit|you.?ve hit your limit/i.test(msg);
 }
 
 function computeBackoffMs(retryCount: number, config: ProjectConfig): number {

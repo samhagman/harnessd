@@ -21,7 +21,9 @@ import type {
   RiskRegister,
   ProjectConfig,
   PacketType,
+  PacketSummary,
 } from "./schemas.js";
+import type { BaselineGateFailure } from "./tool-gates.js";
 import { MemvidBuffer } from "./memvid.js";
 import type { RunMemory } from "./memvid.js";
 import { BuilderReportSchema } from "./schemas.js";
@@ -62,15 +64,7 @@ export interface BuilderContext {
   memory?: RunMemory | null;
 
   /** All packets for full plan context in builder prompt. */
-  allPackets?: Array<{
-    id: string;
-    title: string;
-    objective: string;
-    status: string;
-    expectedFiles?: string[];
-    criticalConstraints?: string[];
-    notes?: string[];
-  }>;
+  allPackets?: PacketSummary[];
   /** Run timeline string built from events.jsonl. */
   runTimeline?: string;
   /** Planner's notes for this packet. */
@@ -82,7 +76,7 @@ export interface BuilderContext {
   /** Packet type — needed for gate_check MCP tool resolution. */
   packetType?: PacketType;
   /** Pre-existing gate failures from baseline check. */
-  baselineGateFailures?: Array<{ gate: string; summary: string; errors: string[] }>;
+  baselineGateFailures?: BaselineGateFailure[];
 }
 
 export interface BuilderRunResult {

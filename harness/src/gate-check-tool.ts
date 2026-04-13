@@ -31,11 +31,7 @@ export function createGateCheckMcpServer(
     tools: [
       tool(
         "gate_check",
-        "Run ALL harness quality gates (typecheck + full test suite) against your current code. " +
-        "Returns pass/fail for each gate with full error output. " +
-        "Call this BEFORE emitting your result envelope — keep fixing until all gates pass. " +
-        "This runs the EXACT same checks the harness will verify after you emit. " +
-        "Always runs ALL gates — no filtering. This ensures a fix for one gate doesn't break another.",
+        "Run all configured harness quality gates (typecheck + full test suite) and return pass/fail for each with full error output. Always runs ALL gates — no filtering.",
         {},
         async () => {
           const results = await runToolGates(workspaceDir, packetType, config);

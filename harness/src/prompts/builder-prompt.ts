@@ -12,7 +12,9 @@ import type {
   EvaluatorReport,
   RiskRegister,
   DevServerConfig,
+  PacketSummary,
 } from "../schemas.js";
+import type { BaselineGateFailure } from "../tool-gates.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
 /**
@@ -39,15 +41,7 @@ export interface BuilderPromptOptions {
   /** When false, suppresses search_memory guidance and memory sections. */
   enableMemory?: boolean;
   /** All packets from the plan (R1 + R2+), for full plan context. */
-  allPackets?: Array<{
-    id: string;
-    title: string;
-    objective: string;
-    status: string;
-    expectedFiles?: string[];
-    criticalConstraints?: string[];
-    notes?: string[];
-  }>;
+  allPackets?: PacketSummary[];
   /** Run timeline — what happened in this run up to now. Built from events.jsonl. */
   runTimeline?: string;
   /** The current packet's notes from the planner. */
@@ -57,7 +51,7 @@ export interface BuilderPromptOptions {
   /** The current packet's critical constraints from the planner. */
   criticalConstraints?: string[];
   /** Pre-existing gate failures from baseline check (informational). */
-  baselineGateFailures?: Array<{ gate: string; summary: string; errors: string[] }>;
+  baselineGateFailures?: BaselineGateFailure[];
 }
 import {
   RESULT_START_SENTINEL,
@@ -147,9 +141,7 @@ Do not paper over failures with fallbacks.`);
 
 The harness ran a baseline gate check BEFORE you started and found pre-existing issues:
 
-${baselineGateFailures.map((f) =>
-  `- **${f.gate}**: ${f.summary}${f.errors.length > 0 ? `\n  ${f.errors.slice(0, 3).join("\n  ")}` : ""}`
-).join("\n")}
+${baselineGateFailures.map((f) => `- **${f.gate}**: ${f.summary}`).join("\n")}
 
 These failures exist BEFORE your changes. Likely causes: stale build caches (dist/),
 test failures in unrelated packages, environment issues. You may need to fix these

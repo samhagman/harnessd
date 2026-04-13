@@ -21,9 +21,9 @@ import type {
  * Generate a concise markdown summary of a completed packet.
  *
  * This summary is injected into every subsequent builder and evaluator
- * prompt under a "Previously Completed Packets" section. It must be
- * compact (target: under 500 tokens) but contain the information that
- * eliminates exploratory reads:
+ * prompt under a "Previously Completed Packets" section. Lists are capped
+ * to keep each summary reasonable (changedFiles: 30, decisions/integrationPoints: 10,
+ * nextActions: 8) — generous enough to preserve useful context while bounding growth:
  *
  * - What was built (packet name + description)
  * - Key files created/modified (from builder report)
@@ -49,24 +49,33 @@ export function generateCompletionSummary(
   lines.push(`**Objective:** ${contract.objective}`);
   lines.push("");
 
-  // Key files — from builder report
+  // Key files — from builder report (capped at 30)
   if (builderReport.changedFiles.length > 0) {
     lines.push("**Files changed:**");
-    for (const f of builderReport.changedFiles) {
+    for (const f of builderReport.changedFiles.slice(0, 30)) {
       lines.push(`- ${f}`);
     }
     lines.push("");
   }
 
-  // Commits — from builder's git discipline
+  // Commits — from builder's git discipline (single git call for all SHAs)
   const commitShas = opts?.commitShas ?? builderReport.commitShas;
   if (commitShas?.length && opts?.cwd) {
     lines.push("**Commits:**");
-    for (const sha of commitShas) {
-      try {
-        const msg = execSync(`git log --format="%s" -1 ${sha}`, { cwd: opts.cwd, encoding: "utf-8" }).trim();
-        lines.push(`- \`${sha.slice(0, 7)}\` ${msg}`);
-      } catch {
+    try {
+      const output = execSync(
+        `git log --no-walk --format="%H %s" ${commitShas.join(" ")}`,
+        { cwd: opts.cwd, encoding: "utf-8" },
+      ).trim();
+      for (const line of output.split("\n").filter(Boolean)) {
+        const spaceIdx = line.indexOf(" ");
+        const sha = spaceIdx >= 0 ? line.slice(0, spaceIdx) : line;
+        const subject = spaceIdx >= 0 ? line.slice(spaceIdx + 1) : "";
+        lines.push(`- \`${sha.slice(0, 7)}\` ${subject}`);
+      }
+    } catch {
+      // Fallback: list SHAs without messages
+      for (const sha of commitShas) {
         lines.push(`- \`${sha.slice(0, 7)}\` (commit message unavailable)`);
       }
     }
@@ -102,11 +111,10 @@ export function generateCompletionSummary(
   }
 
   // Evaluator notes — anything the evaluator flagged as advisory/next-actions
-  // that might affect subsequent packets
+  // that might affect subsequent packets (capped at 8)
   if (evaluatorReport.nextActions.length > 0) {
-    const relevantActions = evaluatorReport.nextActions;
     lines.push("**Evaluator notes for future packets:**");
-    for (const a of relevantActions) {
+    for (const a of evaluatorReport.nextActions.slice(0, 8)) {
       lines.push(`- ${a}`);
     }
     lines.push("");
@@ -143,8 +151,8 @@ function extractKeyDecisions(report: BuilderReport): string[] {
     }
   }
 
-  // Cap at 5 to keep the summary compact
-  return decisions;
+  // Cap at 10
+  return decisions.slice(0, 10);
 }
 
 /**
@@ -161,8 +169,8 @@ function extractIntegrationPoints(contract: PacketContract): string[] {
     }
   }
 
-  // Cap at 5
-  return points;
+  // Cap at 10
+  return points.slice(0, 10);
 }
 
 /**

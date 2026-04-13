@@ -298,7 +298,6 @@ export function extractPartialProgress(
     return null;
   }
 
-  // Build investigation summary from all assistant messages
   const investigationSummary = assistantTexts.join("\n\n---\n\n");
 
   // Session duration
