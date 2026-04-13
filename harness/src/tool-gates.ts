@@ -93,9 +93,16 @@ export function detectTestCommand(workspaceDir: string): string | null {
 
     // Check for test script
     if (scripts.test) {
-      // Use npx vitest run directly if it's a vitest project (avoids interactive mode)
-      if (typeof scripts.test === "string" && scripts.test.includes("vitest")) {
+      const testScript = typeof scripts.test === "string" ? scripts.test : "";
+      // Direct vitest project — use npx vitest run with --silent to suppress console noise
+      if (testScript.includes("vitest")) {
         return "npx vitest run --silent";
+      }
+      // Turbo-based monorepo — pass --silent through to vitest via turbo.
+      // "pnpm test -- --silent" → turbo dispatches "vitest --silent" to each package.
+      // This cuts output ~57% (484K → 208K) by suppressing per-test console.log noise.
+      if (testScript.includes("turbo")) {
+        return "pnpm test -- --silent";
       }
       return "npm test";
     }
