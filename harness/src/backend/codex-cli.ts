@@ -123,8 +123,8 @@ function mapCodexEvent(event: CodexEvent): AgentMessage | null {
         const summaryParts: string[] = [];
         if (command) summaryParts.push(`$ ${command}`);
         if (exitCode !== null) summaryParts.push(`exit: ${exitCode}`);
-        if (output) summaryParts.push(output.length > 2000 ? output.slice(0, 2000) + "...[truncated]" : output);
-        if (stderr) summaryParts.push(`stderr: ${stderr.length > 500 ? stderr.slice(0, 500) + "..." : stderr}`);
+        if (output) summaryParts.push(output);
+        if (stderr) summaryParts.push(`stderr: ${stderr}`);
 
         return {
           type: "tool_result" as const,
@@ -132,7 +132,7 @@ function mapCodexEvent(event: CodexEvent): AgentMessage | null {
           text: summaryParts.join("\n"),
           toolResults: [{
             toolUseId: (item.id ?? "unknown") as string,
-            output: output.length > 4000 ? output.slice(0, 4000) + "...[truncated]" : output,
+            output: output,
             isError: exitCode !== null && exitCode !== 0,
           }],
           raw: event,
@@ -361,7 +361,7 @@ export class CodexCliBackend implements AgentBackend {
         yield {
           type: "result",
           subtype: "error_max_turns",
-          text: `Codex exited with code ${exitCode}. Stderr: ${stderr.slice(0, 1000)}`,
+          text: `Codex exited with code ${exitCode}. Stderr: ${stderr}`,
           isError: true,
           raw: { exitCode, stderr },
         };

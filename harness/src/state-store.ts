@@ -58,6 +58,32 @@ export function getRunDir(repoRoot: string, runId: string): string {
 }
 
 /**
+ * Validate that a workspace path is durable (not in /tmp or other volatile locations).
+ * /tmp is cleared by the OS — any work done there WILL be lost.
+ */
+export function validateWorkspacePath(workspaceDir: string): void {
+  const resolved = path.resolve(workspaceDir);
+  const volatilePrefixes = ["/tmp", "/private/tmp", "/var/tmp"];
+  for (const prefix of volatilePrefixes) {
+    if (resolved.startsWith(prefix + "/") || resolved === prefix) {
+      throw new Error(
+        `REFUSING to use volatile workspace: ${resolved}\n` +
+        `Workspaces in ${prefix}/ are cleared by the OS — all agent work will be lost.\n` +
+        `Use --workspace with a durable path, or omit it to use <run-dir>/workspace/ automatically.`
+      );
+    }
+  }
+}
+
+/**
+ * Get the canonical workspace path for a run: <run-dir>/workspace/
+ * This is co-located with the run artifacts and survives reboots.
+ */
+export function getDefaultWorkspacePath(repoRoot: string, runId: string): string {
+  return path.join(getRunDir(repoRoot, runId), "workspace");
+}
+
+/**
  * Walk up from startDir looking for a .harnessd directory.
  * Returns the directory containing .harnessd, or null if not found.
  */
@@ -307,6 +333,38 @@ export function getLatestRunId(repoRoot: string): string | null {
     .sort();
 
   return entries.length > 0 ? entries[entries.length - 1]! : null;
+}
+
+// ------------------------------------
+// Atomic array push
+// ------------------------------------
+
+/**
+ * Atomic push to an array field in run.json.
+ * Reads current state from disk (not stale memory), appends value if not present,
+ * merges any additional patch fields, validates, and writes atomically.
+ */
+export function pushToRunArray(
+  repoRoot: string,
+  runId: string,
+  field: 'completedPacketIds' | 'round2CompletedPacketIds' | 'failedPacketIds' | 'blockedPacketIds',
+  value: string,
+  additionalPatch?: Partial<RunState>,
+): RunState {
+  const current = loadRun(repoRoot, runId);
+  const arr = current[field] as string[];
+  const updated: RunState = {
+    ...current,
+    ...(additionalPatch ?? {}),
+    [field]: arr.includes(value) ? arr : [...arr, value],
+    updatedAt: new Date().toISOString(),
+    runId: current.runId,
+    createdAt: current.createdAt,
+  };
+  RunStateSchema.parse(updated);
+  const filePath = path.join(getRunDir(repoRoot, runId), "run.json");
+  atomicWriteJson(filePath, updated);
+  return updated;
 }
 
 // ------------------------------------

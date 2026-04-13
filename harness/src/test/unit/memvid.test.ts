@@ -166,6 +166,7 @@ const sampleBuilderReport: BuilderReport = {
   ],
   remainingConcerns: ["Edge case for empty password not tested"],
   claimsDone: true,
+  commitShas: null,
 };
 
 const sampleEvaluatorReport: EvaluatorReport = {

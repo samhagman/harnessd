@@ -97,7 +97,7 @@ export function isDangerousCommand(cmd: string): CommandCheck {
     if (pattern.test(cmd)) {
       return {
         blocked: true,
-        reason: `Blocked dangerous command: ${cmd.slice(0, 100)}`,
+        reason: `Blocked dangerous command: ${cmd}`,
       };
     }
   }
@@ -119,7 +119,7 @@ export function isMutatingCommand(cmd: string): CommandCheck {
     if (pattern.test(cmd)) {
       return {
         blocked: true,
-        reason: `Blocked mutating command: ${cmd.slice(0, 100)}`,
+        reason: `Blocked mutating command: ${cmd}`,
       };
     }
   }

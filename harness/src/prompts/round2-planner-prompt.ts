@@ -77,14 +77,11 @@ these specific QA findings.
   // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));
 
-  // 2. Original spec (truncated)
+  // 2. Original spec
   if (ctx.originalSpec) {
-    const specExcerpt = ctx.originalSpec.length > 3000
-      ? ctx.originalSpec.slice(0, 3000) + "\n\n... (truncated)"
-      : ctx.originalSpec;
     sections.push(`## Original Specification
 
-${specExcerpt}`);
+${ctx.originalSpec}`);
   }
 
   // 3. What was built in round 1

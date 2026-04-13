@@ -40,6 +40,10 @@ export interface EvaluatorPromptOptions {
   researchTools?: ResearchToolAvailability;
   /** When false, suppresses search_memory guidance and memory sections. */
   enableMemory?: boolean;
+  /** Expected files from the planner — used for completeness smoke-test. */
+  expectedFiles?: string[];
+  /** Number of builder commits (for git diff range). */
+  builderCommitCount?: number;
 }
 import {
   RESULT_START_SENTINEL,
@@ -72,6 +76,8 @@ export function buildEvaluatorPrompt(
     completedPacketIds,
     researchTools,
     enableMemory,
+    expectedFiles,
+    builderCommitCount,
   } = opts;
 
   const sections: string[] = [];
@@ -225,6 +231,23 @@ ${builderReport.selfCheckResults
 
 ### Remaining Concerns from Builder
 ${builderReport.remainingConcerns.length > 0 ? builderReport.remainingConcerns.map((c) => `- ${c}`).join("\n") : "(none)"}`);
+
+  // 5c. Expected file changes smoke-test
+  if (expectedFiles && expectedFiles.length > 0) {
+    const commitRange = builderCommitCount && builderCommitCount > 0
+      ? `\`git diff --name-only HEAD~${builderCommitCount}\``
+      : "`git diff --name-only` (compare against the state before the builder started)";
+
+    sections.push(`## Expected File Changes (from planner)
+
+The planner expected these files to be modified or created:
+${expectedFiles.map((f) => `- ${f}`).join("\n")}
+
+Quick check: run ${commitRange} to see what actually changed.
+Missing files from this list may indicate incomplete implementation.
+Files changed that are NOT on this list are fine — builders often need to touch
+additional files. But files that SHOULD have been changed and weren't are a red flag.`);
+  }
 
   // 5b. Prior context from completed packets (static summaries + semantic memory)
   if (completionSummaries) {

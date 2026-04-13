@@ -298,11 +298,8 @@ export function extractPartialProgress(
     return null;
   }
 
-  // Build investigation summary from the last 3 assistant messages
-  const lastMessages = assistantTexts.slice(-3);
-  const investigationSummary = lastMessages
-    .map((t) => (t.length > 500 ? t.slice(0, 500) + "..." : t))
-    .join("\n\n---\n\n");
+  // Build investigation summary from all assistant messages
+  const investigationSummary = assistantTexts.join("\n\n---\n\n");
 
   // Session duration
   const sessionDuration =
@@ -351,7 +348,7 @@ export function formatPriorProgress(progress: PartialProgress): string {
         v.verdict === "fail" ? "[FAIL]" :
         "[SKIP]";
       lines.push(`- **${v.criterionId}** ${icon}`);
-      lines.push(`  Evidence: ${v.evidence.slice(0, 300)}${v.evidence.length > 300 ? "..." : ""}`);
+      lines.push(`  Evidence: ${v.evidence}`);
     }
     lines.push("");
   }
@@ -361,7 +358,7 @@ export function formatPriorProgress(progress: PartialProgress): string {
     lines.push("### Hard Failures Identified");
     lines.push("");
     for (const hf of progress.hardFailuresFound) {
-      lines.push(`- **${hf.criterionId}**: ${hf.description.slice(0, 300)}${hf.description.length > 300 ? "..." : ""}`);
+      lines.push(`- **${hf.criterionId}**: ${hf.description}`);
     }
     lines.push("");
   }

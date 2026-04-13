@@ -113,6 +113,10 @@ export interface EvaluatorContext {
   completedPacketIds?: string[];
   resumeSessionId?: string;
   memory?: RunMemory | null;
+  /** Expected files from the planner — used for completeness smoke-test. */
+  expectedFiles?: string[];
+  /** Number of builder commits (for git diff range). */
+  builderCommitCount?: number;
 }
 
 export interface EvaluatorRunResult {
@@ -151,6 +155,8 @@ export async function runEvaluator(
         completedPacketIds: ctx.completedPacketIds,
         researchTools: ctx.config.researchTools,
         enableMemory: ctx.config.enableMemory,
+        expectedFiles: ctx.expectedFiles,
+        builderCommitCount: ctx.builderCommitCount,
       });
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;

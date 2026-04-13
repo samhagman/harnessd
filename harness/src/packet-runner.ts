@@ -13,12 +13,14 @@
 import path from "node:path";
 
 import type { AgentBackend } from "./backend/types.js";
+import { appendEvent } from "./event-log.js";
 import type {
   PacketContract,
   BuilderReport,
   EvaluatorReport,
   RiskRegister,
   ProjectConfig,
+  PacketType,
 } from "./schemas.js";
 import { MemvidBuffer } from "./memvid.js";
 import type { RunMemory } from "./memvid.js";
@@ -31,6 +33,7 @@ import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
 import { createResearchMcpServerRecord } from "./research-tools.js";
+import { createGateCheckMcpServer } from "./gate-check-tool.js";
 
 /**
  * All configuration and optional context needed to run the builder.
@@ -57,6 +60,29 @@ export interface BuilderContext {
   completedPacketIds?: string[];
   resumeSessionId?: string;
   memory?: RunMemory | null;
+
+  /** All packets for full plan context in builder prompt. */
+  allPackets?: Array<{
+    id: string;
+    title: string;
+    objective: string;
+    status: string;
+    expectedFiles?: string[];
+    criticalConstraints?: string[];
+    notes?: string[];
+  }>;
+  /** Run timeline string built from events.jsonl. */
+  runTimeline?: string;
+  /** Planner's notes for this packet. */
+  packetNotes?: string[];
+  /** Expected files from planner for this packet. */
+  expectedFiles?: string[];
+  /** Critical constraints from planner for this packet. */
+  criticalConstraints?: string[];
+  /** Packet type — needed for gate_check MCP tool resolution. */
+  packetType?: PacketType;
+  /** Pre-existing gate failures from baseline check. */
+  baselineGateFailures?: Array<{ gate: string; summary: string; errors: string[] }>;
 }
 
 export interface BuilderRunResult {
@@ -95,6 +121,12 @@ export async function runBuilder(
         completedPacketIds: ctx.completedPacketIds,
         researchTools: ctx.config.researchTools,
         enableMemory: ctx.config.enableMemory,
+        allPackets: ctx.allPackets,
+        runTimeline: ctx.runTimeline,
+        packetNotes: ctx.packetNotes,
+        expectedFiles: ctx.expectedFiles,
+        criticalConstraints: ctx.criticalConstraints,
+        baselineGateFailures: ctx.baselineGateFailures,
       });
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
@@ -110,6 +142,11 @@ export async function runBuilder(
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
       mcpServers: {
         "harnessd-validation": createValidationMcpServer(),
+        "harnessd-gate-check": createGateCheckMcpServer(
+          ctx.workspaceDir ?? ctx.repoRoot,
+          ctx.packetType ?? "backend_feature",
+          ctx.config,
+        ),
         ...(ctx.memory ? { "harnessd-memory": createMemorySearchMcpServer(ctx.memory) } : {}),
         ...createResearchMcpServerRecord(ctx.config.researchTools),
       },
@@ -137,6 +174,19 @@ export async function runBuilder(
   if (workerResult.payload) {
     const reportPath = path.join(runDir, "packets", ctx.packetId, "builder", "builder-report.json");
     atomicWriteJson(reportPath, workerResult.payload);
+
+    // Advisory warning: builder changed files but made no git commits
+    if (
+      workerResult.payload.changedFiles.length > 0 &&
+      (!workerResult.payload.commitShas || workerResult.payload.commitShas.length === 0)
+    ) {
+      appendEvent(ctx.repoRoot, ctx.runId, {
+        event: "builder.warning",
+        phase: "building_packet",
+        packetId: ctx.packetId,
+        detail: "Builder changed files but made no git commits",
+      });
+    }
   }
 
   return {

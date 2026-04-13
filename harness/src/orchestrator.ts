@@ -28,7 +28,6 @@ import type {
   EvaluatorReport,
   EvaluatorGuide,
   PlanningContext,
-  PlanReview,
   QAReport,
   IntegrationScenario,
 } from "./schemas.js";
@@ -49,11 +48,13 @@ import {
   createRun,
   loadRun,
   updateRun,
+  pushToRunArray,
   readArtifact,
   getRunDir,
   ensurePacketDir,
   atomicWriteJson,
   appendEvaluatorAdditions,
+  validateWorkspacePath,
 } from "./state-store.js";
 import { appendEvent, readEvents } from "./event-log.js";
 import { renderStatus, renderStatusMarkdown } from "./status-renderer.js";
@@ -188,6 +189,11 @@ export async function runOrchestrator(
   const researchAvailability = resolveResearchToolAvailability(config);
   config.researchTools = researchAvailability;
 
+  // Validate workspace is not in a volatile location (/tmp gets cleared by OS)
+  if (workspaceDir !== repoRoot) {
+    validateWorkspacePath(workspaceDir);
+  }
+
   // Ensure workspace directory exists
   fs.mkdirSync(workspaceDir, { recursive: true });
 
@@ -268,6 +274,7 @@ export async function runOrchestrator(
       break;
     }
 
+    const sessionStart = Date.now();
     try {
       const nextState = await executePhase(factory, repoRoot, workspaceDir, runState, config, memory);
 
@@ -291,9 +298,20 @@ export async function runOrchestrator(
       }
     } catch (err: unknown) {
       const errMsg = errorStr(err);
+      const sessionDurationMs = Date.now() - sessionStart;
       consecutiveRetries++;
 
-      if (isRateLimitError(errMsg)) {
+      if (isQuotaExhaustionError(errMsg)) {
+        console.error(`[${runState.runId}] Quota exhaustion during ${runState.phase}: ${errMsg.slice(0, 200)}`);
+        appendEvent(repoRoot, runState.runId, {
+          event: "worker.rate_limited",
+          phase: runState.phase,
+          packetId: runState.currentPacketId ?? undefined,
+          detail: `Quota exhaustion detected. Pausing for human intervention: ${errMsg.slice(0, 200)}`,
+        });
+        runState = updateRun(repoRoot, runState.runId, { phase: "needs_human" });
+        break;
+      } else if (isRateLimitError(errMsg)) {
         const backoffMs = computeBackoffMs(consecutiveRetries, config);
         console.log(
           `[${runState.runId}] Rate limited during ${runState.phase}. ` +
@@ -309,7 +327,7 @@ export async function runOrchestrator(
       } else {
         console.error(
           `[${runState.runId}] Error in ${runState.phase}: ${errMsg}. ` +
-          `Retry ${consecutiveRetries}/${MAX_CONSECUTIVE_RETRIES} in ${RETRY_COOLDOWN_SECONDS}s...`,
+          `Retry ${consecutiveRetries}/${MAX_CONSECUTIVE_RETRIES}...`,
         );
         appendEvent(repoRoot, runState.runId, {
           event: "worker.resumed",
@@ -317,7 +335,15 @@ export async function runOrchestrator(
           packetId: runState.currentPacketId ?? undefined,
           detail: `Error: ${errMsg.slice(0, 200)}. Auto-retry ${consecutiveRetries}`,
         });
-        await sleep(RETRY_COOLDOWN_SECONDS * 1000);
+        if (sessionDurationMs < 30_000) {
+          const backoffMs = computeBackoffMs(consecutiveRetries, config);
+          console.error(
+            `[${runState.runId}] Rapid crash in ${runState.phase} (${Math.round(sessionDurationMs / 1000)}s). Backoff ${Math.ceil(backoffMs / 1000)}s`,
+          );
+          await sleep(backoffMs);
+        } else {
+          await sleep(RETRY_COOLDOWN_SECONDS * 1000);
+        }
       }
     }
   }
@@ -883,6 +909,7 @@ async function executeBuilder(
   evalReport?: EvaluatorReport,
   resumeSessionId?: string | null,
   memory?: RunMemory | null,
+  baselineGateFailures?: Array<{ gate: string; summary: string; errors: string[] }>,
 ): Promise<BuilderRunResult> {
   const packetId = runState.currentPacketId!;
   const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
@@ -903,6 +930,22 @@ async function executeBuilder(
   // Combine: memory context appended after completion summaries
   const combinedContext = [completionSummaries, memoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
 
+  // Build full plan context and timeline for builder
+  const allPackets = readAllPackets(repoRoot, runState.runId);
+  const currentPacket = allPackets.find((p) => p.id === packetId);
+  const runTimelineStr = buildRunTimeline(repoRoot, runState.runId);
+
+  // Map packets to the shape the builder prompt expects
+  const packetSummaries = allPackets.map((p) => ({
+    id: p.id,
+    title: p.title,
+    objective: p.objective,
+    status: p.status,
+    expectedFiles: p.expectedFiles.length > 0 ? p.expectedFiles : undefined,
+    criticalConstraints: p.criticalConstraints.length > 0 ? p.criticalConstraints : undefined,
+    notes: p.notes.length > 0 ? p.notes : undefined,
+  }));
+
   const builderCtx: BuilderContext = {
     repoRoot,
     workspaceDir,
@@ -917,6 +960,13 @@ async function executeBuilder(
     completedPacketIds: allCompletedIds,
     resumeSessionId: resumeSessionId ?? undefined,
     memory,
+    allPackets: packetSummaries,
+    runTimeline: runTimelineStr,
+    packetNotes: currentPacket?.notes && currentPacket.notes.length > 0 ? currentPacket.notes : undefined,
+    expectedFiles: currentPacket?.expectedFiles && currentPacket.expectedFiles.length > 0 ? currentPacket.expectedFiles : undefined,
+    criticalConstraints: currentPacket?.criticalConstraints && currentPacket.criticalConstraints.length > 0 ? currentPacket.criticalConstraints : undefined,
+    packetType: contract.packetType,
+    baselineGateFailures,
   };
   return runBuilder(factory.forRole("builder"), contract, builderCtx);
 }
@@ -937,13 +987,49 @@ async function handleBuilding(
     packetId,
   });
 
+  // Baseline gate check — run once before first build to catch pre-existing issues.
+  const priorBaseline = readEvents(repoRoot, runState.runId).filter(
+    (e) => (e.event === "gate.baseline_passed" || e.event === "gate.baseline_failed")
+      && e.packetId === packetId,
+  );
+  let baselineGateFailures: Array<{ gate: string; summary: string; errors: string[] }> | undefined;
+  if (priorBaseline.length === 0) {
+    const allPkts = readAllPackets(repoRoot, runState.runId);
+    const pkt = allPkts.find((p) => p.id === packetId);
+    console.log(`[${runState.runId}] Running baseline gate check for ${packetId}...`);
+    const baselineResults = await runToolGates(workspaceDir, pkt?.type ?? "backend_feature", config);
+    const failures = baselineResults.filter((g) => !g.passed && !g.skipped);
+    if (failures.length > 0) {
+      console.log(`[${runState.runId}] WARNING: Baseline gates failed — pre-existing issues detected`);
+      appendEvent(repoRoot, runState.runId, {
+        event: "gate.baseline_failed", phase: "building_packet", packetId,
+        detail: JSON.stringify(failures.map((f) => ({ gate: f.gate, summary: f.summary }))),
+      });
+      baselineGateFailures = failures.map((f) => ({
+        gate: f.gate, summary: f.summary, errors: f.errors,
+      }));
+    } else {
+      appendEvent(repoRoot, runState.runId, {
+        event: "gate.baseline_passed", phase: "building_packet", packetId,
+        detail: `${baselineResults.filter((r) => !r.skipped).length} gates passed`,
+      });
+    }
+  } else if (priorBaseline.some((e) => e.event === "gate.baseline_failed")) {
+    // Re-read baseline failures from event detail for crash-retry path
+    const failEvent = priorBaseline.find((e) => e.event === "gate.baseline_failed");
+    if (failEvent?.detail) {
+      const parsed = JSON.parse(failEvent.detail) as Array<{ gate: string; summary: string }>;
+      baselineGateFailures = parsed.map((f) => ({ gate: f.gate, summary: f.summary, errors: [] }));
+    }
+  }
+
   // Attempt SDK resume if the backend is Claude and a prior session crashed
   const resumeSessionId = getResumeSessionId(
     factory, "builder", repoRoot, runState.runId,
     `packets/${packetId}/builder`,
   );
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId, memory);
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId, memory, baselineGateFailures);
 
   if (result.report?.claimsDone) {
     appendEvent(repoRoot, runState.runId, {
@@ -1072,6 +1158,10 @@ async function handleEvaluation(
     repoRoot, runState.runId, packetId, activeOrder,
   );
 
+  // Resolve current packet for evaluator — for expectedFiles smoke-test
+  const allPacketsForEval = readAllPackets(repoRoot, runState.runId);
+  const currentPacketForEval = allPacketsForEval.find((p) => p.id === packetId);
+
   const evaluatorCtx: EvaluatorContext = {
     repoRoot,
     workspaceDir,
@@ -1088,6 +1178,10 @@ async function handleEvaluation(
     completedPacketIds: allCompletedIds,
     resumeSessionId: resumeSessionId ?? undefined,
     memory,
+    expectedFiles: currentPacketForEval?.expectedFiles && currentPacketForEval.expectedFiles.length > 0
+      ? currentPacketForEval.expectedFiles
+      : undefined,
+    builderCommitCount: builderReport.commitShas?.length ?? 0,
   };
   const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, evaluatorCtx);
 
@@ -1228,23 +1322,19 @@ async function handleEvaluation(
 
     // Track completion in the appropriate round's list
     const isR2Packet = runState.round >= 2 && runState.round2PacketOrder.includes(packetId);
-    const completionUpdate: Partial<RunState> = isR2Packet
-      ? { round2CompletedPacketIds: [...runState.round2CompletedPacketIds, packetId] }
-      : { completedPacketIds: [...runState.completedPacketIds, packetId] };
+    const field = isR2Packet ? 'round2CompletedPacketIds' as const : 'completedPacketIds' as const;
 
     if (runState.operatorFlags.pauseAfterCurrentPacket) {
-      return updateRun(repoRoot, runState.runId, {
+      return pushToRunArray(repoRoot, runState.runId, field, packetId, {
         phase: "paused",
         currentPacketId: null,
-        ...completionUpdate,
         operatorFlags: { ...runState.operatorFlags, pauseAfterCurrentPacket: false },
       });
     }
 
-    return updateRun(repoRoot, runState.runId, {
+    return pushToRunArray(repoRoot, runState.runId, field, packetId, {
       phase: "selecting_packet",
       currentPacketId: null,
-      ...completionUpdate,
     });
   }
 
@@ -1349,7 +1439,18 @@ async function handleFixing(
     detail: `Fix attempt ${fixAttempts + 1}/${config.maxFixLoopsPerPacket}${resumeSessionId ? " (resuming)" : ""}`,
   });
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory);
+  // Re-read baseline gate failures (persisted as events in handleBuilding) so fix-loop
+  // builders also see the PRE-EXISTING GATE FAILURES section when session resume fails.
+  let baselineGateFailures: Array<{ gate: string; summary: string; errors: string[] }> | undefined;
+  const baselineEvent = events.find(
+    (e) => e.event === "gate.baseline_failed" && e.packetId === packetId,
+  );
+  if (baselineEvent?.detail) {
+    const parsed = JSON.parse(baselineEvent.detail) as Array<{ gate: string; summary: string }>;
+    baselineGateFailures = parsed.map((f) => ({ gate: f.gate, summary: f.summary, errors: [] }));
+  }
+
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory, baselineGateFailures);
 
   if (result.report?.claimsDone) {
     // Encode builder artifacts into run memory (fix phase)
@@ -1876,6 +1977,74 @@ function readAllPackets(repoRoot: string, runId: string): Packet[] {
   return [...readPackets(repoRoot, runId), ...readRound2Packets(repoRoot, runId)];
 }
 
+/**
+ * Build a human-readable run timeline from the event log.
+ * This gives the builder context about what has happened in the run so far.
+ */
+export function buildRunTimeline(repoRoot: string, runId: string): string {
+  const events = readEvents(repoRoot, runId);
+  const lines: string[] = [];
+  let stepNum = 1;
+
+  for (const event of events) {
+    switch (event.event) {
+      case "planning.completed":
+        lines.push(`${stepNum++}. Planning completed`);
+        break;
+      case "plan_review.completed":
+        lines.push(`${stepNum++}. Plan review: ${event.detail ?? "completed"}`);
+        break;
+      case "plan.approved":
+        lines.push(`${stepNum++}. Plan approved by operator`);
+        break;
+      case "contract.accepted":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: contract accepted`);
+        break;
+      case "builder.completed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: builder completed`);
+        break;
+      case "evaluator.passed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: ✓ evaluator passed`);
+        break;
+      case "evaluator.failed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: ✗ evaluator failed — ${event.detail ?? "see report"}`);
+        break;
+      case "gate.passed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: gate passed (${event.detail ?? ""})`);
+        break;
+      case "gate.failed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: gate failed — ${event.detail ?? ""}`);
+        break;
+      case "packet.done":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: ✓ DONE`);
+        break;
+      case "packet.failed":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: ✗ FAILED — ${event.detail ?? ""}`);
+        break;
+      case "qa.started":
+        lines.push(`${stepNum++}. QA review started (round ${event.detail ?? "?"})`);
+        break;
+      case "qa.passed":
+        lines.push(`${stepNum++}. QA: ✓ passed`);
+        break;
+      case "qa.failed":
+        lines.push(`${stepNum++}. QA: ✗ failed — ${event.detail ?? ""}`);
+        break;
+      case "round2.planning.completed":
+        lines.push(`${stepNum++}. Round 2 planning completed — ${event.detail ?? ""}`);
+        break;
+      case "contract.escalated":
+        lines.push(`${stepNum++}. ${event.packetId ?? "?"}: contract escalated — ${event.detail ?? ""}`);
+        break;
+      // Skip noisy events like heartbeats, pokes, nudges
+      default:
+        break;
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : "No prior events — you are the first builder.";
+}
+
 function readIntegrationScenarios(repoRoot: string, runId: string): IntegrationScenario[] {
   try {
     const scenariosPath = path.join(getRunDir(repoRoot, runId), "spec", "integration-scenarios.json");
@@ -1953,7 +2122,7 @@ function buildFuturePacketsSummary(
   if (futurePackets.length === 0) return undefined;
 
   return futurePackets
-    .map((p) => `- **${p.id}**: ${p.title}\n  Objective: ${p.objective.slice(0, 200)}${p.objective.length > 200 ? "..." : ""}`)
+    .map((p) => `- **${p.id}**: ${p.title}\n  Objective: ${p.objective}`)
     .join("\n");
 }
 
@@ -1993,7 +2162,10 @@ function writeCompletionSummary(
     const packet = packets.find((p) => p.id === packetId);
     if (!packet) return;
 
-    const summary = generateCompletionSummary(packet, contract, builderReport, evaluatorReport);
+    const summary = generateCompletionSummary(packet, contract, builderReport, evaluatorReport, {
+      cwd: repoRoot,
+      commitShas: builderReport.commitShas ?? null,
+    });
     const summaryPath = path.join(
       getRunDir(repoRoot, runId),
       "packets",
@@ -2172,13 +2344,10 @@ async function processInbox(
             appendEvent(repoRoot, runState.runId, { event: "packet.done", packetId: pid });
             await markPacketStatus(repoRoot, runState.runId, pid, "done");
             const isR2 = runState.round >= 2 && runState.round2PacketOrder.includes(pid);
-            const compUpdate: Partial<RunState> = isR2
-              ? { round2CompletedPacketIds: [...runState.round2CompletedPacketIds, pid] }
-              : { completedPacketIds: [...runState.completedPacketIds, pid] };
-            runState = updateRun(repoRoot, runState.runId, {
+            const approveField = isR2 ? 'round2CompletedPacketIds' as const : 'completedPacketIds' as const;
+            runState = pushToRunArray(repoRoot, runState.runId, approveField, pid, {
               phase: "selecting_packet",
               currentPacketId: null,
-              ...compUpdate,
             });
           }
           break;
@@ -2379,23 +2548,11 @@ async function processInbox(
           await markPacketStatus(repoRoot, runState.runId, packetId, "done");
 
           const isR2ForceApprove = runState.round >= 2 && runState.round2PacketOrder.includes(packetId);
-          const compUpdateForceApprove: Partial<RunState> = isR2ForceApprove
-            ? {
-                round2CompletedPacketIds: runState.round2CompletedPacketIds.includes(packetId)
-                  ? runState.round2CompletedPacketIds
-                  : [...runState.round2CompletedPacketIds, packetId],
-              }
-            : {
-                completedPacketIds: runState.completedPacketIds.includes(packetId)
-                  ? runState.completedPacketIds
-                  : [...runState.completedPacketIds, packetId],
-              };
-
-          runState = updateRun(repoRoot, runState.runId, {
+          const forceApproveField = isR2ForceApprove ? 'round2CompletedPacketIds' as const : 'completedPacketIds' as const;
+          runState = pushToRunArray(repoRoot, runState.runId, forceApproveField, packetId, {
             phase: "selecting_packet",
             currentPacketId: null,
             failedPacketIds: runState.failedPacketIds.filter((id) => id !== packetId),
-            ...compUpdateForceApprove,
           });
 
           // Track cumulative force-approve rate
@@ -2608,7 +2765,11 @@ function consumeInboxFile(inboxDir: string, file: string): void {
 }
 
 function isRateLimitError(msg: string): boolean {
-  return /rate.?limit|429|too many requests|overloaded/i.test(msg);
+  return /rate.?limit|429|too many requests|overloaded|insufficient.?quota|quota.?exceed|billing.?hard.?limit|daily.?token.?limit|monthly.?limit/i.test(msg);
+}
+
+function isQuotaExhaustionError(msg: string): boolean {
+  return /insufficient.?quota|billing.?hard.?limit|daily.?token.?limit|monthly.?limit.?exceeded|you.?ve hit your limit/i.test(msg);
 }
 
 function computeBackoffMs(retryCount: number, config: ProjectConfig): number {

@@ -118,6 +118,7 @@ async function main() {
     ],
     remainingConcerns: ["Edge case: expired token during WebSocket upgrade not tested"],
     claimsDone: true,
+    commitShas: null,
   };
   await memory!.encode([builderReportToDocument(builderReport, "PKT-001")]);
   console.log("PASS: Builder report encoded");

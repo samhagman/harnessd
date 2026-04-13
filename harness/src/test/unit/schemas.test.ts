@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   RunStateSchema,
   PacketSchema,
+  BuilderReportSchema,
   AcceptanceCriterionSchema,
   EventEntrySchema,
   defaultRunState,
@@ -219,5 +220,125 @@ describe("EventEntrySchema", () => {
     expect(() =>
       EventEntrySchema.parse({ event: "run.started" }),
     ).toThrow();
+  });
+});
+
+// ------------------------------------
+// PacketSchema field defaults
+// ------------------------------------
+
+describe("PacketSchema field defaults", () => {
+  /** Minimal valid packet — required fields only, no defaulted arrays */
+  function minimalPacket(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "PKT-001",
+      title: "Test packet",
+      type: "tooling",
+      objective: "Write a helper script",
+      whyNow: "Needed immediately",
+      dependencies: [],
+      status: "pending",
+      priority: 1,
+      estimatedSize: "S",
+      risks: ["Risk of breakage"],
+      ...overrides,
+    };
+  }
+
+  it("expectedFiles defaults to [] when omitted", () => {
+    const packet = PacketSchema.parse(minimalPacket());
+    expect(packet.expectedFiles).toEqual([]);
+  });
+
+  it("criticalConstraints defaults to [] when omitted", () => {
+    const packet = PacketSchema.parse(minimalPacket());
+    expect(packet.criticalConstraints).toEqual([]);
+  });
+
+  it("integrationInputs defaults to [] when omitted", () => {
+    const packet = PacketSchema.parse(minimalPacket());
+    expect(packet.integrationInputs).toEqual([]);
+  });
+
+  it("notes defaults to [] when omitted", () => {
+    const packet = PacketSchema.parse(minimalPacket());
+    expect(packet.notes).toEqual([]);
+  });
+
+  it("requiresHumanReview defaults to false when omitted", () => {
+    const packet = PacketSchema.parse(minimalPacket());
+    expect(packet.requiresHumanReview).toBe(false);
+  });
+
+  it("explicitly provided expectedFiles are preserved", () => {
+    const packet = PacketSchema.parse(
+      minimalPacket({ expectedFiles: ["src/foo.ts", "src/bar.ts"] }),
+    );
+    expect(packet.expectedFiles).toEqual(["src/foo.ts", "src/bar.ts"]);
+  });
+
+  it("explicitly provided criticalConstraints are preserved", () => {
+    const packet = PacketSchema.parse(
+      minimalPacket({ criticalConstraints: ["Must not break auth"] }),
+    );
+    expect(packet.criticalConstraints).toEqual(["Must not break auth"]);
+  });
+
+  it("explicitly provided integrationInputs are preserved", () => {
+    const packet = PacketSchema.parse(
+      minimalPacket({
+        integrationInputs: [{ fromPacket: "PKT-002", provides: ["UserSchema"] }],
+      }),
+    );
+    expect(packet.integrationInputs).toHaveLength(1);
+    expect(packet.integrationInputs[0]!.fromPacket).toBe("PKT-002");
+  });
+});
+
+// ------------------------------------
+// BuilderReportSchema field defaults
+// ------------------------------------
+
+describe("BuilderReportSchema field defaults", () => {
+  /** Minimal valid builder report — required fields only */
+  function minimalBuilderReport(overrides: Record<string, unknown> = {}) {
+    return {
+      packetId: "PKT-001",
+      sessionId: "session-abc-123",
+      changedFiles: ["src/index.ts"],
+      commandsRun: [],
+      backgroundJobs: [],
+      microFanoutUsed: [],
+      selfCheckResults: [],
+      remainingConcerns: [],
+      claimsDone: true,
+      ...overrides,
+    };
+  }
+
+  it("commitShas defaults to null when omitted", () => {
+    const report = BuilderReportSchema.parse(minimalBuilderReport());
+    expect(report.commitShas).toBeNull();
+  });
+
+  it("explicitly provided commitShas array is preserved", () => {
+    const report = BuilderReportSchema.parse(
+      minimalBuilderReport({ commitShas: ["abc123", "def456"] }),
+    );
+    expect(report.commitShas).toEqual(["abc123", "def456"]);
+  });
+
+  it("null commitShas is accepted explicitly", () => {
+    const report = BuilderReportSchema.parse(
+      minimalBuilderReport({ commitShas: null }),
+    );
+    expect(report.commitShas).toBeNull();
+  });
+
+  it("empty commitShas array is accepted", () => {
+    const report = BuilderReportSchema.parse(
+      minimalBuilderReport({ commitShas: [] }),
+    );
+    expect(report.commitShas).toEqual([]);
   });
 });

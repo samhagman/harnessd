@@ -17,6 +17,8 @@ import {
   getLatestRunId,
   ensurePacketDir,
   getRunDir,
+  validateWorkspacePath,
+  pushToRunArray,
   HARNESSD_DIR,
 } from "../../state-store.js";
 import { RunStateSchema } from "../../schemas.js";
@@ -253,5 +255,136 @@ describe("ensurePacketDir", () => {
     const dir1 = ensurePacketDir(tmpDir, state.runId, "PKT-001");
     const dir2 = ensurePacketDir(tmpDir, state.runId, "PKT-001");
     expect(dir1).toBe(dir2);
+  });
+});
+
+// ------------------------------------
+// validateWorkspacePath
+// ------------------------------------
+
+describe("validateWorkspacePath", () => {
+  it("throws for /tmp workspace", () => {
+    expect(() => validateWorkspacePath("/tmp/workspace")).toThrow(/volatile/i);
+  });
+
+  it("throws for exact /tmp path", () => {
+    expect(() => validateWorkspacePath("/tmp")).toThrow(/volatile/i);
+  });
+
+  it("throws for /private/tmp subdirectory", () => {
+    expect(() => validateWorkspacePath("/private/tmp/myproject")).toThrow(/volatile/i);
+  });
+
+  it("throws for /var/tmp subdirectory", () => {
+    expect(() => validateWorkspacePath("/var/tmp/work")).toThrow(/volatile/i);
+  });
+
+  it("does NOT throw for a home directory path", () => {
+    expect(() => validateWorkspacePath("/Users/sam/projects/workspace")).not.toThrow();
+  });
+
+  it("does NOT throw for /home/user path", () => {
+    expect(() => validateWorkspacePath("/home/user/workspace")).not.toThrow();
+  });
+
+  it("does NOT throw for /var/app (not /var/tmp)", () => {
+    expect(() => validateWorkspacePath("/var/app/myproject")).not.toThrow();
+  });
+
+  it("does NOT throw for the tmpDir itself (non-/tmp prefix)", () => {
+    // tmpDir is created by os.tmpdir() which on macOS is /var/folders/...
+    // This test exercises non-volatile absolute paths
+    const nonVolatilePath = path.join(tmpDir.replace(/^\/tmp/, "/not-tmp"), "workspace");
+    if (!nonVolatilePath.startsWith("/tmp") &&
+        !nonVolatilePath.startsWith("/private/tmp") &&
+        !nonVolatilePath.startsWith("/var/tmp")) {
+      expect(() => validateWorkspacePath(nonVolatilePath)).not.toThrow();
+    }
+  });
+});
+
+// ------------------------------------
+// pushToRunArray
+// ------------------------------------
+
+describe("pushToRunArray", () => {
+  it("pushes a value to an empty completedPacketIds array", () => {
+    const state = createRun(tmpDir, "push test");
+    expect(state.completedPacketIds).toEqual([]);
+
+    const updated = pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-001");
+    expect(updated.completedPacketIds).toEqual(["PKT-001"]);
+  });
+
+  it("appends to a non-empty array", () => {
+    const state = createRun(tmpDir, "push append test");
+    pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-001");
+    const updated = pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-002");
+    expect(updated.completedPacketIds).toEqual(["PKT-001", "PKT-002"]);
+  });
+
+  it("deduplicates: does not add duplicate value", () => {
+    const state = createRun(tmpDir, "dedup test");
+    pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-001");
+    const updated = pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-001");
+    // PKT-001 should appear exactly once
+    expect(updated.completedPacketIds).toEqual(["PKT-001"]);
+    expect(updated.completedPacketIds).toHaveLength(1);
+  });
+
+  it("merges additionalPatch fields alongside the array push", () => {
+    const state = createRun(tmpDir, "patch merge test");
+    const updated = pushToRunArray(
+      tmpDir, state.runId, "completedPacketIds", "PKT-001",
+      { phase: "selecting_packet", currentPacketId: null },
+    );
+    expect(updated.completedPacketIds).toContain("PKT-001");
+    expect(updated.phase).toBe("selecting_packet");
+    expect(updated.currentPacketId).toBeNull();
+  });
+
+  it("reads fresh from disk — not stale in-memory state", () => {
+    const state = createRun(tmpDir, "fresh read test");
+
+    // Simulate another writer independently adding PKT-001 directly on disk
+    updateRun(tmpDir, state.runId, { completedPacketIds: ["PKT-001"] });
+
+    // Now call pushToRunArray with PKT-002 — it should read fresh, see PKT-001, and add PKT-002
+    const updated = pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-002");
+    expect(updated.completedPacketIds).toContain("PKT-001");
+    expect(updated.completedPacketIds).toContain("PKT-002");
+    expect(updated.completedPacketIds).toHaveLength(2);
+  });
+
+  it("reads fresh from disk — stale in-memory snapshot does not lose disk writes", () => {
+    const state = createRun(tmpDir, "stale snapshot test");
+
+    // Stale in-memory snapshot has empty completedPacketIds
+    // Another writer (simulated) adds PKT-001 on disk directly
+    updateRun(tmpDir, state.runId, { completedPacketIds: ["PKT-001"] });
+
+    // pushToRunArray should read from disk, so PKT-001 survives
+    const updated = pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-002");
+    expect(updated.completedPacketIds).toEqual(["PKT-001", "PKT-002"]);
+  });
+
+  it("persists changes to disk", () => {
+    const state = createRun(tmpDir, "persist check");
+    pushToRunArray(tmpDir, state.runId, "completedPacketIds", "PKT-001");
+
+    const reloaded = loadRun(tmpDir, state.runId);
+    expect(reloaded.completedPacketIds).toContain("PKT-001");
+  });
+
+  it("works for round2CompletedPacketIds field", () => {
+    const state = createRun(tmpDir, "r2 push test");
+    const updated = pushToRunArray(tmpDir, state.runId, "round2CompletedPacketIds", "PKT-R2-001");
+    expect(updated.round2CompletedPacketIds).toEqual(["PKT-R2-001"]);
+  });
+
+  it("works for failedPacketIds field", () => {
+    const state = createRun(tmpDir, "failed push test");
+    const updated = pushToRunArray(tmpDir, state.runId, "failedPacketIds", "PKT-003");
+    expect(updated.failedPacketIds).toEqual(["PKT-003"]);
   });
 });

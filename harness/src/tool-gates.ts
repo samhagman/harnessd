@@ -76,59 +76,8 @@ export function detectTsConfig(workspaceDir: string): string | null {
   return null;
 }
 
-/**
- * Parse TypeScript compiler output into structured errors.
- * TSC outputs errors in the format: file(line,col): error TSNNNN: message
- */
-export function parseTscErrors(output: string): string[] {
-  const errors: string[] = [];
-  const lines = output.split("\n");
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Match tsc error format: path(line,col): error TSxxxx: message
-    if (/\(\d+,\d+\):\s*error\s+TS\d+:/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-    // Also match simpler format: error TSxxxx: message
-    else if (/^error\s+TS\d+:/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-  }
-
-  return errors;
-}
-
-/**
- * Parse test runner output for failure counts.
- * Handles vitest and jest output formats.
- */
-export function parseTestErrors(output: string): string[] {
-  const errors: string[] = [];
-  const lines = output.split("\n");
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // vitest/jest failure lines: FAIL path/to/test.ts > suite > test name
-    if (/^(FAIL|×|✗)\s+/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-    // vitest summary: Tests  X failed
-    else if (/Tests?\s+\d+\s+failed/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-    // jest summary: Tests: X failed, Y passed
-    else if (/Tests:\s+\d+\s+failed/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-    // vitest "AssertionError" or "Error:" lines inside failure blocks
-    else if (/^(AssertionError|Error|TypeError|ReferenceError):/.test(trimmed)) {
-      errors.push(trimmed);
-    }
-  }
-
-  return errors;
-}
+// No brittle output parsing — agents get the full raw output from gates.
+// The only structured parsing in the harness is the envelope pattern (which we control).
 
 /**
  * Detect the test runner and command for the workspace.
@@ -146,14 +95,14 @@ export function detectTestCommand(workspaceDir: string): string | null {
     if (scripts.test) {
       // Use npx vitest run directly if it's a vitest project (avoids interactive mode)
       if (typeof scripts.test === "string" && scripts.test.includes("vitest")) {
-        return "npx vitest run";
+        return "npx vitest run --silent";
       }
       return "npm test";
     }
 
     // Check for vitest in devDependencies even without test script
     const devDeps = pkgJson.devDependencies ?? {};
-    if (devDeps.vitest) return "npx vitest run";
+    if (devDeps.vitest) return "npx vitest run --silent";
 
     // Check for jest
     if (devDeps.jest || devDeps["@jest/core"]) return "npx jest --ci";
@@ -173,18 +122,9 @@ export function makeTypecheckGate(): ToolGate {
     blocking: true,
     timeoutMs: 120_000, // 2 minutes
     parseOutput: (_stdout, stderr, exitCode) => {
-      if (exitCode === 0) {
-        return { passed: true, summary: "TypeScript compilation passed" };
-      }
-
-      const combined = _stdout + "\n" + stderr;
-      const errors = parseTscErrors(combined);
-
-      return {
-        passed: false,
-        summary: `TypeScript compilation failed with ${errors.length} error(s)`,
-        errors: errors.length > 0 ? errors.slice(0, 30) : [combined.slice(0, 2000)],
-      };
+      if (exitCode === 0) return { passed: true, summary: "TypeScript compilation passed" };
+      const combined = (_stdout + "\n" + stderr).trim();
+      return { passed: false, summary: `TypeScript compilation failed (exit code ${exitCode})`, errors: [combined] };
     },
   };
 }
@@ -200,18 +140,9 @@ export function makeTestGate(workspaceDir: string, preDetectedCmd?: string | nul
     blocking: true,
     timeoutMs: 300_000, // 5 minutes
     parseOutput: (_stdout, stderr, exitCode) => {
-      if (exitCode === 0) {
-        return { passed: true, summary: "All tests passed" };
-      }
-
-      const combined = _stdout + "\n" + stderr;
-      const errors = parseTestErrors(combined);
-
-      return {
-        passed: false,
-        summary: `Tests failed (exit code ${exitCode})`,
-        errors: errors.length > 0 ? errors.slice(0, 30) : [combined.slice(0, 2000)],
-      };
+      if (exitCode === 0) return { passed: true, summary: "All tests passed" };
+      const combined = (_stdout + "\n" + stderr).trim();
+      return { passed: false, summary: `Tests failed (exit code ${exitCode})`, errors: [combined] };
     },
   };
 }
@@ -364,7 +295,7 @@ export function resolveCustomGates(
         return {
           passed: false,
           summary: `${g.name} failed (exit code ${exitCode})`,
-          errors: combined ? [combined.slice(0, 2000)] : [`Exit code ${exitCode}`],
+          errors: combined ? [combined] : [`Exit code ${exitCode}`],
         };
       },
     }));

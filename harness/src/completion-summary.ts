@@ -9,6 +9,7 @@
  * Reference: Research analysis 03 — Proposal 6 (Packet Completion Summary)
  */
 
+import { execSync } from "node:child_process";
 import type {
   Packet,
   PacketContract,
@@ -35,6 +36,7 @@ export function generateCompletionSummary(
   contract: PacketContract,
   builderReport: BuilderReport,
   evaluatorReport: EvaluatorReport,
+  opts?: { cwd?: string; commitShas?: string[] | null },
 ): string {
   const lines: string[] = [];
 
@@ -47,29 +49,38 @@ export function generateCompletionSummary(
   lines.push(`**Objective:** ${contract.objective}`);
   lines.push("");
 
-  // Key files — from builder report, capped to avoid bloat
+  // Key files — from builder report
   if (builderReport.changedFiles.length > 0) {
     lines.push("**Files changed:**");
-    const filesToShow = builderReport.changedFiles.slice(0, 15);
-    for (const f of filesToShow) {
+    for (const f of builderReport.changedFiles) {
       lines.push(`- ${f}`);
-    }
-    if (builderReport.changedFiles.length > 15) {
-      lines.push(`- ... and ${builderReport.changedFiles.length - 15} more`);
     }
     lines.push("");
   }
 
-  // Key implementation decisions — extracted from builder self-check evidence
-  // and remaining concerns. These reveal patterns like "used CSS Modules" or
-  // "chose Jotai over Zustand" that subsequent packets need to follow.
-  const decisions = extractKeyDecisions(builderReport);
-  if (decisions.length > 0) {
-    lines.push("**Key decisions/patterns:**");
-    for (const d of decisions) {
-      lines.push(`- ${d}`);
+  // Commits — from builder's git discipline
+  const commitShas = opts?.commitShas ?? builderReport.commitShas;
+  if (commitShas?.length && opts?.cwd) {
+    lines.push("**Commits:**");
+    for (const sha of commitShas) {
+      try {
+        const msg = execSync(`git log --format="%s" -1 ${sha}`, { cwd: opts.cwd, encoding: "utf-8" }).trim();
+        lines.push(`- \`${sha.slice(0, 7)}\` ${msg}`);
+      } catch {
+        lines.push(`- \`${sha.slice(0, 7)}\` (commit message unavailable)`);
+      }
     }
     lines.push("");
+  } else {
+    // Fallback: extract from self-check evidence (legacy path for pre-commitShas reports)
+    const decisions = extractKeyDecisions(builderReport);
+    if (decisions.length > 0) {
+      lines.push("**Key decisions/patterns:**");
+      for (const d of decisions) {
+        lines.push(`- ${d}`);
+      }
+      lines.push("");
+    }
   }
 
   // Integration points — what this packet exposes for other packets to use.
@@ -93,7 +104,7 @@ export function generateCompletionSummary(
   // Evaluator notes — anything the evaluator flagged as advisory/next-actions
   // that might affect subsequent packets
   if (evaluatorReport.nextActions.length > 0) {
-    const relevantActions = evaluatorReport.nextActions.slice(0, 3);
+    const relevantActions = evaluatorReport.nextActions;
     lines.push("**Evaluator notes for future packets:**");
     for (const a of relevantActions) {
       lines.push(`- ${a}`);
@@ -133,7 +144,7 @@ function extractKeyDecisions(report: BuilderReport): string[] {
   }
 
   // Cap at 5 to keep the summary compact
-  return decisions.slice(0, 5);
+  return decisions;
 }
 
 /**
@@ -151,7 +162,7 @@ function extractIntegrationPoints(contract: PacketContract): string[] {
   }
 
   // Cap at 5
-  return points.slice(0, 5);
+  return points;
 }
 
 /**

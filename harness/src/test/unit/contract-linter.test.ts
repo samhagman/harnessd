@@ -279,9 +279,11 @@ describe("lintContract", () => {
     expect(result.valid).toBe(true);
   });
 
-  // Rule 12: Runtime evidence for scenario/api criteria
+  // Rule 12: Structural verification for scenario/api criteria
+  // (No longer regex-matching prose — evidence QUALITY is the evaluator's job.
+  //  The linter only checks structural completeness: has command, scenario, or evidenceRequired.)
 
-  it("scenario criterion with only code-review evidence fails on user-visible packet", () => {
+  it("scenario criterion with no verification mechanism fails on user-visible packet", () => {
     const contract = makeContract(
       {
         packetType: "backend_feature",
@@ -291,14 +293,7 @@ describe("lintContract", () => {
             kind: "scenario",
             description: "POST /api/items creates a record",
             blocking: true,
-            evidenceRequired: ["code review"], // no runtime evidence
-          },
-          {
-            id: "AC-002",
-            kind: "negative",
-            description: "Malformed request returns 400",
-            blocking: true,
-            evidenceRequired: ["code review"],
+            evidenceRequired: [], // empty — no command, no scenario, no evidence
           },
         ],
       },
@@ -306,10 +301,10 @@ describe("lintContract", () => {
     );
     const result = lintContract(contract, "backend_feature");
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => /runtime verification/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /no verification mechanism/i.test(e))).toBe(true);
   });
 
-  it("scenario criterion with runtime evidence passes on user-visible packet", () => {
+  it("scenario criterion with evidenceRequired passes (evaluator judges quality)", () => {
     const contract = makeContract(
       {
         packetType: "backend_feature",
@@ -319,40 +314,51 @@ describe("lintContract", () => {
             kind: "scenario",
             description: "POST /api/items creates a record",
             blocking: true,
-            evidenceRequired: ["curl output showing 201 status code"],
-          },
-          {
-            id: "AC-002",
-            kind: "negative",
-            description: "Malformed request returns 400",
-            blocking: true,
-            evidenceRequired: ["curl response body"],
+            evidenceRequired: ["vitest output showing test passes"],
           },
         ],
       },
       "backend_feature",
     );
     const result = lintContract(contract, "backend_feature");
-    // May still fail for other reasons (e.g. missing UX criteria for ui_feature)
-    // but must NOT fail for the runtime evidence rule
-    expect(result.errors.every((e) => !/runtime verification/i.test(e))).toBe(true);
+    expect(result.errors.every((e) => !/verification mechanism/i.test(e))).toBe(true);
   });
 
-  it("scenario criterion with code-review evidence on non-user-visible packet passes rule 12", () => {
-    // tooling packets are not user-visible — the runtime evidence rule should NOT fire
+  it("scenario criterion with command field passes", () => {
+    const contract = makeContract(
+      {
+        packetType: "backend_feature",
+        acceptance: [
+          {
+            id: "AC-001",
+            kind: "scenario",
+            description: "POST /api/items creates a record",
+            blocking: true,
+            command: "curl -X POST http://localhost:3000/api/items",
+            evidenceRequired: [],
+          },
+        ],
+      },
+      "backend_feature",
+    );
+    const result = lintContract(contract, "backend_feature");
+    expect(result.errors.every((e) => !/verification mechanism/i.test(e))).toBe(true);
+  });
+
+  it("scenario criterion on non-user-visible packet skips rule 12", () => {
     const contract = makeContract({
       acceptance: [
         {
           id: "AC-001",
-          kind: "command",
+          kind: "scenario",
           description: "Script runs",
           blocking: true,
-          evidenceRequired: ["code review"],
+          evidenceRequired: [],
         },
       ],
     });
     const result = lintContract(contract, "tooling");
-    expect(result.errors.every((e) => !/runtime verification/i.test(e))).toBe(true);
+    expect(result.errors.every((e) => !/verification mechanism/i.test(e))).toBe(true);
   });
 
   // Rule 13 (outOfScope/objective contradiction) moved to contract evaluator prompt —

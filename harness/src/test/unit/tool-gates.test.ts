@@ -10,8 +10,6 @@ import os from "node:os";
 import {
   detectTsConfig,
   detectTestCommand,
-  parseTscErrors,
-  parseTestErrors,
   executeGate,
   makeTypecheckGate,
   makeTestGate,
@@ -82,22 +80,22 @@ describe("detectTestCommand", () => {
     expect(result).toBe("npm test");
   });
 
-  it("returns 'npx vitest run' when test script uses vitest", () => {
+  it("returns 'npx vitest run --silent' when test script uses vitest", () => {
     fs.writeFileSync(
       path.join(tmpDir, "package.json"),
       JSON.stringify({ scripts: { test: "vitest" } }),
     );
     const result = detectTestCommand(tmpDir);
-    expect(result).toBe("npx vitest run");
+    expect(result).toBe("npx vitest run --silent");
   });
 
-  it("returns 'npx vitest run' when vitest is in devDependencies but no test script", () => {
+  it("returns 'npx vitest run --silent' when vitest is in devDependencies but no test script", () => {
     fs.writeFileSync(
       path.join(tmpDir, "package.json"),
       JSON.stringify({ devDependencies: { vitest: "^1.0.0" } }),
     );
     const result = detectTestCommand(tmpDir);
-    expect(result).toBe("npx vitest run");
+    expect(result).toBe("npx vitest run --silent");
   });
 
   it("returns 'npx jest --ci' when jest is in devDependencies", () => {
@@ -123,65 +121,8 @@ describe("detectTestCommand", () => {
 // parseTscErrors
 // ------------------------------------
 
-describe("parseTscErrors", () => {
-  it("parses standard tsc error format", () => {
-    const output = `src/main.ts(10,5): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
-src/util.ts(3,1): error TS2304: Cannot find name 'foo'.`;
-    const errors = parseTscErrors(output);
-    expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain("TS2345");
-    expect(errors[1]).toContain("TS2304");
-  });
-
-  it("parses errors without file path prefix", () => {
-    const output = `error TS6053: File 'notfound.ts' not found.`;
-    const errors = parseTscErrors(output);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain("TS6053");
-  });
-
-  it("returns empty array for clean output", () => {
-    const output = ``;
-    const errors = parseTscErrors(output);
-    expect(errors).toEqual([]);
-  });
-
-  it("ignores non-error lines", () => {
-    const output = `Version 5.4.2
-src/main.ts(10,5): error TS2345: Bad type.
-Found 1 error.`;
-    const errors = parseTscErrors(output);
-    expect(errors).toHaveLength(1);
-  });
-});
-
-// ------------------------------------
-// parseTestErrors
-// ------------------------------------
-
-describe("parseTestErrors", () => {
-  it("parses vitest FAIL lines", () => {
-    const output = `FAIL  src/test/unit/foo.test.ts > suite > test name
-     AssertionError: expected 1 to be 2`;
-    const errors = parseTestErrors(output);
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors[0]).toContain("FAIL");
-  });
-
-  it("parses vitest summary line", () => {
-    const output = `Tests  2 failed | 10 passed`;
-    const errors = parseTestErrors(output);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain("2 failed");
-  });
-
-  it("returns empty array for passing test output", () => {
-    const output = `Tests  10 passed
-Duration  1.23s`;
-    const errors = parseTestErrors(output);
-    expect(errors).toEqual([]);
-  });
-});
+// parseTscErrors and parseTestErrors were removed — agents get full raw output
+// instead of brittle regex-parsed fragments. No parsing of external tool output.
 
 // ------------------------------------
 // executeGate
@@ -540,13 +481,15 @@ describe("makeTypecheckGate", () => {
     expect(result.passed).toBe(true);
   });
 
-  it("parseOutput returns failed with errors for non-zero exit", () => {
+  it("parseOutput returns failed with full raw output for non-zero exit", () => {
     const gate = makeTypecheckGate();
     const output = "src/foo.ts(1,1): error TS2345: Bad type\nsrc/bar.ts(2,3): error TS2304: Not found";
     const result = gate.parseOutput(output, "", 1);
     expect(result.passed).toBe(false);
     expect(result.errors).toBeDefined();
-    expect(result.errors!.length).toBe(2);
+    expect(result.errors!.length).toBe(1);
+    expect(result.errors![0]).toContain("TS2345");
+    expect(result.errors![0]).toContain("TS2304");
   });
 });
 
@@ -555,14 +498,14 @@ describe("makeTypecheckGate", () => {
 // ------------------------------------
 
 describe("makeTestGate", () => {
-  it("uses detected test command", () => {
+  it("uses detected test command with --silent flag for vitest", () => {
     fs.writeFileSync(
       path.join(tmpDir, "package.json"),
       JSON.stringify({ scripts: { test: "vitest" } }),
     );
     const gate = makeTestGate(tmpDir);
     expect(gate.name).toBe("test");
-    expect(gate.command).toBe("npx vitest run");
+    expect(gate.command).toBe("npx vitest run --silent");
     expect(gate.blocking).toBe(true);
   });
 

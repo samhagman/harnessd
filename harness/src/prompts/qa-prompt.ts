@@ -98,8 +98,7 @@ and the round 2 planner will create fix packets.`);
 
   // 3. Spec summary
   if (ctx.spec) {
-    // Truncate spec if very long to preserve context budget
-    const specExcerpt = ctx.spec.length > 4000 ? ctx.spec.slice(0, 4000) + "\n\n... (truncated)" : ctx.spec;
+    const specExcerpt = ctx.spec;
     sections.push(`## Feature Specification
 
 ${specExcerpt}`);

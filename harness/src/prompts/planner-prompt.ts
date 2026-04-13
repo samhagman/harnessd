@@ -198,6 +198,9 @@ An ordered list of implementation packets. Each packet must have:
 - \`estimatedSize\`: "S", "M", or "L"
 - \`risks\`: array of risk descriptions specific to this packet
 - \`notes\`: array of implementation notes
+- \`expectedFiles\`: array of file paths the builder should create or modify (helps evaluator verify completeness)
+- \`criticalConstraints\`: array of critical implementation constraints (e.g., "Must use store.retractByPattern() before store.assert()", "Handler must call through AssignmentResolver, not directly")
+- \`integrationInputs\`: array of objects describing what this packet receives from prior packets: { fromPacket: "PKT-001", provides: ["AssignmentResolver class", "RoundRobinStrategy type"] }
 
 ### 3. Risk Register (JSON)
 An object with a \`risks\` array. Each risk:
@@ -307,7 +310,10 @@ ${RESULT_START_SENTINEL}
       "priority": 1,
       "estimatedSize": "M",
       "risks": [],
-      "notes": []
+      "notes": [],
+      "expectedFiles": ["packages/core/src/resolver.ts", "packages/core/src/strategies/"],
+      "criticalConstraints": ["Must export AssignmentResolver from packages/core barrel file"],
+      "integrationInputs": []
     }
   ],
   "riskRegister": {

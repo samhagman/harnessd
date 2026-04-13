@@ -19,7 +19,7 @@ import path from "node:path";
 import { ClaudeSdkBackend } from "./backend/claude-sdk.js";
 import { BackendFactory } from "./backend/backend-factory.js";
 import { runOrchestrator } from "./orchestrator.js";
-import { getLatestRunId, getRunDir, createRun, loadRun, atomicWriteJson } from "./state-store.js";
+import { getLatestRunId, getRunDir, createRun, loadRun, atomicWriteJson, validateWorkspacePath, getDefaultWorkspacePath, generateRunId } from "./state-store.js";
 import type { PlanningContext } from "./schemas.js";
 import type { RoleBackendMap } from "./schemas.js";
 import { defaultProjectConfig } from "./schemas.js";
@@ -90,14 +90,6 @@ async function main(): Promise<void> {
     contextFile = path.resolve(args[contextIdx + 1]!);
   }
 
-  // --workspace <dir>: agents work here instead of repo root
-  let workspaceDir: string | undefined;
-  const wsIdx = args.indexOf("--workspace");
-  if (wsIdx !== -1 && args[wsIdx + 1] && !args[wsIdx + 1]!.startsWith("--")) {
-    workspaceDir = path.resolve(args[wsIdx + 1]!);
-    fs.mkdirSync(workspaceDir, { recursive: true });
-  }
-
   // --model <model>: override the LLM model for all agents
   let model: string | undefined;
   const modelIdx = args.indexOf("--model");
@@ -106,11 +98,29 @@ async function main(): Promise<void> {
   }
 
   // --run-id <name>: use a specific run directory name instead of auto-generated
+  // Parsed before workspace so that the default workspace path can reference the run ID.
   let customRunId: string | undefined;
   const runIdIdx = args.indexOf("--run-id");
   if (runIdIdx !== -1 && args[runIdIdx + 1] && !args[runIdIdx + 1]!.startsWith("--")) {
     customRunId = args[runIdIdx + 1]!;
   }
+
+  // Effective run ID: the one we will use for this run (or resume).
+  // Generated here so that the default workspace path can reference it.
+  const effectiveRunId = customRunId ?? generateRunId();
+
+  // --workspace <dir>: agents work here instead of repo root.
+  // When not specified, default to <run-dir>/workspace/ — a durable, co-located
+  // path that survives reboots and avoids the /tmp data loss scenario.
+  let workspaceDir: string;
+  const wsIdx = args.indexOf("--workspace");
+  if (wsIdx !== -1 && args[wsIdx + 1] && !args[wsIdx + 1]!.startsWith("--")) {
+    workspaceDir = path.resolve(args[wsIdx + 1]!);
+  } else {
+    workspaceDir = getDefaultWorkspacePath(repoRoot, effectiveRunId);
+  }
+  validateWorkspacePath(workspaceDir);
+  fs.mkdirSync(workspaceDir, { recursive: true });
 
   // --codex-roles <roles>: comma-separated list of roles to run with Codex
   let roleBackends: RoleBackendMap = {};
@@ -193,7 +203,7 @@ async function main(): Promise<void> {
     const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
     // Resolve research tool availability (check env vars, log summary)
     config.researchTools = resolveResearchToolAvailability(config);
-    const runState = createRun(repoRoot, objective, config, customRunId, workspaceDir);
+    const runState = createRun(repoRoot, objective, config, effectiveRunId, workspaceDir);
 
     // Initialize run memory for plan-only mode (skip if disabled)
     let memory: import("./memvid.js").RunMemory | null = null;
@@ -302,10 +312,11 @@ async function main(): Promise<void> {
   };
   const orchConfig = { ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
 
-  // Full run — create run (with optional custom ID), write planning context, then go
-  if (planningContext || customRunId) {
+  // Full run — always pre-create the run with effectiveRunId so the workspace
+  // path (which references the run ID) is consistent, then resume it.
+  {
     const fullConfig = { ...defaultProjectConfig(), ...orchConfig };
-    const runState = createRun(repoRoot, objective, fullConfig, customRunId, workspaceDir);
+    const runState = createRun(repoRoot, objective, fullConfig, effectiveRunId, workspaceDir);
     const specDir = path.join(getRunDir(repoRoot, runState.runId), "spec");
     fs.mkdirSync(specDir, { recursive: true });
     if (planningContext) {
@@ -313,8 +324,6 @@ async function main(): Promise<void> {
     }
     // Resume this run (it starts in "planning" phase)
     await runOrchestrator(factory, { repoRoot, workspaceDir, objective: "", resumeRunId: runState.runId, config: orchConfig });
-  } else {
-    await runOrchestrator(factory, { repoRoot, workspaceDir, objective, config: orchConfig });
   }
 }
 

@@ -172,6 +172,12 @@ export const PacketSchema = z.object({
   estimatedSize: z.enum(["S", "M", "L", "XL"]),
   risks: z.array(z.string()),
   notes: z.array(z.string()).default([]),
+  expectedFiles: z.array(z.string()).default([]),
+  criticalConstraints: z.array(z.string()).default([]),
+  integrationInputs: z.array(z.object({
+    fromPacket: z.string(),
+    provides: z.array(z.string()),
+  })).default([]),
   requiresHumanReview: z.boolean().default(false),
 });
 
@@ -343,6 +349,7 @@ export const BuilderReportSchema = z.object({
   selfCheckResults: z.array(SelfCheckResultSchema),
   remainingConcerns: z.array(z.string()),
   claimsDone: z.boolean(),
+  commitShas: z.array(z.string()).nullable().default(null),
 });
 
 export type BuilderReport = z.infer<typeof BuilderReportSchema>;
@@ -490,6 +497,7 @@ export const EventTypeSchema = z.enum([
   "builder.background_job.completed",
   "builder.completed",
   "builder.failed",
+  "builder.warning",
   "evaluator.started",
   "evaluator.passed",
   "evaluator.failed",
@@ -523,6 +531,8 @@ export const EventTypeSchema = z.enum([
   "gate.failed",
   "gate.skipped",
   "gate.blocked",
+  "gate.baseline_failed",
+  "gate.baseline_passed",
   // Criterion expansion events
   "evaluator.criteria_expanded",
   // Operator control events

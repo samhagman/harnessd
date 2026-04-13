@@ -25,9 +25,11 @@ export interface LintResult {
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
 
-/** Evidence that requires the app to actually run (not just reading source). */
-const RUNTIME_EVIDENCE_KEYWORDS =
-  /runtime|browser|curl|http|screenshot|dev.server|navigate|response|status.code|observed|console|running|start.*server|fetch|api.call/i;
+// Runtime evidence keyword regex REMOVED — was causing multi-round contract
+// negotiation failures by rejecting perfectly valid evidence text that didn't
+// happen to contain magic keywords. Same anti-pattern as parseTscErrors/parseTestErrors.
+// The contract evaluator (adversarial agent) reviews evidence quality — that's its job.
+// Structural checks below use schema fields (command, scenario) instead of prose regex.
 
 
 const MAX_LIKELY_FILES_BY_SIZE = {
@@ -166,20 +168,21 @@ export function lintContract(
     }
   }
 
-  // 12. Runtime evidence check for scenario/api criteria on user-visible packets.
-  //     Evaluators cannot verify runtime behavior from code review alone — evidence
-  //     must include something that requires the app to actually run.
+  // 12. Structural runtime verification check for scenario/api criteria.
+  //     Instead of regex-matching prose in evidenceRequired (brittle — agents write
+  //     valid evidence that doesn't contain magic keywords), check that the criterion
+  //     has a structured verification mechanism: a command to run or a scenario with steps.
+  //     The contract evaluator (adversarial agent) handles evidence quality review.
   if (USER_VISIBLE_TYPES.includes(packetType)) {
     for (const criterion of contract.acceptance) {
       if (criterion.kind === "scenario" || criterion.kind === "api") {
-        const hasRuntimeEvidence = criterion.evidenceRequired.some((e) =>
-          RUNTIME_EVIDENCE_KEYWORDS.test(e),
-        );
+        const hasStructuredVerification =
+          !!criterion.command || !!criterion.scenario;
 
-        if (!hasRuntimeEvidence) {
+        if (!hasStructuredVerification && criterion.evidenceRequired.length === 0) {
           errors.push(
-            `Scenario/API criterion '${criterion.id}' has no runtime evidence. ` +
-              `Add runtime verification (curl output, browser observation, dev server response).`,
+            `Scenario/API criterion '${criterion.id}' has no verification mechanism. ` +
+              `Add a 'command' field, a 'scenario' with steps, or at least one 'evidenceRequired' entry.`,
           );
         }
       }
