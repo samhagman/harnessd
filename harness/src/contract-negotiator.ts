@@ -187,7 +187,7 @@ export async function negotiateContract(
     }
 
     // 3. Contract evaluator reviews
-    const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister, negConfig.config.enableMemory);
+    const evaluatorPrompt = buildContractEvaluatorPrompt(proposal, riskRegister, negConfig.config.enableMemory, factory.isClaudeBackend("contract_evaluator"));
 
     const contractEvaluatorBuffer = negConfig.memory ? new MemvidBuffer(negConfig.memory) : null;
 
@@ -200,7 +200,7 @@ export async function negotiateContract(
         settingSources: ["user"],
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
-        disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
+        disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
         mcpServers: {
           "harnessd-validation": createValidationMcpServer(),
           ...(negConfig.memory ? { "harnessd-memory": createMemorySearchMcpServer(negConfig.memory) } : {}),

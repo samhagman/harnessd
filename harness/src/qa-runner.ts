@@ -39,6 +39,8 @@ export interface QARunnerConfig {
   runId: string;
   config: ProjectConfig;
   memory?: RunMemory | null;
+  /** When false, the fanout guidance section is omitted (Codex backend). */
+  useClaudeBackend?: boolean;
 }
 
 export interface QARunResult {
@@ -85,6 +87,7 @@ export async function runQA(
     devServer,
     workspaceDir: effectiveWorkspaceDir,
     enableMemory: runnerConfig.config.enableMemory,
+    useClaudeBackend: runnerConfig.useClaudeBackend,
   };
 
   const prompt = resumeSessionId ? CONTINUATION_PROMPT : buildQAPrompt(promptContext);

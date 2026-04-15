@@ -12,6 +12,7 @@
  * 5. buildHarnessContextSection  — where the agent sits in the pipeline
  * 6. buildMemorySearchSection    — how to use search_memory effectively
  * 7. buildResearchToolsSection   — dynamic research tool instructions
+ * 8. buildVerificationFanoutSection — parallel sub-agent guidance for verifier roles
  */
 
 import type { DevServerConfig } from "../schemas.js";
@@ -723,5 +724,146 @@ The planner just finished — their reasoning is fresh in memory:
 
 Search memory when you need context from prior agent phases:
 \`search_memory({query: "relevant terms for your context"})\``;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// buildVerificationFanoutSection
+// ---------------------------------------------------------------------------
+
+/**
+ * The four verification roles that may receive parallel fanout guidance.
+ */
+export type VerificationRole =
+  | "evaluator"
+  | "qa_agent"
+  | "plan_reviewer"
+  | "contract_evaluator";
+
+export interface VerificationFanoutOptions {
+  /** When false, returns "" (Codex backend). When undefined or true, returns full guidance. */
+  useClaudeBackend?: boolean;
+  /** Soft cap surfaced to the agent. Defaults to 4. */
+  maxAgents?: number;
+}
+
+export function buildVerificationFanoutSection(
+  role: VerificationRole,
+  opts?: VerificationFanoutOptions,
+): string {
+  if (opts?.useClaudeBackend === false) {
+    return "";
+  }
+
+  const maxAgents = opts?.maxAgents ?? 4;
+  const roleSpecificBlock = buildFanoutShapesBlock(role);
+
+  return `## Parallel Verification Fanout (Recommended)
+
+Before forming your verdict, consider whether this verification naturally splits into
+independent aspects that can be checked in parallel. If it does, launch parallel sub-agents
+using the Task tool with \`subagent_type="Explore"\` AND \`model="sonnet"\` to verify each aspect
+in parallel, then consolidate their findings before emitting your envelope.
+
+This is a tool, not a requirement. Use it when the claim has distinct, separable facets
+worth checking in parallel — not when a single serial walkthrough is faster and clearer.
+
+${roleSpecificBlock}
+
+### Rules
+
+- **Always pass \`model="sonnet"\` to the Task tool.** Sonnet is the correct model for
+  focused verification work: faster than opus (which is overkill for scoped checks) and
+  stronger than haiku (which lacks the depth needed for adversarial verification). Do NOT
+  use opus or haiku — the whole point of fanout is parallel breadth, and sonnet gives the
+  best speed/quality tradeoff at that granularity.
+- Launch at most ${maxAgents} sub-agents per verification pass. More than that wastes context without
+  improving coverage.
+- Each sub-agent must be scoped to ONE concrete aspect with a precise brief. Vague briefs
+  produce vague reports.
+- Helper sub-agents are read-only — they can inspect files, run tests, curl endpoints, and
+  read git history, but they cannot write to the repo. The harness enforces this with
+  permission hooks.
+- You remain the sole author of the result envelope. Sub-agents report findings to you;
+  you synthesize and decide.
+
+### When NOT to fan out
+
+- The verification has only one natural axis (e.g. "did the test pass?").
+- The criteria require serial dev-server interaction where parallel sessions would collide
+  on ports or data.
+- You have fewer than ~3 independent aspects to check — the overhead isn't worth it.
+- You are in a fix-loop rerun where the prior evaluator already scoped the failure
+  precisely — focus on that failure rather than re-exploring.
+
+### When to fan out
+
+- You have 3+ independent verification aspects.
+- Sub-agents can finish meaningfully faster in parallel than you could serially.
+- The packet touches multiple subsystems and you need to verify each without losing
+  coverage.`;
+}
+
+function buildFanoutShapesBlock(role: VerificationRole): string {
+  switch (role) {
+    case "evaluator":
+      return `### Good fanout shapes for the evaluator
+
+1. **Structure/diff check** — line count, file coverage vs expectedFiles, changed files match
+   the builder's claim.
+2. **Source reference check** — every file the builder claims to have edited actually exists
+   and contains the symbols/patterns claimed.
+3. **Spot-check against src/** — pick 2–3 non-trivial claims and verify them against the real
+   repo; don't trust the builder report.
+4. **gate_check replay + test output sanity check** — run gate_check and verify the output
+   matches what the builder reported.`;
+
+    case "qa_agent":
+      return `### Good fanout shapes for the QA agent
+
+1. **Integration-scenario sweep** — launch one sub-agent per integration scenario (or
+   one per pair of related scenarios) to walk each scenario end-to-end in the browser
+   and report pass/fail with screenshots.
+2. **Console and network health audit** — one sub-agent watches browser console for
+   errors/warnings, audits network requests for 4xx/5xx responses, and reports any
+   runtime health issues that aren't caught by acceptance criteria.
+3. **Cross-packet handoff verification** — one sub-agent verifies that state persists
+   across navigation and that data written by packet N is readable by packet N+1.
+   Crucial for multi-packet integration bugs that single-packet evaluators miss.
+4. **Dead-end and navigation completeness scan** — one sub-agent walks the app looking
+   for broken links, unreachable routes, missing empty states, and dead-end flows that
+   slipped through the scenario list.`;
+
+    case "plan_reviewer":
+      return `### Good fanout shapes for the plan reviewer
+
+1. **Integration scenario coverage audit** — one sub-agent checks whether the planner's
+   integration scenarios span packet boundaries meaningfully. Flags scenarios that are
+   contained within a single packet (easy wins) and user journeys that lack any scenario
+   at all.
+2. **Acceptance-criterion specificity scan** — one sub-agent reads every AC across every
+   packet and flags vague, untestable, or "looks good" criteria. Each flag should include
+   the packet ID, criterion ID, and a rewrite suggestion.
+3. **Dependency ordering + missing-packet detection** — one sub-agent walks the planned
+   user flow end-to-end as if running the packets in order, and reports where a packet
+   depends on something not yet built, or where a required capability has no packet at all.
+4. **Risk register coverage check** — one sub-agent audits the risk register against the
+   plan, verifying technical, integration, UX, and scope risks are all represented. Flags
+   missing categories and suggests specific risks the planner didn't surface.`;
+
+    case "contract_evaluator":
+      return `### Good fanout shapes for the contract evaluator
+
+1. **Scope fit vs spec excerpt** — one sub-agent reads the spec passages relevant to this
+   packet and checks whether the proposed scope covers them without creeping beyond.
+2. **Acceptance-criterion testability check** — one sub-agent walks each AC and asks:
+   "Can this actually be verified? What evidence would prove pass/fail?" Flags criteria
+   where evidence requirements are hand-wavy.
+3. **Risk coverage vs run risk register** — one sub-agent cross-references the contract
+   against the run's risk register and flags risks relevant to this packet that the
+   contract's acceptance criteria don't mitigate.
+4. **Plan-consistency check against prior accepted contracts** — one sub-agent searches
+   memory for already-accepted contracts in this run and flags any proposal clauses that
+   contradict, overlap, or break invariants established by earlier contracts.`;
   }
 }

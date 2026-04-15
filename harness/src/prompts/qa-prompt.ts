@@ -26,6 +26,7 @@ import {
   buildDevServerSetupSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildVerificationFanoutSection,
 } from "./shared.js";
 
 export interface QAPromptContext {
@@ -39,6 +40,8 @@ export interface QAPromptContext {
   workspaceDir?: string;
   /** When false, suppresses search_memory guidance and memory sections. */
   enableMemory?: boolean;
+  /** When false, verification fanout section is suppressed (Codex backend). */
+  useClaudeBackend?: boolean;
 }
 
 export function buildQAPrompt(ctx: QAPromptContext): string {
@@ -131,6 +134,8 @@ ${summaries.join("\n\n")}`);
       memoryEnabled: ctx.enableMemory,
     }));
     sections.push(buildMemorySearchSection("qa_agent", ctx.enableMemory));
+    const fanoutSection = buildVerificationFanoutSection("qa_agent", { useClaudeBackend: ctx.useClaudeBackend });
+    if (fanoutSection) sections.push(fanoutSection);
   }
 
   // 5. Integration scenarios

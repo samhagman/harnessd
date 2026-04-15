@@ -610,7 +610,7 @@ async function handlePlanReview(
     integrationScenariosContent,
     planningContextContent,
     runState.objective,
-    { repoRoot, workspaceDir, runId: runState.runId, config, memory },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.isClaudeBackend("plan_reviewer") },
   );
 
   if (!reviewResult.success || !reviewResult.review) {
@@ -1190,6 +1190,7 @@ async function handleEvaluation(
       ? currentPacketForEval.expectedFiles
       : undefined,
     builderCommitCount: builderReport.commitShas?.length ?? 0,
+    useClaudeBackend: factory.isClaudeBackend("evaluator"),
   };
   const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, evaluatorCtx);
 
@@ -1551,7 +1552,7 @@ async function handleQAReview(
     builderReports,
     evaluatorGuide,
     integrationScenarios,
-    { repoRoot, workspaceDir, runId: runState.runId, config, memory },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.isClaudeBackend("qa_agent") },
     round,
     config.devServer ?? undefined,
     resumeSessionId ?? undefined,

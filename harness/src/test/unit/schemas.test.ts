@@ -342,3 +342,4 @@ describe("BuilderReportSchema field defaults", () => {
     expect(report.commitShas).toEqual([]);
   });
 });
+

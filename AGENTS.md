@@ -149,7 +149,7 @@ BackendFactory.forRole(role) → AgentBackend
 | **QA round** | Holistic e2e testing after all packets; triggers round 2+ fix planning |
 | **Session resume** | Native SDK resume for Claude; transcript-summary fallback for Codex |
 | **AgentBackend** | Abstraction over SDK — enables testing with FakeBackend (zero quota) |
-| **Linear execution** | One packet at a time; parallelism only inside the active builder |
+| **Linear execution** | One packet at a time; parallelism happens inside the active builder and inside read-only verification roles via the Task tool. |
 
 ---
 

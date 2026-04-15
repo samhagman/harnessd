@@ -44,6 +44,8 @@ export interface EvaluatorPromptOptions {
   expectedFiles?: string[];
   /** Number of builder commits (for git diff range). */
   builderCommitCount?: number;
+  /** When false, verification fanout section is suppressed (Codex backend). */
+  useClaudeBackend?: boolean;
 }
 import {
   RESULT_START_SENTINEL,
@@ -56,6 +58,7 @@ import {
   buildHarnessContextSection,
   buildMemorySearchSection,
   buildResearchToolsSection,
+  buildVerificationFanoutSection,
 } from "./shared.js";
 
 export function buildEvaluatorPrompt(
@@ -78,6 +81,7 @@ export function buildEvaluatorPrompt(
     enableMemory,
     expectedFiles,
     builderCommitCount,
+    useClaudeBackend,
   } = opts;
 
   const sections: string[] = [];
@@ -267,6 +271,8 @@ ${completionSummaries}`);
     memoryEnabled: enableMemory,
   }));
   sections.push(buildMemorySearchSection("evaluator", enableMemory));
+  const fanoutSection = buildVerificationFanoutSection("evaluator", { useClaudeBackend });
+  if (fanoutSection) sections.push(fanoutSection);
 
   // 5c. Automated gate results
   if (gateResultsSummary) {

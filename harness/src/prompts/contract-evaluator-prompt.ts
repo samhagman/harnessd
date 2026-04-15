@@ -19,6 +19,7 @@ import {
   buildValidateEnvelopeSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildVerificationFanoutSection,
 } from "./shared.js";
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
@@ -27,6 +28,7 @@ export function buildContractEvaluatorPrompt(
   proposal: PacketContract,
   riskRegister?: RiskRegister,
   enableMemory?: boolean,
+  useClaudeBackend?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -36,6 +38,8 @@ export function buildContractEvaluatorPrompt(
   // 0a. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("contract_evaluator", { packetId: proposal.packetId, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("contract_evaluator", enableMemory));
+  const fanoutSection = buildVerificationFanoutSection("contract_evaluator", { useClaudeBackend });
+  if (fanoutSection) sections.push(fanoutSection);
 
   // 1. Review stance
   sections.push(`## Your Role

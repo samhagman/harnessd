@@ -117,6 +117,8 @@ export interface EvaluatorContext {
   expectedFiles?: string[];
   /** Number of builder commits (for git diff range). */
   builderCommitCount?: number;
+  /** When false, the fanout guidance section is omitted (Codex backend). */
+  useClaudeBackend?: boolean;
 }
 
 export interface EvaluatorRunResult {
@@ -157,6 +159,7 @@ export async function runEvaluator(
         enableMemory: ctx.config.enableMemory,
         expectedFiles: ctx.expectedFiles,
         builderCommitCount: ctx.builderCommitCount,
+        useClaudeBackend: ctx.useClaudeBackend,
       });
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;

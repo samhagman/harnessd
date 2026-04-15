@@ -223,6 +223,9 @@ Common patterns:
 - `AUTONOMOUS_PREAMBLE` — shared "you are autonomous" instructions
 - `buildValidateEnvelopeSection()` — mandatory envelope validation gate
 - `buildDevServerSetupSection()` — dev server startup instructions
+- `buildHarnessContextSection()` — "where you sit in the pipeline" framing per role
+- `buildMemorySearchSection()` — how to use `search_memory` effectively
+- `buildVerificationFanoutSection()` — parallel verification fanout guidance for read-only verifier roles (evaluator, QA runner, plan reviewer, contract evaluator). Returns empty string when the backend is Codex so the section is silently omitted.
 - Role-specific critical rules at the TOP of the prompt
 
 ---

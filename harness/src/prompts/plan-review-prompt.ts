@@ -19,6 +19,7 @@ import {
   AUTONOMOUS_PREAMBLE,
   buildHarnessContextSection,
   buildMemorySearchSection,
+  buildVerificationFanoutSection,
 } from "./shared.js";
 
 export function buildPlanReviewPrompt(
@@ -29,6 +30,7 @@ export function buildPlanReviewPrompt(
   integrationScenarios?: string,
   planningContext?: string,
   enableMemory?: boolean,
+  useClaudeBackend?: boolean,
 ): string {
   const sections: string[] = [];
 
@@ -38,6 +40,8 @@ export function buildPlanReviewPrompt(
   // 0a. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("plan_reviewer", { memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("plan_reviewer", enableMemory));
+  const fanoutSection = buildVerificationFanoutSection("plan_reviewer", { useClaudeBackend });
+  if (fanoutSection) sections.push(fanoutSection);
 
   // 1. Role
   sections.push(`## Your Role
@@ -54,11 +58,10 @@ multiple packets have been built.
 
 ## CRITICAL RULES
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files. No Write, Edit, or Agent tools.
+1. You are READ-ONLY. You CANNOT and MUST NOT write any files. The Write, Edit, MultiEdit, and NotebookEdit tools are disabled by the harness.
 2. You MAY use Read, Grep, Glob, and read-only Bash to explore the codebase.
-3. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
-4. Do NOT try to create files, write markdown, or spawn subagents.
-5. Be thorough but fair. Flag real problems, not style preferences.`);
+3. Your ONLY output mechanism is the structured JSON envelope at the END of your response. Do NOT create files or write markdown.
+4. Be thorough but fair. Flag real problems, not style preferences.`);
 
   // 2. Plan artifacts to review
   sections.push(`## Plan Artifacts

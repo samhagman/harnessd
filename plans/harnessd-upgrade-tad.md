@@ -1041,6 +1041,17 @@ This preserves:
 
 A later version can allow direct-edit helper subagents in isolated scratch trees, but that is intentionally deferred.
 
+#### 13.5.1 Verification fanout mode
+
+The validation-fanout pattern from §13.5 also applies to the four **verification roles** — evaluator, QA runner, plan reviewer, and contract evaluator — not just builders. Builders use fanout to parallelize implementation work; verifiers use it to parallelize independent verification aspects.
+
+Each of the four verification roles receives a **Parallel Verification Fanout** prompt section (via `buildVerificationFanoutSection` in `prompts/shared.ts`) that guides the agent to launch up to 4 read-only `Task` sub-agents with `model="sonnet"` when the verification has distinct, separable facets that can be checked in parallel.
+
+Key properties:
+- Sub-agents launched by verifiers are strictly read-only (enforced by the existing `makeReadOnlyHook` and `sandboxMode: "read-only"`).
+- The `Task` tool is now enabled for plan reviewer and contract evaluator (unblocked from `disallowedTools` in v5.4).
+- **Codex-backed sessions** omit the fanout section entirely — `buildVerificationFanoutSection` returns `""` when `useClaudeBackend === false`, preventing Codex agents from attempting a tool that doesn't exist on their backend.
+
 ### 13.6 Background jobs
 
 For long-running commands, the builder should use a background-job helper in the harness runtime.

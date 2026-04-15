@@ -26,6 +26,7 @@ export interface PlanReviewRunnerConfig {
   runId: string;
   config: ProjectConfig;
   memory?: RunMemory | null;
+  useClaudeBackend?: boolean;
 }
 
 export interface PlanReviewResult {
@@ -57,6 +58,7 @@ export async function runPlanReview(
     integrationScenarios,
     planningContext,
     opts.config.enableMemory,
+    opts.useClaudeBackend,
   );
 
   const memvidBuffer = opts.memory ? new MemvidBuffer(opts.memory) : null;
@@ -70,7 +72,8 @@ export async function runPlanReview(
       settingSources: ["user"],
       ...(opts.config.model ? { model: opts.config.model } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
-      disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
+      disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
+      sandboxMode: "read-only",
       mcpServers: {
         "harnessd-validation": createValidationMcpServer(),
         ...(opts.memory ? { "harnessd-memory": createMemorySearchMcpServer(opts.memory) } : {}),
