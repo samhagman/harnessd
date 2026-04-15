@@ -256,6 +256,9 @@ cd harness && npx tsx src/main.ts --codex-model gpt-5.4 --codex-roles evaluator 
 # Override model for all agents
 cd harness && npx tsx src/main.ts --model claude-haiku-4-5-20251001 "your objective"
 
+# Load API keys from .env file (auto-loads harness/.env by default)
+cd harness && npx tsx src/main.ts --env .env.local "your objective"
+
 # Resume an interrupted run
 cd harness && npx tsx src/main.ts --resume [run-id]
 

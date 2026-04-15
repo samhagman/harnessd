@@ -10,6 +10,7 @@
  *   npx tsx src/main.ts --workspace <dir> "objective"             # Agents work in <dir>
  *   npx tsx src/main.ts --context <file.json> "objective"         # Load planning context from file
  *   npx tsx src/main.ts --run-id <name> "objective"               # Use a specific run directory name
+ *   npx tsx src/main.ts --env <path> "objective"                  # Load env vars from file
  */
 
 import process from "node:process";
@@ -26,11 +27,76 @@ import { defaultProjectConfig } from "./schemas.js";
 import { resolveResearchToolAvailability } from "./research-tools.js";
 
 // ------------------------------------
+// .env file loading
+// ------------------------------------
+
+/**
+ * Load environment variables from a .env file into process.env.
+ *
+ * Supports: KEY=value, KEY="quoted value", KEY='single quoted',
+ * # comments, empty lines. Does NOT override existing env vars
+ * (shell environment takes precedence over .env file).
+ *
+ * No external dependency — standard .env parsing inline.
+ */
+function loadEnvFile(filePath: string): number {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return 0;
+  }
+
+  let loaded = 0;
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+
+    // Strip surrounding quotes (double or single)
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    // Don't override existing env vars — shell takes precedence
+    if (key && !(key in process.env)) {
+      process.env[key] = value;
+      loaded++;
+    }
+  }
+
+  return loaded;
+}
+
+// ------------------------------------
 // Main
 // ------------------------------------
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  // --env <path>: load env vars from a .env file (before anything else)
+  // Also auto-loads .env from cwd if it exists (standard convention)
+  const envIdx = args.indexOf("--env");
+  if (envIdx !== -1 && args[envIdx + 1] && !args[envIdx + 1]!.startsWith("--")) {
+    const envPath = path.resolve(args[envIdx + 1]!);
+    const count = loadEnvFile(envPath);
+    if (count > 0) console.log(`[env] Loaded ${count} vars from ${envPath}`);
+    else console.log(`[env] No vars loaded from ${envPath} (file missing or empty)`);
+  } else {
+    // Auto-load .env from harness directory (standard convention)
+    const defaultEnv = path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".env");
+    const count = loadEnvFile(defaultEnv);
+    if (count > 0) console.log(`[env] Loaded ${count} vars from .env`);
+  }
+
   const repoRoot = process.env.WIGGUM_REPO_ROOT ?? process.cwd();
 
   // --status
@@ -150,7 +216,7 @@ async function main(): Promise<void> {
 
   const filteredArgs = args.filter((a, i) =>
     !a.startsWith("--") &&
-    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model")),
+    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model" && args[i - 1] !== "--env")),
   );
   const objective = filteredArgs.join(" ").trim();
 
@@ -165,7 +231,8 @@ async function main(): Promise<void> {
   npx tsx src/main.ts --run-id <name> "your objective"
   npx tsx src/main.ts --perplexity "your objective"
   npx tsx src/main.ts --no-memory "your objective"
-  npx tsx src/main.ts --no-context7 "your objective"`);
+  npx tsx src/main.ts --no-context7 "your objective"
+  npx tsx src/main.ts --env .env.local "your objective"`);
     process.exit(1);
   }
 
