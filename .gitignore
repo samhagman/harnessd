@@ -48,7 +48,7 @@ research/
 !.agents/skills/harnessd-operator
 .playwright-mcp/
 .claude/skills/*
-!.claude/skills/contributing-to-harnessd.md
+!.claude/skills/contributing-to-harnessd
 !.claude/skills/harnessd-operator
 .claude/scheduled_tasks.lock
 skills-lock.json

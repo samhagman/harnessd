@@ -1,13 +1,9 @@
 ---
 name: contributing-to-harnessd
-description: Guide for contributing to the harnessd project — architecture, dev workflow, testing patterns, CI/CD, and coding standards.
+description: "Architecture, development workflow, testing patterns, CI/CD, and coding standards for contributing to the harnessd codebase itself. Use this skill whenever working on harnessd's own source — adding features, fixing bugs, writing or modifying tests in harness/test/, touching harness/src/, modifying prompts in prompts/, extending the orchestrator state machine, adding a new agent role, changing Zod schemas, working with FakeBackend, editing contract linter rules, or adjusting backend implementations (claude-sdk, codex-cli). Also trigger when the user asks how harnessd is built, how a particular harnessd module works internally, or how to add something to harnessd. Do NOT use this skill for operating harnessd runs as a user — that is the harnessd-operator skill. This skill is for developers modifying harnessd itself."
 ---
 
 # Contributing to Harnessd
-
-Use this skill when working on the harnessd codebase itself — adding features, fixing bugs, writing tests, or understanding the architecture.
-
----
 
 ## What Harnessd Is
 
