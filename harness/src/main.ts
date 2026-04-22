@@ -137,8 +137,34 @@ async function main(): Promise<void> {
       }
     } catch { /* use defaults */ }
 
-    const resumeRoleBackends = (savedConfig.roleBackends ?? {}) as RoleBackendMap;
-    const resumeCodexModel = savedConfig.codexModel as string | undefined;
+    // Parse fresh CLI flags so resume honors --codex-roles / --codex-model overrides
+    // (without this, the resume branch loses these settings whenever config.json is
+    // missing or stale — every role silently falls back to Claude). CLI wins; falls
+    // back to savedConfig if no CLI override is provided.
+    let cliRoleBackends: RoleBackendMap | undefined;
+    const resumeCodexRolesIdx = args.indexOf("--codex-roles");
+    if (resumeCodexRolesIdx !== -1 && args[resumeCodexRolesIdx + 1] && !args[resumeCodexRolesIdx + 1]!.startsWith("--")) {
+      const roles = args[resumeCodexRolesIdx + 1]!.split(",").map((r) => r.trim());
+      const rb: Record<string, "codex"> = {};
+      for (const role of roles) rb[role] = "codex";
+      cliRoleBackends = rb as RoleBackendMap;
+    }
+    let cliCodexModel: string | undefined;
+    const resumeCodexModelIdx = args.indexOf("--codex-model");
+    if (resumeCodexModelIdx !== -1 && args[resumeCodexModelIdx + 1] && !args[resumeCodexModelIdx + 1]!.startsWith("--")) {
+      cliCodexModel = args[resumeCodexModelIdx + 1]!;
+    }
+
+    const resumeRoleBackends = cliRoleBackends ?? ((savedConfig.roleBackends ?? {}) as RoleBackendMap);
+    const resumeCodexModel = cliCodexModel ?? (savedConfig.codexModel as string | undefined);
+
+    // Persist merged config back so subsequent resumes (without flags) keep the routing
+    savedConfig.roleBackends = resumeRoleBackends;
+    if (resumeCodexModel) savedConfig.codexModel = resumeCodexModel;
+    try {
+      const configPath = path.join(getRunDir(repoRoot, resumeRunId), "config.json");
+      fs.writeFileSync(configPath, JSON.stringify(savedConfig, null, 2));
+    } catch { /* non-fatal */ }
 
     const claudeBackend = new ClaudeSdkBackend();
     const resumeFactory = new BackendFactory(claudeBackend, { roleBackends: resumeRoleBackends, codexModel: resumeCodexModel });

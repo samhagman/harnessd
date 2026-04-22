@@ -285,11 +285,17 @@ export function buildCodexArgs(
   // For workspace-write: don't pass --sandbox flag, inherits global config
   // (which is "danger-full-access" — prompt-enforced restrictions instead)
 
-  // Model override (session option > backend config)
-  const model = opts.model ?? config.model;
+  // Model override (session option > backend config).
+  // Ignore session-level Claude model names — the global --model flag is meant for Claude
+  // backends; Codex only accepts GPT models and will error on "claude-*".
+  const sessionModel = opts.model && !opts.model.startsWith("claude-") ? opts.model : undefined;
+  const model = sessionModel ?? config.model;
   if (model) {
     args.push("--model", model);
   }
+
+  // Force highest reasoning effort for adversarial roles
+  args.push("-c", "model_reasoning_effort=xhigh");
 
   return args;
 }
