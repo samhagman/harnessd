@@ -55,7 +55,7 @@ describe("extractEnvelope", () => {
     expect(parsed.role).toBe("evaluator");
   });
 
-  it("extracts only the first envelope if multiple exist", () => {
+  it("returns the LAST complete envelope when two complete envelopes are present", () => {
     const p1 = JSON.stringify({ role: "builder", payload: "first" });
     const p2 = JSON.stringify({ role: "evaluator", payload: "second" });
     const text = `${RESULT_START_SENTINEL}${p1}${RESULT_END_SENTINEL} gap ${RESULT_START_SENTINEL}${p2}${RESULT_END_SENTINEL}`;
@@ -63,7 +63,65 @@ describe("extractEnvelope", () => {
     const result = extractEnvelope(text);
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result!);
-    expect(parsed.payload).toBe("first");
+    expect(parsed.payload).toBe("second");
+  });
+
+  it("skips a truncated first envelope (no END) and returns the second complete envelope", () => {
+    // Simulates an agent that hit a per-turn output limit mid-JSON, then retried.
+    const partialJson = '{"role":"planner","packets":[{"id":"PKT-001","title":"incomplete';
+    const completeJson = JSON.stringify({ role: "planner", packets: [{ id: "PKT-001", title: "Setup" }] });
+    const text = [
+      `${RESULT_START_SENTINEL}`,
+      partialJson,
+      // No END marker for the first envelope
+      `The prior partial envelope must be discarded — restarting with a compact, complete envelope.`,
+      `${RESULT_START_SENTINEL}`,
+      completeJson,
+      `${RESULT_END_SENTINEL}`,
+    ].join("\n");
+
+    const result = extractEnvelope(text);
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!);
+    expect(parsed.role).toBe("planner");
+    expect(parsed.packets[0].title).toBe("Setup");
+  });
+
+  it("strips ```json fence from the selected (last) envelope", () => {
+    const payload = JSON.stringify({ role: "builder", done: true });
+    const fenced = "```json\n" + payload + "\n```";
+    const text = `${RESULT_START_SENTINEL}\n${fenced}\n${RESULT_END_SENTINEL}`;
+
+    const result = extractEnvelope(text);
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!);
+    expect(parsed.role).toBe("builder");
+    expect(parsed.done).toBe(true);
+  });
+
+  it("strips fence from the last envelope when multiple envelopes are present", () => {
+    const p1 = JSON.stringify({ role: "builder", attempt: 1 });
+    const p2 = JSON.stringify({ role: "builder", attempt: 2 });
+    const fenced2 = "```json\n" + p2 + "\n```";
+    const text = [
+      `${RESULT_START_SENTINEL}`,
+      p1,
+      `${RESULT_END_SENTINEL}`,
+      `Some prose between attempts.`,
+      `${RESULT_START_SENTINEL}`,
+      fenced2,
+      `${RESULT_END_SENTINEL}`,
+    ].join("\n");
+
+    const result = extractEnvelope(text);
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!);
+    expect(parsed.attempt).toBe(2);
+  });
+
+  it("returns null when only START is present with no END anywhere", () => {
+    const text = `${RESULT_START_SENTINEL} {"data": "incomplete"}`;
+    expect(extractEnvelope(text)).toBeNull();
   });
 });
 

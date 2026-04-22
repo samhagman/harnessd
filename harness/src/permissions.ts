@@ -165,6 +165,11 @@ function denyResult(reason: string) {
 /**
  * Read-only hook: blocks ALL repo writes.
  * Used for evaluator, planner, and contract roles.
+ *
+ * Allows output redirects to scratch space (/tmp, /dev/null) — evaluators
+ * routinely need to background a test server with `... > /tmp/log 2>&1 &`
+ * or capture command output for inspection. Only redirects to repo paths
+ * are blocked.
  */
 export function makeReadOnlyHook(): HookCallback {
   return async (input, _toolUseId, _ctx) => {
@@ -178,9 +183,12 @@ export function makeReadOnlyHook(): HookCallback {
       );
     }
 
-    // For Bash, block mutating commands
+    // For Bash, block mutating commands — but allow scratch-space redirects
     if (pre.tool_name === "Bash") {
       const cmd = String((pre.tool_input as any)?.command ?? "");
+      if (isScratchSpaceOnlyCommand(cmd)) {
+        return {}; // allow — only writes to /tmp or /dev/null
+      }
       const mutating = isMutatingCommand(cmd);
       if (mutating.blocked) {
         return denyResult(mutating.reason ?? "Mutating command blocked in read-only mode.");
@@ -189,6 +197,26 @@ export function makeReadOnlyHook(): HookCallback {
 
     return {}; // allow
   };
+}
+
+/**
+ * Returns true if the command's only "mutating" pattern is a redirect to
+ * scratch space (/tmp, /dev/null). Used to allow evaluators to background
+ * test servers with `... > /tmp/log 2>&1 &` without tripping the
+ * read-only hook's general redirect ban.
+ */
+export function isScratchSpaceOnlyCommand(cmd: string): boolean {
+  // Strip all redirects to /tmp/* or /dev/null and check the residual command
+  // for any other mutating patterns. If the residual is clean, allow.
+  const stripped = cmd
+    .replace(/>\s*\/tmp\/\S+/g, "")
+    .replace(/>\s*\/dev\/null/g, "")
+    .replace(/2>\s*\/tmp\/\S+/g, "")
+    .replace(/2>\s*\/dev\/null/g, "")
+    .replace(/2>&1/g, "")
+    .replace(/&\s*$/, ""); // trailing & for backgrounding
+  // If the stripped command still has a redirect or mutating pattern, block via the standard check.
+  return !isMutatingCommand(stripped).blocked;
 }
 
 /**

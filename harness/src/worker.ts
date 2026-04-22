@@ -72,16 +72,55 @@ export interface WorkerResult<T = unknown> {
 /**
  * Extract JSON from between sentinel markers in text.
  * Returns the raw JSON string or null if not found.
+ *
+ * Handles multiple envelopes in one text block (e.g. a truncated first attempt
+ * followed by a complete second attempt). Each START is paired with the nearest
+ * END that follows it but precedes the next START. Among all valid pairs the
+ * LAST one is returned — the most-recent attempt is most likely correct, and
+ * agents that self-correct explicitly discard earlier partial envelopes.
+ *
+ * Fall-back: returns null when no START has a matching END after it.
  */
 export function extractEnvelope(text: string): string | null {
-  const startIdx = text.indexOf(RESULT_START_SENTINEL);
-  if (startIdx === -1) return null;
+  // Collect all START positions
+  const startPositions: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const idx = text.indexOf(RESULT_START_SENTINEL, searchFrom);
+    if (idx === -1) break;
+    startPositions.push(idx);
+    searchFrom = idx + RESULT_START_SENTINEL.length;
+  }
 
-  const jsonStart = startIdx + RESULT_START_SENTINEL.length;
-  const endIdx = text.indexOf(RESULT_END_SENTINEL, jsonStart);
-  if (endIdx === -1) return null;
+  if (startPositions.length === 0) return null;
 
-  return text.slice(jsonStart, endIdx).trim();
+  // For each START, find the nearest END that comes after it but before
+  // the next START (so we don't accidentally swallow prose between envelopes).
+  type Pair = { jsonStart: number; endIdx: number };
+  const validPairs: Pair[] = [];
+
+  for (let i = 0; i < startPositions.length; i++) {
+    const jsonStart = startPositions[i] + RESULT_START_SENTINEL.length;
+    // The search window for the END ends just before the next START (if any)
+    const nextStart = startPositions[i + 1] ?? text.length;
+    const endIdx = text.indexOf(RESULT_END_SENTINEL, jsonStart);
+    if (endIdx === -1 || endIdx >= nextStart) continue;
+    validPairs.push({ jsonStart, endIdx });
+  }
+
+  if (validPairs.length === 0) return null;
+
+  // Prefer the LAST valid pair — the agent's most recent (and intentional) attempt
+  const { jsonStart, endIdx } = validPairs[validPairs.length - 1];
+
+  let slice = text.slice(jsonStart, endIdx).trim();
+  // Agents occasionally wrap the envelope body in a ```json ... ``` fence
+  // (especially after context compaction). Strip it so JSON.parse succeeds.
+  const fenceStart = slice.match(/^```(?:json)?\s*\n/);
+  if (fenceStart) slice = slice.slice(fenceStart[0].length);
+  const fenceEnd = slice.match(/\n?```\s*$/);
+  if (fenceEnd) slice = slice.slice(0, slice.length - fenceEnd[0].length);
+  return slice.trim();
 }
 
 /**
@@ -183,9 +222,9 @@ export async function runWorker<T = unknown>(
   };
   atomicWriteJson(sessionPath, session);
 
-  // Heartbeat interval
+  // Heartbeat interval — fires from a wall-clock timer (see setInterval below)
+  // so it doesn't depend on SDK message arrival.
   const heartbeatMs = (config.heartbeatIntervalSeconds ?? 20) * 1000;
-  let lastHeartbeat = Date.now();
 
   const memvidBuffer = config.memvidBuffer ?? null;
   let memvidTurnIndex = 0;
@@ -206,7 +245,6 @@ export async function runWorker<T = unknown>(
     };
     atomicWriteJson(heartbeatPath, hb);
     session.lastHeartbeatAt = hb.ts;
-    lastHeartbeat = Date.now();
   };
 
   const logMessage = (msg: AgentMessage) => {
@@ -224,6 +262,13 @@ export async function runWorker<T = unknown>(
       rawEventStream.write(JSON.stringify({ ts: new Date().toISOString(), raw: msg.raw }) + "\n");
     }
   };
+
+  // Heartbeat from a wall-clock timer so it fires even during long opus thinking
+  // turns or api_retry backoff (when no SDK messages arrive). The inline-on-message
+  // pattern starved during PKT-007's 3.5h evaluator session.
+  const heartbeatTimer = heartbeatMs > 0
+    ? setInterval(writeHeartbeat, heartbeatMs)
+    : null;
 
   try {
     for await (const msg of backend.runSession(sessionOptions)) {
@@ -263,11 +308,6 @@ export async function runWorker<T = unknown>(
         if (msg.text) combinedText += msg.text;
         break;
       }
-
-      // Write heartbeat periodically
-      if (heartbeatMs > 0 && Date.now() - lastHeartbeat >= heartbeatMs) {
-        writeHeartbeat();
-      }
     }
   } catch (err: unknown) {
     hadError = true;
@@ -279,6 +319,7 @@ export async function runWorker<T = unknown>(
       isError: true,
     });
   } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     transcriptStream.end();
     legacyStream.end();
     rawEventStream.end();
