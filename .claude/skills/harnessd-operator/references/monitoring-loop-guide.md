@@ -199,21 +199,87 @@ New lines: <COUNT>
 Read each file with: Read tool, offset=<OFFSET>, limit=<COUNT>
 If >500 new lines: read first 100 and last 400.
 
+## MANDATORY: Read the agent's actual text content, not just tool calls
+
+Tool calls show WHAT the agent did. The agent's text content shows WHY.
+Never draw conclusions from tool call patterns alone — always read the
+assistant's `msg.text` and `msg.raw.message.content[].text` to understand
+the agent's reasoning.
+
+Specifically extract and read:
+
+1. **The last 3-5 assistant text messages.** These usually contain the
+   agent's self-diagnosis of whatever it's doing. Look for phrases like
+   "Proceeding to...", "Falling back to...", "The X isn't working so I'll...".
+2. **Thinking blocks** (`content[].type === "thinking"`). These show the
+   agent's reasoning at each turn.
+3. **Any `text` content that follows a failed tool call.** Agents often
+   explain their workaround in the next text message.
+
+Use this jq pattern to extract all assistant text (both regular and thinking):
+```bash
+jq -r 'select(.msg.type == "assistant") |
+       .ts as $ts |
+       (.msg.raw.message.content // []) |
+       map(select(.type == "text" or .type == "thinking")) |
+       map(.text // .thinking // "") |
+       select(length > 0) |
+       "\($ts) | \(.[])"' <transcript.jsonl> | tail -20
+```
+
+Or via Read the whole transcript with offset/limit and grep through the
+`"text":` values yourself — but do not skip this step.
+
+### Red flag: deriving intent from tool calls alone
+
+**Anti-example (what went wrong in onhq-arch-refactor check #1):** The
+sonnet saw 11 mentions of `validate_envelope` in tool calls and concluded
+"planner is stuck in a validate_envelope loop." The actual assistant text
+at line 75 said: *"The PlannerOutput schema isn't registered in the
+validator. Proceeding to emit the envelope directly per the prompt's
+documented structure."* The planner had diagnosed the issue and was
+actively emitting the envelope. A nudge telling it to "skip validation
+and emit directly" was completely redundant.
+
+**Rule:** Before you conclude an agent is stuck, read the agent's last
+assistant text message in full. If the agent has self-diagnosed and is
+taking corrective action, `action: "none"` is correct even if earlier
+tool calls look repetitive.
+
 ## What to Investigate
 
-**For builders:** What files were read/edited (Edit/Write tool calls)? Is the
-builder making progress or editing the same files repeatedly? Did it read
-nudge.md? Is it addressing the evaluator's feedback or fixing something else?
+**For all agents:** What does the agent SAY it's doing (text content)?
+What did it actually DO (tool calls)? Are those consistent? If the agent
+says "I'll skip X and do Y" but then keeps trying X, that's a real stuck
+loop. If the agent says "I'll skip X and do Y" and then starts doing Y,
+that's healthy self-correction.
+
+**For builders:** What files were read/edited (Edit/Write tool calls)? Is
+the builder making progress or editing the same files repeatedly? Did it
+read nudge.md? Is it addressing the evaluator's feedback or fixing
+something else? CRITICAL: read the builder's own text to see if it
+understands the evaluator's hard failures — don't just count edits.
 
 **For evaluators:** Extract any HARNESSD_RESULT_START envelope. What hard
 failures were found? Are they the SAME criteria as previous rounds (check
 events for prior evaluator.failed)? Do the failures look legitimate or
 like false positives? Did the evaluator actually run tests or just reason?
+Read the evaluator's text between tool calls — it often explains its
+reasoning for each criterion.
+
+**For planners:** Did the planner read all the architecture docs
+specified in the planning context? Did it emit a complete result envelope
+with SPEC.md, packets.json, etc.? CRITICAL: check for the envelope
+markers (`HARNESSD_RESULT_START` / `HARNESSD_RESULT_END`) before
+concluding the planner is stuck — an emitted envelope means the planning
+phase is complete even if the phase hasn't transitioned yet.
 
 **For QA:** What did the QA report say? Are issues real or nitpicks?
 Are they the same issues from the prior QA round?
 
-**For all:** Is the agent stuck in a loop? Fresh heartbeat? Making net progress?
+**For all:** Is the agent stuck in a loop? Fresh heartbeat? Making net
+progress? Does the agent's text indicate it understands its situation, or
+is it confused?
 
 ## Your Output
 
@@ -309,7 +375,8 @@ Ask: **"Is the agent doing the RIGHT THING slowly, or the WRONG THING quickly?"*
 ### Threshold
 
 - Miscommunication signals → intervene on **FIRST** occurrence
-- Same criterion failing 2+ rounds with no progress → nudge immediately
+- **"Intervene" = one nudge attempt, then up to two pivots, then reset.** See the escalation ladder in SKILL.md Section 3.
+- Same criterion failing 2+ rounds with no progress → nudge immediately (1 attempt only -- if it fails, pivot)
 - Same criterion but fewer failures each round → report, don't nudge
 
 ---
@@ -339,6 +406,47 @@ Each line is a JSON object:
 - `Read` — files the agent investigated
 - `Bash` — commands run (test commands, dev server, git)
 - `Grep` / `Glob` — codebase searches
+
+### Reading Text Content (MANDATORY, not optional)
+
+Tool calls show actions. Text content shows intent. Always read both.
+
+For Claude transcripts, assistant text lives in:
+- `.msg.text` (the normalized field, usually present)
+- `.msg.raw.message.content[].text` where `content[].type === "text"`
+- `.msg.raw.message.content[].thinking` where `content[].type === "thinking"`
+
+For Codex transcripts, text lives in:
+- `.msg.text` (normalized)
+- `.msg.raw.output_text` or `.msg.raw.message.content` depending on event type
+
+Extract with jq (works for both backends because `msg.text` is normalized):
+```bash
+# All assistant text in order
+jq -r 'select(.msg.type == "assistant" and (.msg.text // "") != "") |
+       "\(.ts) | \(.msg.text[0:300])"' <transcript.jsonl>
+
+# Last 10 assistant messages
+jq -r 'select(.msg.type == "assistant" and (.msg.text // "") != "") |
+       "\(.ts) | \(.msg.text[0:500])"' <transcript.jsonl> | tail -10
+
+# Thinking blocks (Claude only)
+jq -r 'select(.msg.type == "assistant") |
+       .ts as $ts |
+       (.msg.raw.message.content // []) |
+       map(select(.type == "thinking") | .thinking // "") |
+       select(length > 0) |
+       "\($ts) | \(.[])"' <transcript.jsonl>
+```
+
+Or when using the Read tool on the JSONL file, look for:
+- `"text":"..."` — regular assistant text (what the agent said)
+- `"thinking":"..."` — thinking blocks (what the agent reasoned)
+
+Both matter. The text between tool calls is where agents diagnose
+problems, explain workarounds, and announce their next step. Skipping
+text content and deriving conclusions from tool-call patterns alone is
+the #1 source of false-positive "stuck loop" diagnoses.
 
 ### Extracting HARNESSD_RESULT_START Envelopes
 
@@ -382,14 +490,27 @@ The file to change is [file], NOT [file the builder keeps editing]."
 
 ---
 
-## 8. Pivot Protocol
+## 8. Escalation Protocol
 
-When nudging isn't enough:
+When a single nudge isn't enough, follow the strict escalation ladder -- 1 nudge, 2 pivots, then reset. Do not send a second nudge; move directly to pivot.
 
-- **3 nudges on same issue failed** → The nudge itself is wrong. Re-investigate from scratch. Read the actual code, not just the transcript.
+**Nudge failed (acknowledged but no behavior change, or ignored):**
+- Do NOT send a second nudge. One nudge attempt per miscommunication.
+- Escalate immediately to pivot #1.
+- Re-investigate from scratch before pivoting -- read the actual code, not just the transcript, so the pivot context is accurate.
+
+**Pivot #1 failed (compliance check after first pivot shows same problem):**
+- Escalate to pivot #2 with stronger/more explicit context.
+- Pivot #2 should include concrete examples, exact file:line expectations, or tighter scope compared to pivot #1.
+
+**Pivot #2 failed (compliance check after second pivot still shows same problem):**
+- Escalate to reset_packet. This is the nuclear option -- full contract re-negotiation.
+- NEVER auto-reset. Report to user with full reasoning and get approval.
+
+**Other escalation triggers:**
 - **Packet exhausts max fix loops** → Tell the user. Split scope, add context-overrides, adjust acceptance criteria. Never force-approve.
 - **Evaluator keeps crashing (network errors)** → Kill stale processes (dev servers on configured ports), clean up port conflicts.
-- **Builder ignores nudge** → Check events for `nudge.sent`. `[LIVE]` = agent got it. `[FILE]` = check if builder read nudge.md. Neither = nudge wasn't delivered.
+- **Builder ignores nudge** → Check events for `nudge.sent`. `[LIVE]` = agent got it. `[FILE]` = check if builder read nudge.md. Neither = nudge wasn't delivered. Either way, escalate to pivot after one failed nudge attempt.
 
 ---
 

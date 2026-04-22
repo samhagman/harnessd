@@ -19,6 +19,27 @@ Unified skill for operating harnessd runs end-to-end. Five capabilities:
    └──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
 ```
 
+## Quick decisions
+
+| You are… | Go to | Key rule |
+|---|---|---|
+| Starting a run | §1 | Prepared mode beats autonomous — better context, fewer wasted cycles. |
+| Monitoring a live run | §2 | Read agent text, not just tool calls. Tool output alone misleads. |
+| Agent going wrong way | §3 | Nudge on first miscommunication — every round compounds. |
+| Something broken | §4 | Check HTTPS / rate-limit before killing. Silent heartbeat ≠ dead. |
+| Run completed | §5 | Run the retrospective automatically — don't ask. |
+
+## Critical thresholds (commit to muscle memory)
+
+These are the decisions most often botched under pressure. If you read only this section, you'll still do the right thing 90% of the time.
+
+- **Miscommunication → nudge immediately, on the first occurrence.** Wrong file, wrong diagnosis, format loop, false-positive reject. Every wasted round compounds — a second round of the same mistake means you already watched one round burn.
+- **Genuine difficulty → let it work.** Right file, different strategies tried each round, net progress (fewer hard failures than last time). The harness is designed to work through hard problems; your job is telling stuck-and-miscommunicating apart from tractable-and-working.
+- **After any nudge → verify receipt within 60s.** A nudge that lands after the builder has already emitted its result is wasted — the builder won't see it until the next fix session, burning an entire eval cycle.
+- **If you know the current cycle will fail → apply the no-waste rule.** Kill, reset, restart. Don't watch a 15-min cycle die because "the state machine will work it out." It will, but slowly.
+- **If you've diagnosed the problem AND written the fix → execute it.** Don't ask "want me to proceed?" for standard unblocks (kill/nudge/resume). The diagnosis is the authorization; asking just delays an obvious fix while retries burn. Reserve confirmation for destructive or cross-system actions (deletes, force-push, shared infra), not for harnessd steering.
+- **Never diagnose from tool calls alone — read the agent's actual text.** Before concluding "the builder is doing X" or "the evaluator is stuck on Y", read the assistant-message text content in the transcript (`transcripts/<packet>/<role>-*.jsonl`, filter `type:"assistant"`). Tool calls are signposts — they show what the agent *did*, not what it *thought*. An agent can be tool-looping productively (exploring the right file with different queries) or stuck unproductively (re-reading the same file while confused about which packet it's on) and the patterns look identical from tool calls alone. The agent's text is where intent and self-diagnosis live. If you haven't read the text, you haven't diagnosed — you've guessed.
+
 ---
 
 ## 1. Starting a New Run
@@ -184,14 +205,22 @@ Two-layer deep monitoring for harnessd runs. Every 15-minute check spawns a sonn
 Layer 1: Main Cron Loop (Claude)         Layer 2: Sonnet Deep-Dive Agent
 ┌────────────────────────────┐          ┌────────────────────────────┐
 │ Step 1: Quick status       │          │ Read NEW transcript lines  │
-│ Step 2: Launch sonnet ─────┼─────────>│ Check tool calls, edits    │
-│ Step 3: Parse assessment   │<─────────┼─Return structured JSON     │
-│ Step 4: Act (nudge/report) │          │                            │
-│ Step 5: Update state file  │          │ If investigate_further:    │
+│ Step 2: Launch sonnet ─────┼─────────>│ Tool calls + AGENT TEXT    │
+│ Step 3: Parse assessment   │<─────────┼─(text explains intent —    │
+│ Step 4: Act (nudge/report) │          │  tool calls alone mislead) │
+│ Step 5: Update state file  │          │ Return structured JSON     │
+│                            │          │ If investigate_further:    │
 │                            │          │   Launch 2nd sonnet for    │
 │                            │          │   source code tracing      │
 └────────────────────────────┘          └────────────────────────────┘
 ```
+
+**CRITICAL:** The sonnet deep-dive must read agent TEXT content (what the
+agent said/thought), not only tool calls (what the agent did). Tool calls
+show actions; text content shows intent and self-diagnosis. Drawing
+conclusions from tool-call patterns alone is the #1 source of false-
+positive "stuck loop" diagnoses. See `monitoring-loop-guide.md` §3 for
+the mandatory text-reading protocol.
 
 ### When to Offer
 
@@ -204,7 +233,7 @@ Proactively offer monitoring when:
 ### Setup
 
 1. Detect the active run ID (most recent in `.harnessd/runs/`)
-2. Use `CronCreate` with a `*/15 * * * *` schedule
+2. Use `CronCreate` with a `*/15 * * * *` schedule. Do not use `ScheduleWakeup`.
 3. The cron prompt must instruct Claude to follow the two-layer protocol:
    - Step 1: Collect quick status (run.json, last 10 events, heartbeat, process check)
    - Step 2: Compute transcript deltas from `monitor-state.json`, launch a sonnet Agent to deep-dive into new transcript lines
@@ -246,6 +275,7 @@ The monitoring loop exists to catch **MISCOMMUNICATION** early and let **GENUINE
 ### Intervention Threshold
 
 - **Miscommunication signals → intervene on the FIRST occurrence.** Don't wait for 3 rounds.
+- **"Intervene" means: nudge (one attempt only), then pivot (up to two), then reset (last resort).** See Section 3 for the full escalation ladder.
 - **Same criterion failing 2+ rounds with no progress → nudge immediately.** The builder is stuck on a communication gap.
 - **Same criterion failing but with real progress (fewer failures each round) → report, don't nudge.**
 
@@ -310,6 +340,49 @@ This saves 10-20 minutes per wasted cycle. Over a long run, this can save hours.
 - The builder is about to submit a false pass and you can't stop it in time → kill + reset + nudge.md
 - The evaluator is checking stale state (Vite cache, old build) → kill, clear cache, restart
 
+### Awaiting-Human-Review Rule (stop monitoring)
+
+**When the run phase is `awaiting_human_review`, stop the monitoring cron immediately.** The harness is paused indefinitely until the operator approves or rejects. Polling produces no signal — every check returns the same state until the human responds. Hourly status reports add noise without value.
+
+What to do:
+1. Detect `awaiting_human_review` in the phase field.
+2. `CronDelete` the monitoring job.
+3. Tell the operator the run is paused for their sign-off and what's pending (which packet, what passed, where to find the artifacts).
+4. Wait silently for the operator's next message. Do NOT reschedule a check, do NOT poll, do NOT set a wakeup. Restart monitoring only when the operator returns and asks you to.
+
+This applies to any phase that requires human action with no automated trigger — `awaiting_plan_approval`, `awaiting_human_review`, etc. If the operator wants to be reminded, they will say so explicitly ("ping me in an hour"); otherwise, silence is correct.
+
+### Contract-Conflict Rule (CRITICAL — intervene early on impossible ACs)
+
+**Within 2 evaluator rounds, if the same failures persist AND they look like AC-vs-AC contradictions or AC-vs-constraint impossibilities, amend the contract immediately. Do NOT let the builder cycle 5+ times trying to satisfy unsatisfiable criteria.**
+
+Signs of an unsatisfiable AC (look for these on every failure report):
+- Two ACs require opposite states (e.g., "git status empty" + "no commits allowed" + "files must change")
+- An AC requires a runtime resource that the constraints forbid acquiring (e.g., "fresh clone must produce DB" + "only 4 prereqs allowed, no manual binary download" + binary has no public source)
+- An AC requires exact text/structure that another AC's required text directly violates (e.g., heading must contain "design intent" + grep for "design intent" must return zero matches)
+- Builder failure descriptions repeatedly use phrases like "impossible to satisfy both," "mutually exclusive," "no path satisfies"
+
+**When you spot one, act in this order (5 minutes total):**
+
+1. **Identify the conflict precisely.** Name the two ACs and explain in one sentence why they cannot both be true.
+2. **Amend the contract in place.** Edit `.harnessd/runs/<run-id>/packets/PKT-XXX/contract/final.json` directly. For each removed AC, replace its description with `[REMOVED <date> BY OPERATOR — UNSATISFIABLE] Original: <text>. REMOVED because <reason>. Do not evaluate.` and set `blocking: false`. For reworded ACs, prepend `Reworded <date>:` and explain.
+3. **Log the decision.** Append to `.harnessd/runs/<run-id>/spec/decision-log.md` (create if missing). Entry format:
+   ```
+   ## YYYY-MM-DD HH:MM UTC — PKT-XXX contract amendment
+   **Decision:** <what changed>
+   **Reasoning:** <the conflict>
+   **Scope:** <which ACs, which packets affected>
+   ```
+4. **Send a nudge** (`./harness/nudge.sh`) telling the builder to re-read the contract and explaining what changed.
+5. **Don't kill the harness** unless the builder has already submitted with the old contract — the next fix attempt will read the updated final.json.
+
+**Why this matters.** Contract conflicts are not the builder's fault and cannot be fixed by more attempts. Every cycle on an unsatisfiable AC burns 15-30 minutes for nothing. On the build-ontology run, three packets (PKT-011, PKT-013, PKT-014) collectively burned ~10 hours bouncing on contract conflicts before force-approve. Five-minute amendments at the first sign of a conflict would have saved ~8 hours.
+
+**Distinguish from genuine builder difficulty.**
+- Builder making real progress (fewer failures each round, different failures, real product fixes landing) → let it work
+- Same N failures bouncing across rounds with no decline AND failures look like impossibilities → amend contract
+- Failures decline but stall at strictness items (file location, exact heading text, format conventions) → after 3 rounds, force-approve per existing rule
+
 ### Stopping Monitoring
 
 Use `CronDelete` with the job ID returned by `CronCreate`. Or the cron auto-expires after 7 days.
@@ -318,20 +391,59 @@ Use `CronDelete` with the job ID returned by `CronCreate`. Or the cron auto-expi
 
 ## 3. Operator Steering
 
-Three modes for changing the direction of a running harness, from lightest to heaviest:
+Three modes for changing the direction of a running harness. When a miscommunication is detected, follow a strict escalation ladder — one nudge attempt, then up to two pivots, then reset as the last resort.
+
+### Escalation Ladder
 
 ```
-Is the agent going the right direction but missing a detail?
-  YES --> NUDGE (send_to_agent)
-  NO  |
-      v
-Is the contract/approach right but the execution needs to change?
-  YES --> PIVOT (pivot_agent)
-  NO  |
-      v
-Is the whole approach wrong (contract, acceptance criteria, etc.)?
-  YES --> RESET (reset_packet)
+MISCOMMUNICATION DETECTED
+         │
+         ▼
+┌────────────────────────────────────────────────────────────┐
+│ STEP 1 -- NUDGE (max 1 attempt per miscommunication)       │
+│   Send via streamInput + FILE + RECORD layers              │
+│   Verify receipt in 30-60s (see Nudge Verification below)  │
+└────────────────────┬───────────────────────────────────────┘
+                     │ nudge acknowledged + behavior changed?
+                     │ YES → done
+                     │ NO  ↓
+┌────────────────────▼───────────────────────────────────────┐
+│ STEP 2 -- PIVOT #1 (1st of 2 pivot attempts)               │
+│   Kill current session, restart with new direction baked in│
+│   Verify compliance within one builder cycle               │
+└────────────────────┬───────────────────────────────────────┘
+                     │ first pivot produced compliance?
+                     │ YES → done
+                     │ NO  ↓
+┌────────────────────▼───────────────────────────────────────┐
+│ STEP 3 -- PIVOT #2 (2nd of 2 pivot attempts)               │
+│   Use stronger / more explicit context than pivot #1       │
+│   Add concrete examples, exact file:line expectations      │
+│   Verify compliance within one builder cycle               │
+└────────────────────┬───────────────────────────────────────┘
+                     │ second pivot produced compliance?
+                     │ YES → done
+                     │ NO  ↓
+┌────────────────────▼───────────────────────────────────────┐
+│ STEP 4 -- RESET (nuclear — last resort only)               │
+│   Delete ALL packet artifacts, redo from contract          │
+│   Edit spec / evaluator-guide before re-negotiation starts │
+└────────────────────────────────────────────────────────────┘
 ```
+
+### Escalation Budget Table
+
+| Attempt | Action | Budget consumed |
+|---------|--------|----------------|
+| Miscommunication detected | 1 nudge | 1 nudge |
+| Nudge fails compliance check | 1st pivot | 1 nudge + 1 pivot |
+| 1st pivot fails compliance | 2nd pivot (stronger context) | 1 nudge + 2 pivots |
+| 2nd pivot fails compliance | reset_packet | nuclear |
+
+**Rules:**
+- Nudge: max 1 attempt per miscommunication. If the compliance check (30-60s post-nudge) shows the agent did not acknowledge or did not change behavior, escalate immediately to pivot -- do not send a second nudge.
+- Pivot: max 2 attempts. The second pivot should be materially stronger than the first -- more explicit instructions, concrete examples, or tighter scope.
+- Reset: only after 1 nudge + 2 pivots have all failed. Requires full contract re-negotiation.
 
 ### NUDGE -- steer without stopping
 

@@ -1,6 +1,28 @@
 # Steering Modes — Detailed Reference
 
-Harnessd gives the operator three ways to change the direction of a running harness. They range from a gentle course correction to a full restart. Pick the lightest one that gets the job done — nudge is instant, pivot costs one retry cycle, reset costs a full re-negotiation.
+Harnessd gives the operator three ways to change the direction of a running harness. They range from a gentle course correction to a full restart.
+
+## Escalation Budget
+
+When a miscommunication is detected, do NOT keep nudging. Follow the strict escalation ladder:
+
+```
+1 nudge attempt → 2 pivot attempts → 1 reset (last resort)
+```
+
+| Attempt | Action | Cumulative budget |
+|---------|--------|------------------|
+| Miscommunication detected | 1 nudge | 1 nudge used |
+| Nudge fails compliance check | 1st pivot | 1 nudge + 1 pivot |
+| 1st pivot fails compliance | 2nd pivot (stronger context) | 1 nudge + 2 pivots |
+| 2nd pivot fails compliance | reset_packet | nuclear |
+
+**Key rules:**
+- **Nudge:** max 1 attempt per miscommunication. If the 30-60s compliance check shows the agent did not acknowledge or did not change behavior, move directly to pivot -- do not send a second nudge.
+- **Pivot:** max 2 attempts. Pivot #2 must be materially stronger than pivot #1 (more explicit instructions, exact file:line expectations, concrete examples of expected behavior).
+- **Reset:** only after both pivots fail. Requires full contract re-negotiation. NEVER auto-reset -- flag to user and get approval.
+
+Pick the lightest mode that gets the job done -- nudge is instant, pivot costs one retry cycle, reset costs a full re-negotiation -- but once a nudge has failed, you are already on the escalation ladder. Do not repeat the same tool twice.
 
 ## Table of Contents
 - [Nudge (send_to_agent)](#nudge)
