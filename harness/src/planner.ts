@@ -39,8 +39,6 @@ const PlannerOutputSchema = z.object({
   devServer: DevServerConfigSchema.nullish(),
 });
 
-type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
-
 export interface PlannerConfig {
   repoRoot: string;
   /** Where agents work. Agents are scoped to this dir. Defaults to repoRoot. */
@@ -100,14 +98,22 @@ export async function runPlanner(
   fs.mkdirSync(specDir, { recursive: true });
 
   let lastError: string | undefined;
+  /** Session ID from the most recent runWorker call — used to resume on envelope-parse failure. */
+  let lastSessionId: string | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // Resume is only valid on the first attempt — subsequent retries need fresh prompts
-    // with error context so the agent can correct its output.
-    const effectiveResumeId = attempt === 1 ? resumeSessionId : undefined;
+    // On attempt 2+, resume the prior session if we captured a sessionId.
+    // This avoids re-reading docs after an envelope parse failure (saves ~$12 / 17 min).
+    // Fall back to a fresh prompt when there is no prior session (crash / first attempt).
+    const resumeFromFailure = attempt > 1 && lastSessionId != null;
+    const effectiveResumeId = resumeFromFailure
+      ? lastSessionId
+      : attempt === 1
+        ? resumeSessionId
+        : undefined;
 
     // Build prior run context, incorporating revision feedback if present
-    let effectivePriorContext = attempt > 1
+    let effectivePriorContext = attempt > 1 && !resumeFromFailure
       ? `Previous attempt failed: ${lastError}. Please try again with a valid structured output.`
       : priorRunContext;
 
@@ -119,8 +125,15 @@ export async function runPlanner(
     const resumeOptions: Record<string, unknown> = {};
 
     if (effectiveResumeId) {
-      prompt = CONTINUATION_PROMPT;
       resumeOptions.resume = effectiveResumeId;
+      if (resumeFromFailure) {
+        // The prior session has all research loaded. We only need to tell the
+        // planner what went wrong and ask for a corrected, smaller envelope.
+        prompt = buildEnvelopeRetryPrompt(lastError ?? "unknown parse error");
+      } else {
+        // Crash-recovery resume — original continuation prompt is correct.
+        prompt = CONTINUATION_PROMPT;
+      }
     } else {
       prompt = buildPlannerPrompt(
         objective,
@@ -143,6 +156,7 @@ export async function runPlanner(
         permissionMode: "bypassPermissions",
         settingSources: ["user"],
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
+        ...(plannerConfig.config.effort ? { effort: plannerConfig.config.effort } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: {
@@ -167,6 +181,9 @@ export async function runPlanner(
       },
       PlannerOutputSchema,
     );
+
+    // Capture sessionId so the next attempt can resume rather than starting fresh.
+    lastSessionId = workerResult.sessionId;
 
     if (workerResult.payload) {
       const output = workerResult.payload;
@@ -224,6 +241,34 @@ export async function runPlanner(
     success: false,
     error: `Planner failed after ${maxRetries} attempts: ${lastError}`,
   };
+}
+
+// ------------------------------------
+// Envelope retry prompt
+// ------------------------------------
+
+/**
+ * Continuation prompt used when resuming a prior planner session after an envelope
+ * parse/missing failure. The session already has all research loaded — we only need
+ * to tell the planner what went wrong and ask for a smaller, correct envelope.
+ */
+function buildEnvelopeRetryPrompt(lastError: string): string {
+  return `Your previous envelope attempt did not parse. Error: ${lastError}
+
+Common causes:
+- Exceeded the 32K per-turn output cap — the JSON was truncated mid-stream
+- Markdown code-fence wrapping (do NOT wrap the JSON in backticks)
+- Malformed JSON (missing closing brackets, trailing commas, etc.)
+
+Please emit a SMALLER, CORRECT envelope this time:
+- Shorten SPEC prose and collapse lengthy descriptions
+- Collapse or omit calibration examples in acceptance criteria
+- Keep packet fields terse (short titles, brief descriptions)
+- Drop integration-scenarios detail where possible
+- The entire envelope must fit within a single response turn
+
+Do NOT re-read docs — all context is already loaded in this session.
+Emit the envelope EXACTLY ONCE as your final response, with no markdown fences.`;
 }
 
 // ------------------------------------
