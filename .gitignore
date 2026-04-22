@@ -41,6 +41,18 @@ output/
 harness/output/
 research/
 
+# Operator-captured run snapshots (DOM/network/console dumps written to
+# harness/ root while monitoring live runs — should stay in the run
+# workspace, not the repo root)
+harness/pkt*.md
+harness/pkt*.json
+harness/pkt-*.md
+harness/pkt-*.json
+harness/compliance-*.md
+
+# SQLite registry / data store used by tooling around the harness
+data/
+
 # Local tool state
 .agents/*
 !.agents/skills
