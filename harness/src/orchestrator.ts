@@ -75,7 +75,9 @@ import { findLatestTranscript, readPriorSessionId } from "./session-recovery.js"
 import { recoverFromCrashedSession } from "./recovery-agent.js";
 import { runQA } from "./qa-runner.js";
 import { runRound2Planner } from "./round2-planner.js";
-import { generateCompletionSummary } from "./completion-summary.js";
+import { generateCompletionContext } from "./completion-summary.js";
+import type { PacketCompletionContext } from "./schemas.js";
+import { PacketCompletionContextSchema } from "./schemas.js";
 import {
   runToolGates,
   synthesizeEvalReportFromGates,
@@ -917,7 +919,7 @@ async function executeBuilder(
   const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
   const contextOverrides = readContextOverrides(repoRoot, runState.runId);
   const allCompletedIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
-  const completionSummaries = readCompletionSummaries(repoRoot, runState.runId, allCompletedIds);
+  const completionContexts = readCompletionContexts(repoRoot, runState.runId, allCompletedIds);
 
   // Query memvid for semantically relevant context from prior packets
   let memoryContext: string | undefined;
@@ -928,9 +930,6 @@ async function executeBuilder(
       console.log(`[memvid] Warning: builder memory context query failed: ${(err as Error).message}`);
     }
   }
-
-  // Combine: memory context appended after completion summaries
-  const combinedContext = [completionSummaries, memoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
 
   // Build full plan context and timeline for builder
   // Read events once here; pass to buildRunTimeline to avoid a redundant file read.
@@ -960,7 +959,8 @@ async function executeBuilder(
     riskRegister: readRiskRegister(repoRoot, runState.runId),
     priorEvalReport: evalReport,
     contextOverrides,
-    completionSummaries: combinedContext,
+    completionContexts,
+    memoryContext,
     completedPacketIds: allCompletedIds,
     resumeSessionId: resumeSessionId ?? undefined,
     memory,
@@ -1102,7 +1102,7 @@ async function handleEvaluation(
   const builderTranscriptPath = findLatestTranscript(repoRoot, runState.runId, packetId, "builder");
 
   const allCompletedIds = [...runState.completedPacketIds, ...runState.round2CompletedPacketIds];
-  const completionSummaries = readCompletionSummaries(repoRoot, runState.runId, allCompletedIds);
+  const completionContexts = readCompletionContexts(repoRoot, runState.runId, allCompletedIds);
 
   // Query memvid for semantically relevant context from prior packets
   let evalMemoryContext: string | undefined;
@@ -1113,9 +1113,6 @@ async function handleEvaluation(
       console.log(`[memvid] Warning: evaluator memory context query failed: ${(err as Error).message}`);
     }
   }
-
-  // Combine: memory context appended after completion summaries
-  const combinedCompletionContext = [completionSummaries, evalMemoryContext].filter(Boolean).join('\n\n---\n\n') || undefined;
 
   // Load gate results to inject into evaluator context
   const gateResultsSummary = readGateResultsSummary(repoRoot, runState.runId, packetId);
@@ -1178,7 +1175,8 @@ async function handleEvaluation(
     config,
     riskRegister: readRiskRegister(repoRoot, runState.runId),
     evaluatorGuide,
-    completionSummaries: combinedCompletionContext,
+    completionContexts,
+    memoryContext: evalMemoryContext,
     gateResultsSummary,
     recoveryContext: recoveryContext ?? undefined,
     futurePacketsSummary,
@@ -1205,6 +1203,17 @@ async function handleEvaluation(
     });
     return null; // retry same phase
   }
+
+  // Persist evaluator report so the fix loop can read it
+  const evalReportDir = path.join(
+    getRunDir(repoRoot, runState.runId),
+    "packets", packetId, "evaluator",
+  );
+  fs.mkdirSync(evalReportDir, { recursive: true });
+  atomicWriteJson(
+    path.join(evalReportDir, "evaluator-report.json"),
+    result.report,
+  );
 
   // --- Criterion expansion: process evaluator-proposed criteria ---
 
@@ -1394,14 +1403,27 @@ async function handleFixing(
   );
   const lastResetTime = lastReset ? new Date(lastReset.ts).getTime() : 0;
 
-  // Count only fix-phase builder starts after the last reset (or all if no reset)
-  const fixAttempts = events.filter(
+  // Count fix-phase builder starts after the last reset, EXCLUDING session-crash
+  // retries (where the previous attempt produced no result envelope). Session
+  // crashes shouldn't burn fix-loop budget; they're transparent retries of the
+  // same logical attempt. Without this guard, PKT-005 lost 9 of 10 fix slots
+  // in 4 minutes when the builder was emitting plain-text "still polling"
+  // updates while a background job ran (each "no envelope" outcome counted as
+  // a failed fix attempt).
+  const builderStartsInFix = events.filter(
     (e) =>
       e.event === "builder.started" &&
       e.packetId === packetId &&
       e.phase === "fixing_packet" &&
       new Date(e.ts).getTime() > lastResetTime,
   ).length;
+  const sessionCrashesInFix = events.filter(
+    (e) =>
+      e.event === "worker.session_crashed" &&
+      e.packetId === packetId &&
+      new Date(e.ts).getTime() > lastResetTime,
+  ).length;
+  const fixAttempts = Math.max(0, builderStartsInFix - sessionCrashesInFix);
 
   if (fixAttempts >= config.maxFixLoopsPerPacket) {
     appendEvent(repoRoot, runState.runId, {
@@ -1426,6 +1448,11 @@ async function handleFixing(
   // Detect: if the last builder.started in fixing_packet was NOT followed by evaluator.started,
   // the builder crashed and we should resume. If evaluator ran, it's a new iteration — fresh start.
   // Only look at events after the last fix counter reset (watermark) to avoid resuming stale sessions.
+  //
+  // ALSO: if this is the FIRST fix attempt (no fixing_packet builder.started yet) AND we have
+  // a fresh evalReport, do NOT resume — the prior session's last assistant turn was the
+  // result envelope, and resuming with CONTINUATION_PROMPT alone would just yield it again.
+  // Start a fresh session that gets the full builder prompt with the eval failure report.
   const lastBuilderFixStart = [...events].reverse().find(
     (e) =>
       e.event === "builder.started" &&
@@ -1437,7 +1464,8 @@ async function handleFixing(
     (e) => e.event === "evaluator.started" && e.packetId === packetId &&
       new Date(e.ts).getTime() > new Date(lastBuilderFixStart.ts).getTime(),
   );
-  const resumeSessionId = !evalFollowed
+  const isFirstFixAttempt = !lastBuilderFixStart && !!evalReport;
+  const resumeSessionId = (!evalFollowed && !isFirstFixAttempt)
     ? getResumeSessionId(factory, "builder", repoRoot, runState.runId, `packets/${packetId}/builder`)
     : null;
 
@@ -1480,13 +1508,15 @@ async function handleFixing(
     return updateRun(repoRoot, runState.runId, { phase: "evaluating_packet" });
   }
 
-  // Builder session ended without completing — retry
-  console.log(`[${runState.runId}] Builder fix session ended without completing ${packetId}. Will retry.`);
+  // Builder session ended without completing — emit worker.session_crashed
+  // (NOT builder.failed) so the fix-loop counter doesn't penalize this transparent
+  // retry. The next iteration of handleFixing will resume the same session.
+  console.log(`[${runState.runId}] Builder fix session ended without completing ${packetId}. Will resume (not counted as fix attempt).`);
   appendEvent(repoRoot, runState.runId, {
-    event: "builder.failed",
+    event: "worker.session_crashed",
     phase: "fixing_packet",
     packetId,
-    detail: "Fix session ended without completion — will retry",
+    detail: "Builder fix session ended without completion — will resume; not counted toward fix-loop budget",
   });
   return null; // retry same phase
 }
@@ -1539,6 +1569,12 @@ async function handleQAReview(
   const evaluatorGuide = readEvaluatorGuide(repoRoot, runState.runId);
   const spec = readSpec(repoRoot, runState.runId);
 
+  // Gather completion contexts for all packets that ran in this round
+  const completedPacketIds = isRound2Active(runState)
+    ? [...runState.completedPacketIds, ...runState.round2CompletedPacketIds]
+    : runState.completedPacketIds;
+  const completionContexts = readCompletionContexts(repoRoot, runState.runId, completedPacketIds);
+
   // Attempt SDK resume if the QA agent crashed on a prior attempt
   const resumeSessionId = getResumeSessionId(
     factory, "qa_agent", repoRoot, runState.runId,
@@ -1552,6 +1588,7 @@ async function handleQAReview(
     builderReports,
     evaluatorGuide,
     integrationScenarios,
+    completionContexts,
     { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.isClaudeBackend("qa_agent") },
     round,
     config.devServer ?? undefined,
@@ -2165,8 +2202,8 @@ function readGateResultsSummary(repoRoot: string, runId: string, packetId: strin
 }
 
 /**
- * Generate and write a completion summary for a packet that passed evaluation.
- * The summary is stored at packets/<packetId>/completion-summary.md.
+ * Generate and write a completion context for a packet that passed evaluation.
+ * The context is stored at packets/<packetId>/completion-context.json.
  */
 function writeCompletionSummary(
   repoRoot: string,
@@ -2181,55 +2218,58 @@ function writeCompletionSummary(
     const packet = packets.find((p) => p.id === packetId);
     if (!packet) return;
 
-    const summary = generateCompletionSummary(packet, contract, builderReport, evaluatorReport, {
+    const context = generateCompletionContext(packet, contract, builderReport, evaluatorReport, {
       cwd: repoRoot,
       commitShas: builderReport.commitShas ?? null,
     });
-    const summaryPath = path.join(
+    const contextPath = path.join(
       getRunDir(repoRoot, runId),
       "packets",
       packetId,
-      "completion-summary.md",
+      "completion-context.json",
     );
-    fs.writeFileSync(summaryPath, summary, "utf-8");
+    atomicWriteJson(contextPath, context);
   } catch (err) {
-    // Non-fatal: summary generation should never break the orchestrator
-    console.log(`[${runId}] Warning: failed to write completion summary for ${packetId}: ${errorStr(err)}`);
+    // Non-fatal: context generation should never break the orchestrator
+    console.log(`[${runId}] Warning: failed to write completion context for ${packetId}: ${errorStr(err)}`);
   }
 }
 
 /**
- * Read all completion summaries for previously completed packets.
- * Returns them as a combined markdown string for prompt injection,
- * or undefined if no summaries exist.
+ * Read all completion contexts for previously completed packets.
+ * Returns a typed array of PacketCompletionContext objects.
+ * Reads completion-context.json (new format); old completion-summary.md files
+ * from prior runs are skipped — they lack the structured data.
+ * Returns an empty array if no contexts are found.
  */
-export function readCompletionSummaries(
+export function readCompletionContexts(
   repoRoot: string,
   runId: string,
   completedPacketIds: string[],
-): string | undefined {
-  if (completedPacketIds.length === 0) return undefined;
+): PacketCompletionContext[] {
+  if (completedPacketIds.length === 0) return [];
 
-  const summaries: string[] = [];
+  const contexts: PacketCompletionContext[] = [];
   for (const packetId of completedPacketIds) {
     try {
-      const summaryPath = path.join(
+      const contextPath = path.join(
         getRunDir(repoRoot, runId),
         "packets",
         packetId,
-        "completion-summary.md",
+        "completion-context.json",
       );
-      const content = fs.readFileSync(summaryPath, "utf-8").trim();
-      if (content) {
-        summaries.push(content);
+      const raw = JSON.parse(fs.readFileSync(contextPath, "utf-8")) as unknown;
+      const parsed = PacketCompletionContextSchema.safeParse(raw);
+      if (parsed.success) {
+        contexts.push(parsed.data);
       }
     } catch {
-      // Summary might not exist for packets from before this feature was added
+      // Context might not exist for packets from before this feature was added
+      // (old runs with only completion-summary.md are gracefully skipped)
     }
   }
 
-  if (summaries.length === 0) return undefined;
-  return summaries.join("\n\n---\n\n");
+  return contexts;
 }
 
 // ------------------------------------

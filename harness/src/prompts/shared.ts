@@ -47,6 +47,15 @@ The only way you stop is by completing your goal and emitting the result envelop
 export const CONTINUATION_PROMPT =
   "You were interrupted mid-session. Continue your work from where you left off. Complete your task and emit the result envelope when done.";
 
+/**
+ * Prefix used when resuming an agent into a NEW iteration where context has
+ * meaningfully changed (e.g. evaluator rejected the prior envelope). Append
+ * the freshly-built prompt after this prefix so the model sees the full
+ * updated context instead of just re-yielding its prior result envelope.
+ */
+export const RESUME_WITH_FRESH_CONTEXT_PREFIX =
+  "Your prior envelope was REJECTED — the situation has changed since your last turn. Discard your prior conclusion. Below is the FULL UPDATED context including any new failure report. Re-engage with the work, address every issue, and emit a NEW result envelope reflecting the actual current state.\n\n---\n\n";
+
 // ---------------------------------------------------------------------------
 // buildValidateEnvelopeSection
 // ---------------------------------------------------------------------------

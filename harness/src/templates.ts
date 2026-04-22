@@ -348,14 +348,6 @@ const templates: Record<PacketType, AcceptanceTemplate> = {
 };
 
 /**
- * Get the IDs from the UX quality checklist.
- * Used by the contract linter to warn about missing UX criteria.
- */
-export function getUxQualityCriteriaIds(): readonly string[] {
-  return UX_QUALITY_CRITERIA.map((c) => c.id);
-}
-
-/**
  * Get the acceptance template for a given packet type.
  */
 export function getTemplate(packetType: PacketType): AcceptanceTemplate {

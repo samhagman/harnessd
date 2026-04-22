@@ -78,15 +78,77 @@ ${researchRule}
   sections.push(`## Planning Constraints
 
 - Stay at product + high-level technical design level
-- Be ambitious about completeness — do not under-scope
-- Do NOT dictate overly detailed low-level implementation
+- Be ambitious about FEATURE completeness — the plan should encompass all the work
+  needed to fully deliver the objective. Do not under-scope. But do NOT over-specify
+  HOW each packet achieves its goal — that's the builder's job. Define WHAT needs to
+  happen and WHY, not the low-level implementation steps.
 - Bias toward packets that are:
-  - Coherent (each packet does one thing well)
-  - Independently verifiable (can be evaluated after completion)
-  - Ordered linearly (later packets may depend on earlier ones)
-  - Not too large (each should be completable in one builder session)
+  - **Vertical** — each packet ships a thin, end-to-end slice that touches every layer the objective will eventually touch (see next section — this is the most important rule)
+  - Independently verifiable with USER-OBSERVABLE acceptance criteria (not just "typecheck passes")
+  - Independently runnable/deployable — after packet N, the app must still work end-to-end
+  - Ordered by increasing breadth, not by layer (prove the pipeline once, then widen)
+  - Not too large (each completable in one builder session)
 - Explicitly separate product outcomes from implementation guesses
 - Identify risks early`);
+
+  // 2b. Vertical slicing discipline — the single most important planning rule
+  sections.push(`## Slice Vertically, Not Horizontally
+
+The #1 planner failure mode is horizontal slicing: packets like "install library" → "scaffold all files" → "migrate layer A" → "migrate layer B" → "wire everything up and verify at the end". This looks organized but is dangerous: nothing is proven end-to-end until the final packet, integration bugs accumulate silently, and the architecture gets validated only after it's been committed to across the whole codebase. Builders downstream also lose the signal that "the pipeline works" — every packet feels like building in the dark.
+
+**Default to vertical.** Each packet should deliver a thin, working, end-to-end slice that exercises every layer the objective eventually touches (data → state → UI → tests → verification). The FIRST packet should be a WALKING SKELETON: the smallest slice that proves the whole pipeline holds together. Subsequent packets expand BREADTH (more domains, more features, more cases) on top of a pipeline already known to work.
+
+### Walking skeleton (first packet, for any multi-packet plan)
+
+Pick the thinnest possible slice that exercises the full pipeline end-to-end:
+
+- **Refactors / library migrations:** pick the SMALLEST representative domain (fewest files, simplest state, minimal cross-deps) and migrate it FULLY — new infrastructure, new hooks/APIs, consumers updated, tests updated, browser-verified. Leave everything else on the old stack. Old and new coexist. The packet proves "the new pattern works on a real case; the rest of the app still works unchanged."
+- **New features:** wire the simplest user flow end-to-end — entry point → domain logic → persistence → visible result. Ship behind a flag if needed. Breadth (additional flows, edge cases, polish) goes in later packets.
+- **Boundary / lint / structure refactors:** move one or two representative files through the new structure and prove the rules actually fire on a real example in-context. Don't ship pure config changes.
+
+### Strangler fig (specifically for migrations/refactors)
+
+When replacing an old pattern/library/structure with a new one: do NOT do "install new, migrate everything, remove old" as three packets. Do: install+migrate-slice-1 (new and old coexist) → migrate-slice-2 → ... → remove-old. Each slice is independently deployable, the app runs throughout, and any problem with the new pattern surfaces on slice 1 — not after you've converted the whole codebase. Your packet sequence should read as a sequence of strangler slices, not a big-bang cutover.
+
+### Absorb foundation into the first vertical slice
+
+If the work requires some upfront setup (install library, scaffold a folder, add a config section) before any feature can use it, FOLD that setup into the first vertical packet that consumes it. Do NOT make "install X" or "scaffold Y" a standalone packet — that's horizontal by definition. The only exceptions:
+- A genuine time-boxed SPIKE that answers a specific open question (not "set up X" but "prove X can handle our auth flow")
+- Pure cross-cutting infrastructure with no product behavior to validate (e.g., a build-tool upgrade). These should be <10% of packets.
+
+### The five-question test — apply to every proposed packet before accepting it
+
+1. **Observable outcome?** Can a person (stakeholder, user, or end-to-end test) observe this packet's effect WITHOUT running any later packet?
+2. **Crosses layers?** Does the packet touch the user-facing surface AND the underlying logic AND the tests? A packet that only scaffolds, only installs, or only touches config is horizontal.
+3. **User-facing acceptance?** Is at least one acceptance criterion phrased as "user/system can X" — not "types check", "file exists", "config updated", or "migration script ran"?
+4. **Deployable?** Could you ship the app immediately after this packet and have it still work end-to-end (possibly with the new capability behind a flag)?
+5. **Coherent deliverable?** If the project stopped at this packet, would you have a narrow but WORKING result, rather than a half-finished foundation?
+
+If any answer is "no", the packet is horizontal. Either merge it into a vertical slice, or re-scope it.
+
+### Red-flag packet titles — these are almost always horizontal, reject or merge
+
+- "Install X" / "Scaffold shared/Y/" / "Set up infrastructure" (no feature consuming it)
+- "Migrate all simple / medium / heavy domains" (batch-by-complexity is a horizontal tell)
+- "Reorganize folder structure" / "Rename files" / "Move X to Y" as the only work
+- "Promote ESLint rules to error" / "Update lint config" without the work that makes the rules pass
+- "Delete old [library | file | folder]" as its own packet — delete in the same packet that replaces the usage
+- "Final verification" / "Wire everything up" / "Full end-to-end validation" as the last packet — if this is needed, earlier packets didn't actually verify anything
+
+### Good-shape packet sequences look like this
+
+For a state-management migration across N domains, instead of:
+  ❌ 1. Install library  2. Scaffold store  3. Migrate simple domains  4. Migrate medium  5. Migrate heavy  6. Remove old  7. Verify
+
+Do:
+  ✅ 1. Walking skeleton: install + scaffold JUST what one domain needs + migrate that domain end-to-end + its tests + browser-verify (old library still in place for all others)
+  ✅ 2. Widen: migrate 2–3 more simple domains (proven pipeline, now verifying it generalizes)
+  ✅ 3. Widen: migrate medium domains
+  ✅ 4. Stress: migrate the hardest/heaviest domain end-to-end (proves the pattern scales)
+  ✅ 5. Widen: migrate remaining heavy domains
+  ✅ 6. Cleanup + rule tightening (old library removed IN the same packet that replaces its last usage; rules promoted to error now that they can pass)
+
+Each packet has a browser-verifiable outcome. Each packet is independently shippable. Risks surface at packet 1, not packet 7.`);
 
   // 3. Repo context
   if (repoContext) {
@@ -284,11 +346,11 @@ Choose the most appropriate type for each packet:
 - **bugfix** — fix a known bug (requires repro + regression test)
 - **ui_feature** — user-facing interface work (requires interactive scenarios)
 - **backend_feature** — API, service, or data layer work (requires integration tests)
-- **migration** — data or schema migration (requires rollback plan)
-- **refactor** — restructure without behavior change (requires no-regression proof)
+- **migration** — data or schema migration (requires rollback plan). ⚠ HIGH RISK of horizontal slicing. Never plan "migrate all of X"; plan one vertical slice first ("migrate one representative of X end-to-end with its tests and consumers"), then widen.
+- **refactor** — restructure without behavior change (requires no-regression proof). ⚠ HIGH RISK of horizontal slicing. Apply strangler-fig thinking: one slice at a time, old and new coexist, delete-old happens in the same packet that replaces the last use.
 - **long_running_job** — background process or batch job (requires heartbeat + completion check)
 - **integration** — connect multiple components (requires end-to-end scenario)
-- **tooling** — dev tools, scripts, CI (requires usage proof)`);
+- **tooling** — dev tools, scripts, CI (requires usage proof). ⚠ Horizontal by nature. Should be <10% of the plan. Fold into the first vertical packet that consumes it whenever possible; only stand alone if it's a time-boxed spike answering a specific question.`);
 
   // 7. Output format
   sections.push(`## Output Format

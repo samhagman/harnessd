@@ -13,6 +13,7 @@ import type {
   RiskRegister,
   DevServerConfig,
   PacketSummary,
+  PacketCompletionContext,
 } from "../schemas.js";
 import type { BaselineGateFailure } from "../tool-gates.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
@@ -32,7 +33,7 @@ export interface BuilderPromptOptions {
   nudgeFilePath?: string;
   /** Effective workspace dir (already collapsed — pass undefined if same as repoRoot). */
   workspaceDir?: string;
-  completionSummaries?: string;
+  completionContexts?: PacketCompletionContext[];
   devServer?: DevServerConfig;
   /** Packet IDs of packets that have already been built and evaluated (for harness context). */
   completedPacketIds?: string[];
@@ -66,6 +67,47 @@ import {
   buildResearchToolsSection,
 } from "./shared.js";
 
+function renderCompletionContextsForBuilder(contexts: PacketCompletionContext[]): string {
+  return contexts.map((ctx) => {
+    const goalsLine = ctx.goals.length > 0
+      ? `**Goals achieved:** ${ctx.goals.map((g) => g.id).join(", ")} — ${ctx.acceptanceResults.passed}/${ctx.acceptanceResults.total} criteria passed`
+      : `**Acceptance:** ${ctx.acceptanceResults.passed}/${ctx.acceptanceResults.total} criteria passed`;
+
+    const decisionsLines = ctx.keyDecisions.length > 0
+      ? `**Key decisions:**\n${ctx.keyDecisions.map((d) => `- ${d.description} — ${d.rationale}`).join("\n")}`
+      : "";
+
+    const integrationLine = ctx.inScope.length > 0
+      ? `**Integration points (in scope):** ${ctx.inScope.join(", ")}`
+      : "";
+
+    const filesLine = ctx.changedFiles.length > 0
+      ? `**Files changed:** ${ctx.changedFiles.join(", ")}`
+      : "";
+
+    const concernsLines = ctx.remainingConcerns.length > 0
+      ? `**Remaining concerns:** ${ctx.remainingConcerns.join("; ")}`
+      : "";
+
+    const notesLines = ctx.evaluatorNotes.length > 0
+      ? `**Evaluator notes:** ${ctx.evaluatorNotes.join("; ")}`
+      : "";
+
+    const parts = [
+      `### ${ctx.packetId}: ${ctx.title}`,
+      `**Objective:** ${ctx.objective}`,
+      goalsLine,
+      decisionsLines,
+      integrationLine,
+      filesLine,
+      concernsLines,
+      notesLines,
+    ].filter(Boolean);
+
+    return parts.join("\n");
+  }).join("\n\n");
+}
+
 export function buildBuilderPrompt(
   contract: PacketContract,
   opts: BuilderPromptOptions = {},
@@ -77,7 +119,7 @@ export function buildBuilderPrompt(
     contextOverrides,
     nudgeFilePath,
     workspaceDir,
-    completionSummaries,
+    completionContexts,
     devServer,
     completedPacketIds,
     researchTools,
@@ -131,6 +173,15 @@ contract. Do not add fallback paths, degraded modes, or "if this doesn't work, t
 alternatives. If we wanted those, they would be in the plan. If something isn't working,
 be persistent — take a step back, understand why, and get the packet to work as intended.
 Do not paper over failures with fallbacks.`);
+
+  // 1a. Delegation policy override (overrides global user CLAUDE.md subagent guidance)
+  sections.push(`## Delegation Policy
+
+Your global user instructions may tell Claude Code sessions to proactively decompose work into 2-3 parallel sonnet agents with an opus integration pass. **IGNORE THAT INSTRUCTION here.**
+
+Use whatever delegation pattern works best for you (fan-out, sequential, hybrid) — optimize for finishing cleanly, not for maximalism. Delegate only to reduce your own context pressure, not proactively. If you're running long, prefer emitting early with partial progress over running the session dry.
+
+If you cannot finish every AC in this session, do NOT loop retrying. Stop at a coherent checkpoint, self-check what's done, emit claimsDone:true with the partial result + an accurate list of what's incomplete. The evaluator will drive the remainder through the fix loop.`);
 
   // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("BuilderReport"));
@@ -215,6 +266,42 @@ ${contract.implementationPlan.map((step, i) => `${i + 1}. ${step}`).join("\n")}
 ### Likely Files
 ${contract.likelyFiles.map((f) => `- ${f}`).join("\n")}`);
 
+  if (contract.goals && contract.goals.length > 0) {
+    sections.push(`### Your Goals (WHAT to achieve)
+These are the outcomes you must deliver. The acceptance criteria below verify them.
+${contract.goals.map((g) => `- **${g.id}**: ${g.description}`).join("\n")}`);
+  }
+
+  if (contract.constraints && contract.constraints.length > 0) {
+    sections.push(`### Hard Constraints (DO NOT violate)
+These are non-negotiable boundaries on your solution.
+${contract.constraints.map((c) => `- **${c.id}** (${c.kind}): ${c.description}`).join("\n")}`);
+  }
+
+  if (contract.guidance && contract.guidance.length > 0) {
+    sections.push(`### Guidance (principles to follow — not hard requirements)
+These inform your approach but are not pass/fail criteria. Deviate with reason.
+${contract.guidance.map((g) => {
+  let line = `- **${g.id}**: ${g.description}`;
+  if (g.principle) line += ` (see architectural-thinking: ${g.principle})`;
+  return line;
+}).join("\n")}`);
+  }
+
+  if ((contract.goals && contract.goals.length > 0) || (contract.constraints && contract.constraints.length > 0) || (contract.guidance && contract.guidance.length > 0)) {
+    sections.push(`### Where You Have Freedom
+
+Your contract has three levels of binding:
+1. **Goals** — you MUST achieve these outcomes. Non-negotiable.
+2. **Constraints** — you MUST stay within these boundaries. Non-negotiable.
+3. **Guidance** — you SHOULD follow these principles. Deviate with reason.
+
+Everything else — the specific approach, architecture, file organization,
+naming, intermediate steps — is YOUR call. You are a staff-level engineer.
+The contract tells you what to deliver and what not to break. How you get
+there is up to you.`);
+  }
+
   // 2b. Critical constraints from planner
   if (criticalConstraints && criticalConstraints.length > 0) {
     sections.push(`## ⚠ Critical Constraints (from planner)
@@ -297,15 +384,11 @@ ${evaluatorCriteria
 ${specExcerpt}`);
   }
 
-  // 4b. Prior context from completed packets (static summaries + semantic memory)
-  if (completionSummaries) {
+  // 4b. Prior context from completed packets (structured completion contexts)
+  if (completionContexts && completionContexts.length > 0) {
     sections.push(`## Prior Context from Completed Packets
 
-The following context covers packets that have already been completed. Use it to understand what
-exists in the codebase, what patterns were established, and what integration points are
-available. This should eliminate the need to explore the codebase from scratch.
-
-${completionSummaries}`);
+${renderCompletionContextsForBuilder(completionContexts)}`);
   }
 
   // 4c. Harness pipeline context + memory search guidance
@@ -564,6 +647,82 @@ List all commit SHAs in your result envelope under the commitShas field.
 **Your git commit messages will be shown to subsequent builders as context.**
 Write them as if you're briefing the next engineer who will pick up where you left off.`);
 
+  // 11c. Design Decision Log teaching section
+  sections.push(`## Design Decision Log
+
+As you implement, record significant design decisions in your \`keyDecisions\` array.
+These flow to future packets and QA so they understand your reasoning and don't flag
+intentional choices as bugs.
+
+### When to log a decision
+
+Log a decision when you:
+- **Choose between alternatives**: You considered two or more approaches and picked one
+- **Deviate from guidance**: The contract's guidance section suggested one approach but
+  you chose another for good reason
+- **Discover something unexpected**: The codebase works differently than the contract
+  assumed, and you adapted
+- **Make a tradeoff**: You sacrificed one quality for another (e.g., simplicity over
+  performance, or consistency over minimal changes)
+- **Defer something**: You intentionally chose NOT to do something that's in scope,
+  because a different approach achieves the goal better
+
+### How to write good decisions
+
+Each decision has a \`description\` (what you chose) and a \`rationale\` (why).
+The rationale should reference the specific goal, constraint, or context that
+drove the choice.
+
+**GOOD decisions:**
+\`\`\`json
+{
+  "description": "Used Redis-backed sessions instead of stateless JWT",
+  "rationale": "Goal G-001 requires shared session state across instances. Redis gives us TTL-based expiration that aligns with Clerk's 5-minute token refresh cycle. JWT would require client-side refresh logic that's outside constraint C-002 (no frontend changes)."
+}
+\`\`\`
+
+\`\`\`json
+{
+  "description": "Implemented auth as Express middleware instead of per-route guards",
+  "rationale": "Contract guidance GD-001 suggested per-route guards, but middleware achieves goal G-001 (all routes protected) with a single integration point. Per-route guards risk missing a route — middleware is safer and the evaluator can verify with a single curl to any endpoint."
+}
+\`\`\`
+
+\`\`\`json
+{
+  "description": "Split the migration into two phases: schema change then data backfill",
+  "rationale": "The contract's implementation plan had this as one step, but the existing table has 2M rows. A single ALTER+UPDATE would lock the table for ~30 seconds, violating constraint C-003 (no downtime). Two-phase approach keeps each lock under 1 second."
+}
+\`\`\`
+
+\`\`\`json
+{
+  "description": "Used barrel re-exports from the existing shared/ directory instead of creating a new integration module",
+  "rationale": "Guidance GD-002 referenced the modular-monolith principle (cross-module imports through barrel files). The shared/ directory already has this pattern for 3 other modules. Adding a new integration module would be the first exception and would confuse future builders."
+}
+\`\`\`
+
+\`\`\`json
+{
+  "description": "Deferred rate limiting to a future packet",
+  "rationale": "Rate limiting is mentioned in risk R-002 but not in any goal or acceptance criterion. Adding it now would expand scope beyond constraint C-001 (only modify auth-related files). Logged as a remaining concern for the evaluator to flag."
+}
+\`\`\`
+
+**BAD decisions (too vague — don't do this):**
+- "Used Redis" — no rationale, no context on why
+- "Changed the approach" — what approach? why?
+- "Followed best practices" — which ones? what was the alternative?
+
+### What NOT to log
+
+Don't log routine implementation details:
+- "Used async/await" — this is just normal coding
+- "Added error handling to the API call" — standard practice
+- "Named the file auth-middleware.ts" — trivial naming choice
+
+Log decisions that would make a future builder or QA agent say "why did they do it this way?"`);
+
   // 12. Self-check + output
   sections.push(`## Self-Check & Output
 
@@ -611,6 +770,9 @@ ${RESULT_START_SENTINEL}
   "microFanoutUsed": [],
   "selfCheckResults": [
     {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
+  ],
+  "keyDecisions": [
+    {"description": "...", "rationale": "..."}
   ],
   "remainingConcerns": [],
   "claimsDone": true,

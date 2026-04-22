@@ -116,6 +116,7 @@ async function main() {
       { criterionId: "AC-001", status: "pass", evidence: "Clerk middleware validates tokens correctly" },
       { criterionId: "AC-002", status: "pass", evidence: "Redis session store configured with 24h TTL" },
     ],
+    keyDecisions: [],
     remainingConcerns: ["Edge case: expired token during WebSocket upgrade not tested"],
     claimsDone: true,
     commitShas: null,
@@ -217,6 +218,9 @@ async function main() {
     assumptions: ["Auth middleware from PKT-001 is working"],
     backgroundJobs: [],
     microFanoutPlan: [],
+    goals: [],
+    constraints: [],
+    guidance: [],
     reviewChecklist: [],
     proposedCommitMessage: "feat: add protected API routes",
   };

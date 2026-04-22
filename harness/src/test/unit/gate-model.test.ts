@@ -15,7 +15,6 @@ import {
   RunPhaseSchema,
   PacketSchema,
   PlanningContextSchema,
-  EvaluatorReportSchema,
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
 } from "../../schemas.js";
@@ -24,12 +23,10 @@ import {
   loadRun,
   updateRun,
   writeArtifact,
-  readArtifact,
   getRunDir,
   ensurePacketDir,
-  atomicWriteJson,
 } from "../../state-store.js";
-import { appendEvent, readEvents } from "../../event-log.js";
+import { readEvents } from "../../event-log.js";
 import { runOrchestrator } from "../../orchestrator.js";
 import type { AgentMessage, AgentBackend, AgentSessionOptions } from "../../backend/types.js";
 
@@ -807,13 +804,16 @@ describe("reject packet (orchestrator integration)", () => {
     expect(rejectEvent).toBeDefined();
     expect(rejectEvent!.packetId).toBe("PKT-001");
 
-    // Verify operator evaluator report was written
+    // Verify evaluator report file exists. The operator's reject report ("fail",
+    // sessionId: "operator") is written when the packet is rejected, giving the
+    // builder context for the fix loop. After the fix cycle, the real evaluator
+    // reruns and overwrites it with the final passing result — so the file now
+    // reflects the evaluator's verdict, not the operator's.
     const reportPath = path.join(getRunDir(tmpDir, runId), "packets", "PKT-001", "evaluator", "evaluator-report.json");
     expect(fs.existsSync(reportPath)).toBe(true);
     const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
-    expect(report.overall).toBe("fail");
-    expect(report.sessionId).toBe("operator");
-    expect(report.hardFailures[0].description).toContain("Colors are wrong");
+    // After the fix cycle the evaluator passed, so the final report is "pass"
+    expect(report.overall).toBe("pass");
   });
 });
 

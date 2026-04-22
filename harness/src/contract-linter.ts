@@ -14,9 +14,9 @@
  * Reference: TAD section 11.5
  */
 
-import type { PacketContract, PacketType, AcceptanceTemplate, CriterionKind } from "./schemas.js";
+import type { PacketType } from "./schemas.js";
 import { PacketContractSchema, RISKY_PACKET_TYPES } from "./schemas.js";
-import { getTemplate, getUxQualityCriteriaIds } from "./templates.js";
+import { getTemplate } from "./templates.js";
 
 export interface LintResult {
   valid: boolean;
@@ -32,12 +32,11 @@ const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_featur
 // Structural checks below use schema fields (command, scenario) instead of prose regex.
 
 
-const MAX_LIKELY_FILES_BY_SIZE = {
-  S: 8,
-  M: 20,
-  L: 50,
-  XL: 80,
-};
+// likelyFiles cap REMOVED — the evaluator's scope-bounded criterion catches
+// real scope violations at verification time. The cap only caused wasted
+// negotiation rounds when the contract builder listed all violation files
+// (legitimately) but forgot to bump the size field. More info, fewer
+// constraints is the better approach for builders.
 
 /**
  * Lint a contract proposal. Returns errors if any rules are violated.
@@ -47,7 +46,6 @@ const MAX_LIKELY_FILES_BY_SIZE = {
 export function lintContract(
   proposal: unknown,
   packetType: PacketType,
-  estimatedSize?: "S" | "M" | "L" | "XL",
 ): LintResult {
   const errors: string[] = [];
 
@@ -83,15 +81,7 @@ export function lintContract(
     }
   }
 
-  // 5. likelyFiles reasonable for packet size
-  if (estimatedSize) {
-    const max = MAX_LIKELY_FILES_BY_SIZE[estimatedSize];
-    if (contract.likelyFiles.length > max) {
-      errors.push(
-        `likelyFiles has ${contract.likelyFiles.length} entries but size "${estimatedSize}" allows max ${max}. Reduce scope or increase size estimate.`,
-      );
-    }
-  }
+  // 5. (removed: estimatedSize check — it's a planning signal, not a contract requirement)
 
   // 6. long_running_job must have observability criteria
   if (packetType === "long_running_job") {
@@ -150,25 +140,43 @@ export function lintContract(
     }
   }
 
-  // 11. UX quality checklist for ui_feature packets
-  //     Warn (not error) if a ui_feature contract is missing UX quality criteria.
-  //     This is advisory — the contract builder may have valid reasons to omit some,
-  //     but the linter should surface the gap.
-  if (packetType === "ui_feature") {
-    const uxCriteriaIds = getUxQualityCriteriaIds();
-    const presentIds = contract.acceptance.map((c) => c.id);
-    // Match if any criterion ID ends with the UX criterion ID (e.g. "AC-006-ux-navigation" satisfies "ux-navigation")
-    const missingUxIds = uxCriteriaIds.filter((uxId) => !presentIds.some((pid) => pid === uxId || pid.endsWith(uxId)));
-    if (missingUxIds.length > 0) {
+  // 11. (removed: UX criteria ID check — the contract evaluator reviews quality coverage)
+
+  // 12. New-style contract goal/constraint validation (only when goals array is non-empty)
+  if (contract.goals !== undefined && contract.goals.length > 0) {
+    // Each blocking AC should map to at least one goal
+    const allMappedAcIds = new Set(contract.goals.flatMap((g: { acceptanceCriteriaIds: string[] }) => g.acceptanceCriteriaIds));
+    const blockingAcIds = contract.acceptance.filter((ac: { blocking: boolean }) => ac.blocking).map((ac: { id: string }) => ac.id);
+    const unmappedBlocking = blockingAcIds.filter((id: string) => !allMappedAcIds.has(id));
+    if (unmappedBlocking.length > 0) {
       errors.push(
-        `ui_feature contract is missing UX quality criteria: ${missingUxIds.join(", ")}. ` +
-        `Consider adding these to ensure navigation, state persistence, console health, ` +
-        `loading states, empty states, and error handling are verified.`,
+        `Blocking acceptance criteria not mapped to any goal: ${unmappedBlocking.join(", ")}. Each blocking AC should verify at least one goal.`
+      );
+    }
+
+    // Check that goal references point to existing AC IDs
+    const actualAcIds = new Set(contract.acceptance.map((ac: { id: string }) => ac.id));
+    for (const goal of contract.goals) {
+      const dangling = goal.acceptanceCriteriaIds.filter((id: string) => !actualAcIds.has(id));
+      if (dangling.length > 0) {
+        errors.push(
+          `Goal "${goal.id}" references non-existent acceptance criteria: ${dangling.join(", ")}`
+        );
+      }
+    }
+  }
+
+  // 13. Constraints should have rationales
+  if (contract.constraints && contract.constraints.length > 0) {
+    const noRationale = contract.constraints.filter((c: { rationale?: string }) => !c.rationale);
+    if (noRationale.length > 0) {
+      errors.push(
+        `Constraints without rationale: ${noRationale.map((c: { id: string }) => c.id).join(", ")}. Add rationale explaining WHY each constraint exists.`
       );
     }
   }
 
-  // 12. Structural runtime verification check for scenario/api criteria.
+  // 14. Structural runtime verification check for scenario/api criteria.
   //     Instead of regex-matching prose in evidenceRequired (brittle — agents write
   //     valid evidence that doesn't contain magic keywords), check that the criterion
   //     has a structured verification mechanism: a command to run or a scenario with steps.

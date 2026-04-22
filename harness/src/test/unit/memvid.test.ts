@@ -147,6 +147,9 @@ const sampleContract: PacketContract = {
       evidenceRequired: ["screenshot of successful login"],
     },
   ],
+  goals: [],
+  constraints: [],
+  guidance: [],
   reviewChecklist: ["Check for XSS vulnerabilities"],
   proposedCommitMessage: "feat: add login page",
 };
@@ -164,6 +167,7 @@ const sampleBuilderReport: BuilderReport = {
     { criterionId: "AC-001", status: "pass", evidence: "npm test passed with 0 failures" },
     { criterionId: "AC-002", status: "pass", evidence: "Verified login flow manually" },
   ],
+  keyDecisions: [],
   remainingConcerns: ["Edge case for empty password not tested"],
   claimsDone: true,
   commitShas: null,

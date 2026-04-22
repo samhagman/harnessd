@@ -7,7 +7,6 @@
 import type {
   Packet,
   AcceptanceTemplate,
-  RiskRegister,
   ContractReview,
   PacketContract,
   EvaluatorReport,
@@ -102,7 +101,6 @@ ${existingContract.implementationPlan.map((step, i) => `${i + 1}. ${step}`).join
 **ID:** ${packet.id}
 **Title:** ${packet.title}
 **Type:** ${packet.type}
-**Size:** ${packet.estimatedSize}
 **Objective:** ${packet.objective}
 **Why now:** ${packet.whyNow}
 
@@ -149,12 +147,73 @@ Your contract proposal MUST include ALL of these fields:
 - **backgroundJobs**: any long-running commands needed (can be empty)
 - **microFanoutPlan**: any parallelizable subwork (can be empty)
 - **acceptance**: specialized acceptance criteria (must include required kinds)
+- **goals**: explicit outcomes to achieve (each with acceptanceCriteriaIds mapping to ACs)
+- **constraints**: hard restrictions with kind and rationale
+- **guidance**: principles and preferences (reference architectural-thinking by name)
 - **reviewChecklist**: items for the evaluator to check
 - **proposedCommitMessage**: git commit message in format "harnessd(${packet.id}): ..."
 
 ### Scope Constraint
 Keep the packet bounded and completable in one builder session.
 If the scope feels too large, say so in the contract.`);
+
+  // 4a. Goals, constraints, and guidance teaching section
+  sections.push(`## Goals, Constraints, and Guidance
+
+Your contract MUST separate intent into three explicit sections:
+
+### Goals (WHAT to achieve)
+Goals are verifiable outcomes. Each goal maps to one or more acceptance criteria.
+The builder succeeds by achieving the goal — the acceptance criteria prove it.
+
+GOOD goal: "Zero ESLint boundary violations in the target package"
+GOOD goal: "All existing tests pass after refactor"
+BAD goal:  "Use max 12 bridge files" — this prescribes HOW, not WHAT
+
+For each goal, list the acceptance criteria IDs that verify it.
+
+### Constraints (hard boundaries)
+Constraints are non-negotiable restrictions. They limit the solution space but
+do NOT prescribe the solution. Think: what would a staff engineer tell a senior
+engineer they MUST NOT do?
+
+GOOD constraint (scope): "Only modify files within src/"
+GOOD constraint (tech-stack): "Must use the existing Vitest test framework"
+GOOD constraint (behavior): "Public API signatures must not change"
+GOOD constraint (safety): "No credential exposure in committed files"
+BAD constraint: "Max 12 bridge files" — this prescribes the implementation approach
+BAD constraint: "Must use the adapter pattern" — this prescribes the solution
+
+Every constraint MUST have a rationale explaining WHY it exists.
+If you haven't deeply investigated the codebase to know the right approach,
+don't constrain the approach. State the GOAL and let the builder find the path.
+
+### Guidance (principles and preferences)
+Guidance informs the builder's thinking without hard-failing on deviation.
+Reference architectural principles by name rather than copy-pasting rules.
+
+GOOD guidance: "Follow dependency-direction principle (architectural-principles)"
+GOOD guidance: "The existing codebase uses barrel exports — follow this pattern"
+GOOD guidance: "Prefer fewer shared bridge files where architecturally sound"
+
+Available architectural principles you can reference by name:
+- screaming-architecture — file tree should scream what the app does
+- dependency-direction — dependencies flow inward only
+- contracts-first — define types/schemas before implementation
+- colocated-integration — integration logic stays in one file
+- modular-monolith — cross-module imports through barrel files only
+- shared-escape-hatch — only move to shared/ when 2+ consumers NOW
+- anti-corruption-layer — translation boundary at third-party edges
+
+### The Litmus Test
+Before adding anything to constraints, ask: "If the builder achieves all goals
+but violates this, should the packet FAIL?" If yes, it's a constraint.
+If "it depends on why they deviated," it's guidance.
+
+### Acceptance Criteria Verify GOALS
+Each acceptance criterion should map to a goal. Constraints are checked
+separately — they don't need dedicated acceptance criteria unless they have
+a natural verification command.`);
 
   // 4b. Data integrity rule
   sections.push(`## Data Integrity Rule
@@ -228,6 +287,15 @@ ${RESULT_START_SENTINEL}
       "blocking": true,
       "evidenceRequired": ["..."]
     }
+  ],
+  "goals": [
+    {"id": "G-001", "description": "...", "acceptanceCriteriaIds": ["AC-001", "AC-002"]}
+  ],
+  "constraints": [
+    {"id": "C-001", "description": "...", "kind": "scope", "rationale": "..."}
+  ],
+  "guidance": [
+    {"id": "GD-001", "description": "...", "source": "architectural-principles", "principle": "dependency-direction"}
   ],
   "reviewChecklist": ["..."],
   "proposedCommitMessage": "harnessd(${packet.id}): ..."

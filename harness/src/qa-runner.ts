@@ -17,6 +17,7 @@ import type {
   ProjectConfig,
   IntegrationScenario,
   DevServerConfig,
+  PacketCompletionContext,
 } from "./schemas.js";
 import { MemvidBuffer } from "./memvid.js";
 import type { RunMemory } from "./memvid.js";
@@ -24,7 +25,7 @@ import { QAReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeReadOnlyHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildQAPrompt, type QAPromptContext } from "./prompts/qa-prompt.js";
-import { CONTINUATION_PROMPT } from "./prompts/shared.js";
+import { RESUME_WITH_FRESH_CONTEXT_PREFIX } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
 import { createResearchMcpServerRecord } from "./research-tools.js";
@@ -67,6 +68,7 @@ export async function runQA(
   builderReports: BuilderReport[],
   evaluatorGuide: EvaluatorGuide | undefined,
   integrationScenarios: IntegrationScenario[],
+  completionContexts: PacketCompletionContext[],
   runnerConfig: QARunnerConfig,
   round: number = 1,
   devServer?: DevServerConfig,
@@ -83,6 +85,7 @@ export async function runQA(
     builderReports,
     evaluatorGuide,
     integrationScenarios,
+    completionContexts,
     round,
     devServer,
     workspaceDir: effectiveWorkspaceDir,
@@ -90,7 +93,10 @@ export async function runQA(
     useClaudeBackend: runnerConfig.useClaudeBackend,
   };
 
-  const prompt = resumeSessionId ? CONTINUATION_PROMPT : buildQAPrompt(promptContext);
+  // Always build the full QA prompt; on resume, prefix with rejection framing
+  // so the model doesn't re-yield its prior verdict.
+  const fullPrompt = buildQAPrompt(promptContext);
+  const prompt = resumeSessionId ? `${RESUME_WITH_FRESH_CONTEXT_PREFIX}${fullPrompt}` : fullPrompt;
 
   const memvidBuffer = runnerConfig.memory ? new MemvidBuffer(runnerConfig.memory) : null;
 

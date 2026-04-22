@@ -15,6 +15,7 @@ import type {
   EvaluatorGuide,
   IntegrationScenario,
   DevServerConfig,
+  PacketCompletionContext,
 } from "../schemas.js";
 import {
   RESULT_START_SENTINEL,
@@ -42,6 +43,62 @@ export interface QAPromptContext {
   enableMemory?: boolean;
   /** When false, verification fanout section is suppressed (Codex backend). */
   useClaudeBackend?: boolean;
+  completionContexts?: PacketCompletionContext[];
+}
+
+function renderCompletionContextsForQA(contexts: PacketCompletionContext[]): string {
+  const header = `## Completed Packet Context
+
+Use this to understand WHY things were built the way they were. Design decisions
+listed below were intentional — do not flag them as issues unless they cause
+actual functional problems.`;
+
+  const packetSections = contexts.map((ctx) => {
+    const goalsLine = ctx.goals.length > 0
+      ? `**Goals:** ${ctx.goals.map((g) => {
+          const passed = ctx.acceptanceResults.passed === ctx.acceptanceResults.total ? "PASSED" : "PARTIAL";
+          return `${g.id} — ${g.description} (${passed})`;
+        }).join("; ")}`
+      : "";
+
+    const constraintsLine = ctx.constraints.length > 0
+      ? `**Constraints:** ${ctx.constraints.map((c) => `${c.id} — ${c.description}`).join("; ")}`
+      : "";
+
+    const decisionsLines = ctx.keyDecisions.length > 0
+      ? `**Design decisions (intentional — not bugs):**\n${ctx.keyDecisions.map((d) => `- ${d.description} — ${d.rationale}`).join("\n")}`
+      : "";
+
+    const deferredItems = [
+      ...ctx.remainingConcerns.map((c) => `${c} (builder concern)`),
+      ...ctx.evaluatorNotes.map((n) => `${n} (evaluator recommendation)`),
+    ];
+    const deferredLines = deferredItems.length > 0
+      ? `**Deferred / flagged for future work:**\n${deferredItems.map((d) => `- ${d}`).join("\n")}`
+      : "";
+
+    const addedCriteriaLine = ctx.evaluatorAddedCriteria.length > 0
+      ? `**Evaluator-added criteria:** ${ctx.evaluatorAddedCriteria.join(", ")}`
+      : "";
+
+    const filesLine = ctx.changedFiles.length > 0
+      ? `**Changed files:** ${ctx.changedFiles.join(", ")}`
+      : "";
+
+    const parts = [
+      `### ${ctx.packetId}: ${ctx.title}`,
+      goalsLine,
+      constraintsLine,
+      decisionsLines,
+      deferredLines,
+      addedCriteriaLine,
+      filesLine,
+    ].filter(Boolean);
+
+    return parts.join("\n");
+  }).join("\n\n");
+
+  return `${header}\n\n${packetSections}`;
 }
 
 export function buildQAPrompt(ctx: QAPromptContext): string {
@@ -125,7 +182,12 @@ ${specExcerpt}`);
 ${summaries.join("\n\n")}`);
   }
 
-  // 4b. Harness pipeline context + memory search guidance
+  // 4b. Completion contexts — design decisions and intent for QA
+  if (ctx.completionContexts && ctx.completionContexts.length > 0) {
+    sections.push(renderCompletionContextsForQA(ctx.completionContexts));
+  }
+
+  // 4c. Harness pipeline context + memory search guidance
   {
     const completedPacketIds = ctx.contracts.map((c) => c.packetId);
     sections.push(buildHarnessContextSection("qa_agent", {

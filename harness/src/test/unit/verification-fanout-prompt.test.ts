@@ -55,6 +55,9 @@ function makeContract(): PacketContract {
     backgroundJobs: [],
     microFanoutPlan: [],
     acceptance: [],
+    goals: [],
+    constraints: [],
+    guidance: [],
     reviewChecklist: [],
     proposedCommitMessage: "test",
   };
@@ -69,6 +72,7 @@ function makeBuilderReport(): BuilderReport {
     backgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [],
+    keyDecisions: [],
     remainingConcerns: [],
     claimsDone: true,
     commitShas: null,

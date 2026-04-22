@@ -50,6 +50,25 @@ whether it meets quality standards before the builder starts implementation.
 Be rigorous. A weak contract leads to weak implementation and wasted builder cycles.
 Only accept contracts that are specific, testable, and properly scoped.`);
 
+  // 1a. Over-prescription detection
+  sections.push(`## Over-Prescription Detection (CRITICAL)
+
+Your most important job is catching constraints that should be goals or guidance.
+Over-prescriptive constraints are the #1 cause of wasted builder cycles.
+
+### Red flags — require revision:
+- **Constraint specifies HOW not WHAT**: "Max 12 bridge files" → move to guidance or remove
+- **Constraint conflicts with a goal**: Goal "zero violations" + Constraint "only files in inScope" → flag if fixing violations requires touching files outside inScope
+- **Constraint too strict for the goal type**: "No behavior changes" on a refactor → suggest "No changes to public API contracts" instead
+- **Constraint without rationale**: Every constraint needs a rationale. No rationale = the author didn't think about whether it's truly a hard boundary
+- **AC that enforces a constraint**: "git diff shows max 12 files" is over-prescriptive. ACs should verify goals, not police constraints
+
+When you find over-prescription, require the contract builder to:
+1. Move the item to guidance (if it's a preference)
+2. Restate it as a goal (if it's really an outcome)
+3. Add a rationale (if it's truly a constraint but missing justification)
+4. Resolve conflicts between goals and constraints`);
+
   // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("ContractReview"));
 
@@ -98,7 +117,19 @@ ${proposal.acceptance
   .join("\n")}
 
 ### Review Checklist
-${proposal.reviewChecklist.map((item) => `- ${item}`).join("\n")}`);
+${proposal.reviewChecklist.map((item) => `- ${item}`).join("\n")}${
+  proposal.goals && proposal.goals.length > 0
+    ? `\n\n### Goals (${proposal.goals.length})\n${proposal.goals.map((g) => `- **${g.id}**: ${g.description} (verifies: ${g.acceptanceCriteriaIds.join(", ")})`).join("\n")}`
+    : ""
+}${
+  proposal.constraints && proposal.constraints.length > 0
+    ? `\n\n### Constraints (${proposal.constraints.length})\n${proposal.constraints.map((c) => `- **${c.id}** (${c.kind}): ${c.description}${c.rationale ? ` — Rationale: ${c.rationale}` : " — ⚠ NO RATIONALE"}`).join("\n")}`
+    : ""
+}${
+  proposal.guidance && proposal.guidance.length > 0
+    ? `\n\n### Guidance (${proposal.guidance.length})\n${proposal.guidance.map((g) => `- **${g.id}**: ${g.description}${g.principle ? ` (principle: ${g.principle})` : ""}`).join("\n")}`
+    : ""
+}`);
 
   // 4. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
@@ -123,7 +154,11 @@ A contract is acceptable ONLY when ALL of these are true:
 8. Long-running packets have heartbeat/completion verification
 9. Rubric criteria have thresholds
 10. Commands and evidence plans are reproducible
-11. Packet is small enough to finish in one builder cycle`);
+11. Packet is small enough to finish in one builder cycle
+12. Goals array is not empty — contracts must have explicit goals
+13. Each blocking acceptance criterion maps to at least one goal
+14. Constraints have rationales and don't prescribe solutions
+15. No constraint conflicts with a goal`);
 
   // 6. Output format
   sections.push(`## Output Format
@@ -140,7 +175,8 @@ ${RESULT_START_SENTINEL}
     "testability": (1-5),
     "riskCoverage": (1-5),
     "clarity": (1-5),
-    "specAlignment": (1-5)
+    "specAlignment": (1-5),
+    "intentSeparation": (1-5)
   },
   "requiredChanges": ["change 1", "change 2"],
   "suggestedCriteriaAdditions": [

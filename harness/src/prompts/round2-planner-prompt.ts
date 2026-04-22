@@ -71,8 +71,7 @@ these specific QA findings.
 3. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
 4. Do NOT try to create plan files, write markdown files, or spawn subagents.
 5. Do NOT re-plan work that is already done and passing.
-6. Create FOCUSED fix packets — each one targets specific QA issues.
-7. Prefer fewer, larger fix packets over many tiny ones (to reduce session overhead).`);
+6. Create FOCUSED fix packets — each one targets specific QA issues.`);
 
   // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));
@@ -154,11 +153,7 @@ These quality standards still apply. Your fix packets must not regress quality.`
    - Major issues second
    - Minor issues can be grouped into a "polish" packet or deferred
 
-4. **Size constraints:**
-   - Fix packets should be S or M sized (never L)
-   - 1-3 fix packets is typical; more than 5 suggests issues are too scattered
-
-5. **Packet ID format:** Use "${idPrefix}-001", "${idPrefix}-002", etc.
+4. **Packet ID format:** Use "${idPrefix}-001", "${idPrefix}-002", etc.
 
 6. **Each packet must include:**
    - Which QA issue IDs it addresses

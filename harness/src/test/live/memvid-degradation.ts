@@ -52,6 +52,9 @@ async function main() {
       implementationPlan: [],
       backgroundJobs: [],
       microFanoutPlan: [],
+      goals: [],
+      constraints: [],
+      guidance: [],
       reviewChecklist: [],
       proposedCommitMessage: "test",
     };

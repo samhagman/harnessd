@@ -14,6 +14,7 @@ import type {
   AcceptanceCriterion,
   EvaluatorGuide,
   DevServerConfig,
+  PacketCompletionContext,
 } from "../schemas.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
@@ -28,7 +29,7 @@ export interface EvaluatorPromptOptions {
   evaluatorGuide?: EvaluatorGuide;
   /** Effective workspace dir (already collapsed — pass undefined if same as repoRoot). */
   workspaceDir?: string;
-  completionSummaries?: string;
+  completionContexts?: PacketCompletionContext[];
   gateResultsSummary?: string;
   recoveryContext?: string;
   futurePacketsSummary?: string;
@@ -61,6 +62,43 @@ import {
   buildVerificationFanoutSection,
 } from "./shared.js";
 
+function renderCompletionContextsForEvaluator(contexts: PacketCompletionContext[]): string {
+  return contexts.map((ctx) => {
+    const goalsLine = ctx.goals.length > 0
+      ? `**Goals:** ${ctx.goals.map((g) => `${g.id} — ${g.description}`).join("; ")}`
+      : "";
+
+    const constraintsLine = ctx.constraints.length > 0
+      ? `**Constraints:** ${ctx.constraints.map((c) => `${c.id} — ${c.description}`).join("; ")}`
+      : "";
+
+    const decisionsLine = ctx.keyDecisions.length > 0
+      ? `**Key decisions:** ${ctx.keyDecisions.map((d) => d.description).join("; ")}`
+      : "";
+
+    const acceptanceLine = `**Acceptance:** ${ctx.acceptanceResults.passed}/${ctx.acceptanceResults.total} passed${ctx.evaluatorAddedCriteria.length > 0 ? ` | Evaluator added: ${ctx.evaluatorAddedCriteria.join(", ")}` : ""}`;
+
+    const deferredItems = [
+      ...ctx.remainingConcerns,
+      ...ctx.evaluatorNotes,
+    ];
+    const deferredLine = deferredItems.length > 0
+      ? `**Deferred:** ${deferredItems.join("; ")}`
+      : "";
+
+    const parts = [
+      `### ${ctx.packetId}: ${ctx.title}`,
+      goalsLine,
+      constraintsLine,
+      decisionsLine,
+      acceptanceLine,
+      deferredLine,
+    ].filter(Boolean);
+
+    return parts.join("\n");
+  }).join("\n\n");
+}
+
 export function buildEvaluatorPrompt(
   contract: PacketContract,
   builderReport: BuilderReport,
@@ -70,7 +108,7 @@ export function buildEvaluatorPrompt(
     riskRegister,
     evaluatorGuide,
     workspaceDir,
-    completionSummaries,
+    completionContexts,
     gateResultsSummary,
     recoveryContext,
     futurePacketsSummary,
@@ -170,7 +208,13 @@ is to find evidence that it isn't, or to confirm that it truly is.`);
   specified in the contract. If the builder added fallback paths, degraded modes, or
   "if this doesn't work, try that" alternatives, that is a hard failure. If we wanted
   those, they would be in the plan. The implementation must be persistent and correct,
-  not defensive and approximate.`);
+  not defensive and approximate.
+- **Verify GOALS, respect CONSTRAINTS, reference GUIDANCE.** Your job is to verify
+  that goals were achieved (outcomes) and constraints were honored (boundaries).
+  Guidance is informational — note significant deviations in nextActions but do NOT
+  fail the packet for approaching a goal differently than guidance suggested.
+  A builder who achieves every goal, honors every constraint, but deviates from
+  guidance has PASSED.`);
 
   // 3. Read-only rule (with operational exceptions)
   sections.push(`## Evaluation Permissions
@@ -222,6 +266,26 @@ ${formatAcceptanceCriteria(contract.acceptance)}
 ### Review Checklist
 ${contract.reviewChecklist.map((item) => `- [ ] ${item}`).join("\n")}`);
 
+  if (contract.goals && contract.goals.length > 0) {
+    sections.push(`### Goals (verify these — outcomes that MUST be achieved)
+${contract.goals.map((g) => `- **${g.id}**: ${g.description}\n  Verified by: ${g.acceptanceCriteriaIds.join(", ")}`).join("\n")}`);
+  }
+
+  if (contract.constraints && contract.constraints.length > 0) {
+    sections.push(`### Constraints (respect these — hard boundaries)
+${contract.constraints.map((c) => `- **${c.id}** (${c.kind}): ${c.description}`).join("\n")}
+
+Constraint violations are failures ONLY if the builder actually violated them.
+Do NOT fail for a different approach — check the constraints, not your assumptions.`);
+  }
+
+  if (contract.guidance && contract.guidance.length > 0) {
+    sections.push(`### Guidance (reference these — preferences, not hard requirements)
+${contract.guidance.map((g) => `- **${g.id}**: ${g.description}`).join("\n")}
+
+Guidance deviations are NOT failures. Note them in nextActions if significant.`);
+  }
+
   // 5. Builder report
   sections.push(`## Builder's Report
 
@@ -253,15 +317,15 @@ Files changed that are NOT on this list are fine — builders often need to touc
 additional files. But files that SHOULD have been changed and weren't are a red flag.`);
   }
 
-  // 5b. Prior context from completed packets (static summaries + semantic memory)
-  if (completionSummaries) {
+  // 5b. Prior context from completed packets (structured completion contexts)
+  if (completionContexts && completionContexts.length > 0) {
     sections.push(`## Prior Context from Completed Packets
 
 These packets were completed before this one. Use this context to understand what
 already exists in the codebase and what patterns the builder should have followed.
 If the builder deviated from established patterns without justification, flag it.
 
-${completionSummaries}`);
+${renderCompletionContextsForEvaluator(completionContexts)}`);
   }
 
   // 5b2. Harness pipeline context + memory search guidance

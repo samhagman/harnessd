@@ -234,6 +234,33 @@ export const AcceptanceCriterionSchema = z.object({
 
 export type AcceptanceCriterion = z.infer<typeof AcceptanceCriterionSchema>;
 
+// ------------------------------------
+// Goals, constraints, and guidance
+// ------------------------------------
+
+export const ContractGoalSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  acceptanceCriteriaIds: z.array(z.string()),
+});
+export type ContractGoal = z.infer<typeof ContractGoalSchema>;
+
+export const ContractConstraintSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  kind: z.enum(["scope", "tech-stack", "behavior", "safety", "process"]),
+  rationale: z.string().optional(),
+});
+export type ContractConstraint = z.infer<typeof ContractConstraintSchema>;
+
+export const ContractGuidanceSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  source: z.enum(["architectural-principles", "codebase-pattern", "operator-preference", "domain-convention"]),
+  principle: z.string().optional(),
+});
+export type ContractGuidance = z.infer<typeof ContractGuidanceSchema>;
+
 /**
  * Evaluator-proposed criterion — what the evaluator outputs in its report.
  * Does NOT include an id; the orchestrator assigns canonical IDs.
@@ -295,6 +322,9 @@ export const PacketContractSchema = z.object({
   backgroundJobs: z.array(BackgroundJobPlanSchema),
   microFanoutPlan: z.array(MicroFanoutPlanSchema),
   acceptance: z.array(AcceptanceCriterionSchema),
+  goals: z.array(ContractGoalSchema).default([]),
+  constraints: z.array(ContractConstraintSchema).default([]),
+  guidance: z.array(ContractGuidanceSchema).default([]),
   reviewChecklist: z.array(z.string()),
   proposedCommitMessage: z.string(),
 });
@@ -311,6 +341,7 @@ export const ContractReviewScoresSchema = z.object({
   riskCoverage: z.number(),
   clarity: z.number(),
   specAlignment: z.number(),
+  intentSeparation: z.number().optional(),
 });
 
 export const ContractReviewSchema = z.object({
@@ -362,6 +393,10 @@ export const BuilderReportSchema = z.object({
   backgroundJobs: z.array(BackgroundJobStatusSchema),
   microFanoutUsed: z.array(MicroFanoutUsedSchema),
   selfCheckResults: z.array(SelfCheckResultSchema),
+  keyDecisions: z.array(z.object({
+    description: z.string(),
+    rationale: z.string(),
+  })).default([]),
   remainingConcerns: z.array(z.string()),
   claimsDone: z.boolean(),
   commitShas: z.array(z.string()).nullable().default(null),
@@ -421,6 +456,49 @@ export const EvaluatorReportSchema = z.object({
 });
 
 export type EvaluatorReport = z.infer<typeof EvaluatorReportSchema>;
+
+// ------------------------------------
+// Packet completion context
+// ------------------------------------
+
+export const AcceptanceResultsSchema = z.object({
+  passed: z.number(),
+  failed: z.number(),
+  skipped: z.number(),
+  total: z.number(),
+});
+
+export type AcceptanceResults = z.infer<typeof AcceptanceResultsSchema>;
+
+export const PacketCompletionContextSchema = z.object({
+  packetId: z.string(),
+  title: z.string(),
+  packetType: z.string(),
+  objective: z.string(),
+
+  // Intent layer (from contract)
+  goals: z.array(ContractGoalSchema).default([]),
+  constraints: z.array(ContractConstraintSchema).default([]),
+  guidance: z.array(ContractGuidanceSchema).default([]),
+
+  // Execution layer (from builder report)
+  changedFiles: z.array(z.string()),
+  keyDecisions: z.array(z.object({
+    description: z.string(),
+    rationale: z.string(),
+  })).default([]),
+  inScope: z.array(z.string()),
+  outOfScope: z.array(z.string()),
+  commitMessages: z.array(z.string()),
+
+  // Outcome layer (from evaluator report)
+  acceptanceResults: AcceptanceResultsSchema,
+  evaluatorAddedCriteria: z.array(z.string()).default([]),
+  remainingConcerns: z.array(z.string()),
+  evaluatorNotes: z.array(z.string()),
+});
+
+export type PacketCompletionContext = z.infer<typeof PacketCompletionContextSchema>;
 
 // ------------------------------------
 // QA report
@@ -518,6 +596,7 @@ export const EventTypeSchema = z.enum([
   "evaluator.failed",
   "worker.rate_limited",
   "worker.resumed",
+  "worker.session_crashed",
   "poke.received",
   "poke.responded",
   "plan.awaiting_approval",

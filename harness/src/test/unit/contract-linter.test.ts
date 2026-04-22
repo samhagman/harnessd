@@ -110,22 +110,13 @@ describe("lintContract", () => {
   });
 
   // ------------------------------------
-  // likelyFiles cap
+  // likelyFiles (no cap — informational only)
   // ------------------------------------
 
-  it("oversized likelyFiles for small packet fails", () => {
-    // S allows max 8 files
-    const manyFiles = Array.from({ length: 15 }, (_, i) => `file${i}.ts`);
+  it("large likelyFiles list is allowed (no cap)", () => {
+    const manyFiles = Array.from({ length: 100 }, (_, i) => `file${i}.ts`);
     const contract = makeContract({ likelyFiles: manyFiles });
-    const result = lintContract(contract, "tooling", "S");
-    expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => /likelyFiles/i.test(e))).toBe(true);
-  });
-
-  it("likelyFiles within limit passes", () => {
-    const fewFiles = ["a.ts", "b.ts", "c.ts"];
-    const contract = makeContract({ likelyFiles: fewFiles });
-    const result = lintContract(contract, "tooling", "S");
+    const result = lintContract(contract, "tooling");
     expect(result.valid).toBe(true);
   });
 
@@ -363,4 +354,160 @@ describe("lintContract", () => {
 
   // Rule 13 (outOfScope/objective contradiction) moved to contract evaluator prompt —
   // semantic analysis belongs in the LLM, not in string-matching heuristics.
+});
+
+// ------------------------------------
+// Goals / constraints / guidance (new-style contract rules)
+// ------------------------------------
+
+describe("lintContract — goals/constraints/guidance rules", () => {
+  // Old contract without goals field → still passes (backward compat)
+  it("old contract without goals field still passes", () => {
+    const contract = makeContract();
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // New contract with goals where all blocking ACs are mapped → passes
+  it("new-style contract with fully mapped blocking ACs passes", () => {
+    const contract = makeContract({
+      goals: [
+        {
+          id: "G-001",
+          description: "Script executes without errors",
+          acceptanceCriteriaIds: ["AC-001"],
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(true);
+  });
+
+  // New contract with goals where blocking ACs are unmapped → fails
+  it("new-style contract with unmapped blocking AC fails", () => {
+    const contract = makeContract({
+      acceptance: [
+        {
+          id: "AC-001",
+          kind: "command",
+          description: "Script runs successfully",
+          blocking: true,
+          evidenceRequired: ["command output"],
+        },
+        {
+          id: "AC-002",
+          kind: "command",
+          description: "Exit code is 0",
+          blocking: true,
+          evidenceRequired: ["exit code"],
+        },
+      ],
+      goals: [
+        {
+          id: "G-001",
+          description: "Script executes without errors",
+          acceptanceCriteriaIds: ["AC-001"], // AC-002 not mapped
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /AC-002/.test(e) && /not mapped/i.test(e))).toBe(true);
+  });
+
+  // New contract with goals referencing non-existent AC IDs → fails
+  it("new-style contract with dangling goal AC reference fails", () => {
+    const contract = makeContract({
+      goals: [
+        {
+          id: "G-001",
+          description: "Script executes without errors",
+          acceptanceCriteriaIds: ["AC-001", "AC-999"], // AC-999 does not exist
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /AC-999/.test(e) && /non-existent/i.test(e))).toBe(true);
+  });
+
+  // New contract with constraints missing rationale → fails
+  it("new-style contract with constraint missing rationale fails", () => {
+    const contract = makeContract({
+      goals: [
+        {
+          id: "G-001",
+          description: "Script executes without errors",
+          acceptanceCriteriaIds: ["AC-001"],
+        },
+      ],
+      constraints: [
+        {
+          id: "C-001",
+          description: "Only modify script.sh",
+          kind: "scope",
+          // rationale omitted
+        },
+        {
+          id: "C-002",
+          description: "Must not change auth logic",
+          kind: "safety",
+          rationale: "Auth changes need a dedicated packet",
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /C-001/.test(e) && /rationale/i.test(e))).toBe(true);
+    // C-002 has rationale, should not appear in error
+    expect(result.errors.every((e) => !/C-002/.test(e))).toBe(true);
+  });
+
+  // Full valid new-style contract with goals/constraints/guidance → passes
+  it("full valid new-style contract with goals, constraints, and guidance passes", () => {
+    const contract = makeContract({
+      goals: [
+        {
+          id: "G-001",
+          description: "Script executes without errors",
+          acceptanceCriteriaIds: ["AC-001"],
+        },
+      ],
+      constraints: [
+        {
+          id: "C-001",
+          description: "Only modify script.sh",
+          kind: "scope",
+          rationale: "Other files are out of scope for this packet",
+        },
+      ],
+      guidance: [
+        {
+          id: "GD-001",
+          description: "Follow POSIX sh conventions",
+          source: "codebase-pattern",
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // Constraints with all rationales and no goals → passes
+  it("constraints with rationales but no goals array passes", () => {
+    const contract = makeContract({
+      constraints: [
+        {
+          id: "C-001",
+          description: "Only modify script.sh",
+          kind: "scope",
+          rationale: "Keeps scope tight",
+        },
+      ],
+    });
+    const result = lintContract(contract, "tooling");
+    expect(result.valid).toBe(true);
+  });
 });

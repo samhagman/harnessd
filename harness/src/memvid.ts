@@ -887,7 +887,7 @@ export function qaReportToDocument(report: QAReport, round: number): MemvidDocum
  * Returns a formatted markdown string suitable for prompt injection,
  * or undefined if memvid is not available or the query fails.
  *
- * This augments (does not replace) readCompletionSummaries().
+ * This augments (does not replace) readCompletionContexts().
  */
 export async function queryMemoryContext(
   memory: RunMemory | null,

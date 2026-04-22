@@ -22,6 +22,7 @@ import type {
   ProjectConfig,
   PacketType,
   PacketSummary,
+  PacketCompletionContext,
 } from "./schemas.js";
 import type { BaselineGateFailure } from "./tool-gates.js";
 import { MemvidBuffer } from "./memvid.js";
@@ -30,7 +31,7 @@ import { BuilderReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeBuilderHook } from "./permissions.js";
 import { buildBuilderPrompt } from "./prompts/builder-prompt.js";
-import { CONTINUATION_PROMPT } from "./prompts/shared.js";
+import { CONTINUATION_PROMPT, RESUME_WITH_FRESH_CONTEXT_PREFIX } from "./prompts/shared.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
@@ -58,7 +59,9 @@ export interface BuilderContext {
   riskRegister?: RiskRegister;
   priorEvalReport?: EvaluatorReport;
   contextOverrides?: string;
-  completionSummaries?: string;
+  completionContexts?: PacketCompletionContext[];
+  /** Memory context string from memvid query (builder audience). */
+  memoryContext?: string;
   completedPacketIds?: string[];
   resumeSessionId?: string;
   memory?: RunMemory | null;
@@ -101,27 +104,37 @@ export async function runBuilder(
     ? ctx.workspaceDir
     : undefined;
 
+  // Always build the full prompt so fix-loop context (evaluator report, baseline
+  // gate failures, context overrides, completion summaries) reaches the model
+  // even on session resume. On resume we prepend a stronger framing so the model
+  // doesn't re-yield its prior result envelope. On a fresh start we use only
+  // the body. The simple CONTINUATION_PROMPT (no body) is reserved for crash
+  // recovery where no fix-loop context exists — see resumeSessionId calculation
+  // in orchestrator.handleFixing for that branch.
+  const fullPrompt = buildBuilderPrompt(contract, {
+    spec: ctx.spec,
+    riskRegister: ctx.riskRegister,
+    priorEvalReport: ctx.priorEvalReport,
+    contextOverrides: ctx.contextOverrides,
+    nudgeFilePath,
+    workspaceDir: effectiveWorkspaceDir,
+    completionContexts: ctx.completionContexts,
+    devServer: ctx.config.devServer ?? undefined,
+    completedPacketIds: ctx.completedPacketIds,
+    researchTools: ctx.config.researchTools,
+    enableMemory: ctx.config.enableMemory,
+    allPackets: ctx.allPackets,
+    runTimeline: ctx.runTimeline,
+    packetNotes: ctx.packetNotes,
+    expectedFiles: ctx.expectedFiles,
+    criticalConstraints: ctx.criticalConstraints,
+    baselineGateFailures: ctx.baselineGateFailures,
+  });
   const prompt = ctx.resumeSessionId
-    ? CONTINUATION_PROMPT
-    : buildBuilderPrompt(contract, {
-        spec: ctx.spec,
-        riskRegister: ctx.riskRegister,
-        priorEvalReport: ctx.priorEvalReport,
-        contextOverrides: ctx.contextOverrides,
-        nudgeFilePath,
-        workspaceDir: effectiveWorkspaceDir,
-        completionSummaries: ctx.completionSummaries,
-        devServer: ctx.config.devServer ?? undefined,
-        completedPacketIds: ctx.completedPacketIds,
-        researchTools: ctx.config.researchTools,
-        enableMemory: ctx.config.enableMemory,
-        allPackets: ctx.allPackets,
-        runTimeline: ctx.runTimeline,
-        packetNotes: ctx.packetNotes,
-        expectedFiles: ctx.expectedFiles,
-        criticalConstraints: ctx.criticalConstraints,
-        baselineGateFailures: ctx.baselineGateFailures,
-      });
+    ? (ctx.priorEvalReport
+        ? `${RESUME_WITH_FRESH_CONTEXT_PREFIX}${fullPrompt}`
+        : CONTINUATION_PROMPT)
+    : fullPrompt;
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
 

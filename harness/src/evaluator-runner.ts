@@ -17,6 +17,7 @@ import type {
   EvaluatorGuide,
   ProposedCriterion,
   AcceptanceCriterion,
+  PacketCompletionContext,
 } from "./schemas.js";
 import { MemvidBuffer } from "./memvid.js";
 import type { RunMemory } from "./memvid.js";
@@ -24,7 +25,7 @@ import { EvaluatorReportSchema } from "./schemas.js";
 import { runWorker, type WorkerResult } from "./worker.js";
 import { makeEvaluatorHook, READ_ONLY_ALLOWED_TOOLS, READ_ONLY_DISALLOWED_TOOLS } from "./permissions.js";
 import { buildEvaluatorPrompt } from "./prompts/evaluator-prompt.js";
-import { CONTINUATION_PROMPT } from "./prompts/shared.js";
+import { RESUME_WITH_FRESH_CONTEXT_PREFIX } from "./prompts/shared.js";
 import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
 import { createResearchMcpServerRecord } from "./research-tools.js";
@@ -105,7 +106,9 @@ export interface EvaluatorContext {
   // Rich context (optional)
   riskRegister?: RiskRegister;
   evaluatorGuide?: EvaluatorGuide;
-  completionSummaries?: string;
+  completionContexts?: PacketCompletionContext[];
+  /** Memory context string from memvid query (evaluator audience). */
+  memoryContext?: string;
   gateResultsSummary?: string;
   recoveryContext?: string;
   futurePacketsSummary?: string;
@@ -142,25 +145,31 @@ export async function runEvaluator(
     ? ctx.workspaceDir
     : undefined;
 
+  // Always build the full evaluator prompt so resume sessions still see the
+  // current builder report + recovery context. On resume we prefix with
+  // RESUME_WITH_FRESH_CONTEXT_PREFIX so the model doesn't re-yield its prior
+  // verdict envelope. Plain CONTINUATION_PROMPT is reserved for crashes where
+  // no fresh context exists.
+  const fullPrompt = buildEvaluatorPrompt(contract, builderReport, {
+    riskRegister: ctx.riskRegister,
+    evaluatorGuide: ctx.evaluatorGuide,
+    workspaceDir: effectiveWorkspaceDir,
+    completionContexts: ctx.completionContexts,
+    gateResultsSummary: ctx.gateResultsSummary,
+    recoveryContext: ctx.recoveryContext,
+    futurePacketsSummary: ctx.futurePacketsSummary,
+    devServer: ctx.config.devServer ?? undefined,
+    builderTranscriptPath: ctx.builderTranscriptPath,
+    completedPacketIds: ctx.completedPacketIds,
+    researchTools: ctx.config.researchTools,
+    enableMemory: ctx.config.enableMemory,
+    expectedFiles: ctx.expectedFiles,
+    builderCommitCount: ctx.builderCommitCount,
+    useClaudeBackend: ctx.useClaudeBackend,
+  });
   const prompt = ctx.resumeSessionId
-    ? CONTINUATION_PROMPT
-    : buildEvaluatorPrompt(contract, builderReport, {
-        riskRegister: ctx.riskRegister,
-        evaluatorGuide: ctx.evaluatorGuide,
-        workspaceDir: effectiveWorkspaceDir,
-        completionSummaries: ctx.completionSummaries,
-        gateResultsSummary: ctx.gateResultsSummary,
-        recoveryContext: ctx.recoveryContext,
-        futurePacketsSummary: ctx.futurePacketsSummary,
-        devServer: ctx.config.devServer ?? undefined,
-        builderTranscriptPath: ctx.builderTranscriptPath,
-        completedPacketIds: ctx.completedPacketIds,
-        researchTools: ctx.config.researchTools,
-        enableMemory: ctx.config.enableMemory,
-        expectedFiles: ctx.expectedFiles,
-        builderCommitCount: ctx.builderCommitCount,
-        useClaudeBackend: ctx.useClaudeBackend,
-      });
+    ? `${RESUME_WITH_FRESH_CONTEXT_PREFIX}${fullPrompt}`
+    : fullPrompt;
 
   const memvidBuffer = ctx.memory ? new MemvidBuffer(ctx.memory) : null;
 

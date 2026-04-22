@@ -159,7 +159,7 @@ export async function negotiateContract(
     }
 
     // 2. Lint pass (no model call needed)
-    const lintResult = lintContract(proposal, packet.type, packet.estimatedSize);
+    const lintResult = lintContract(proposal, packet.type);
     if (!lintResult.valid) {
       // Auto-return to builder with lint errors instead of spending evaluator call
       priorReview = {

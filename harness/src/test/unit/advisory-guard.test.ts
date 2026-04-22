@@ -42,6 +42,9 @@ function makeContract(criteria: AcceptanceCriterion[]): PacketContract {
     backgroundJobs: [],
     microFanoutPlan: [],
     acceptance: criteria,
+    goals: [],
+    constraints: [],
+    guidance: [],
     reviewChecklist: [],
     proposedCommitMessage: "test",
   };
