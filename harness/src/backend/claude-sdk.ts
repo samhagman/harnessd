@@ -207,11 +207,14 @@ export class ClaudeSdkBackend implements AgentBackend {
       maxBudgetUsd,
       abortController,
       model,
+      effort,
       ...rest
     } = opts;
 
     const options: Options = {
       cwd,
+      // Effort level from session options (set via config.effort → call-site spread); defaults to "high".
+      effort: (effort as Options["effort"]) ?? "high",
       ...(permissionMode != null ? { permissionMode } : {}),
       ...(allowedTools != null ? { allowedTools } : {}),
       ...(disallowedTools != null ? { disallowedTools } : {}),

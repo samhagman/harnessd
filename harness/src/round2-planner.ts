@@ -122,6 +122,7 @@ export async function runRound2Planner(
         permissionMode: "bypassPermissions",
         settingSources: ["user"],
         ...(plannerConfig.config.model ? { model: plannerConfig.config.model } : {}),
+        ...(plannerConfig.config.effort ? { effort: plannerConfig.config.effort } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: {

@@ -103,6 +103,7 @@ export async function runQA(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(runnerConfig.config.model ? { model: runnerConfig.config.model } : {}),
+      ...(runnerConfig.config.effort ? { effort: runnerConfig.config.effort } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
       mcpServers: {

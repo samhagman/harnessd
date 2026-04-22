@@ -163,6 +163,21 @@ async function main(): Promise<void> {
     model = args[modelIdx + 1]!;
   }
 
+  // --effort <level>: override the reasoning effort for Claude Code sessions
+  // Valid values: low | medium | high | xhigh | max  (default: "high")
+  const VALID_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+  type EffortLevel = (typeof VALID_EFFORT_LEVELS)[number];
+  let effort: EffortLevel | undefined;
+  const effortIdx = args.indexOf("--effort");
+  if (effortIdx !== -1 && args[effortIdx + 1] && !args[effortIdx + 1]!.startsWith("--")) {
+    const raw = args[effortIdx + 1]!;
+    if (!(VALID_EFFORT_LEVELS as readonly string[]).includes(raw)) {
+      console.error(`Error: --effort must be one of: ${VALID_EFFORT_LEVELS.join(", ")}. Got: "${raw}"`);
+      process.exit(1);
+    }
+    effort = raw as EffortLevel;
+  }
+
   // --run-id <name>: use a specific run directory name instead of auto-generated
   // Parsed before workspace so that the default workspace path can reference the run ID.
   let customRunId: string | undefined;
@@ -216,7 +231,7 @@ async function main(): Promise<void> {
 
   const filteredArgs = args.filter((a, i) =>
     !a.startsWith("--") &&
-    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model" && args[i - 1] !== "--env")),
+    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--effort" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model" && args[i - 1] !== "--env")),
   );
   const objective = filteredArgs.join(" ").trim();
 
@@ -232,7 +247,8 @@ async function main(): Promise<void> {
   npx tsx src/main.ts --perplexity "your objective"
   npx tsx src/main.ts --no-memory "your objective"
   npx tsx src/main.ts --no-context7 "your objective"
-  npx tsx src/main.ts --env .env.local "your objective"`);
+  npx tsx src/main.ts --env .env.local "your objective"
+  npx tsx src/main.ts --effort xhigh "your objective"  # effort: low|medium|high|xhigh|max`);
     process.exit(1);
   }
 
@@ -267,7 +283,17 @@ async function main(): Promise<void> {
       context7: !disableContext7,
       perplexity: enablePerplexity,
     };
-    const config = { ...defaultProjectConfig(), ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
+    const config = {
+      ...defaultProjectConfig(),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      roleBackends,
+      codexModel,
+      researchTools,
+      ...(disableMemory ? { enableMemory: false } : {}),
+      ...(planningContext?.toolGates ? { toolGates: planningContext.toolGates } : {}),
+      ...(planningContext?.enableDefaultGates !== undefined ? { enableDefaultGates: planningContext.enableDefaultGates } : {}),
+    };
     // Resolve research tool availability (check env vars, log summary)
     config.researchTools = resolveResearchToolAvailability(config);
     const runState = createRun(repoRoot, objective, config, effectiveRunId, workspaceDir);
@@ -377,7 +403,16 @@ async function main(): Promise<void> {
     context7: !disableContext7,
     perplexity: enablePerplexity,
   };
-  const orchConfig = { ...(model ? { model } : {}), roleBackends, codexModel, researchTools, ...(disableMemory ? { enableMemory: false } : {}) };
+  const orchConfig = {
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    roleBackends,
+    codexModel,
+    researchTools,
+    ...(disableMemory ? { enableMemory: false } : {}),
+    ...(planningContext?.toolGates ? { toolGates: planningContext.toolGates } : {}),
+    ...(planningContext?.enableDefaultGates !== undefined ? { enableDefaultGates: planningContext.enableDefaultGates } : {}),
+  };
 
   // Full run — always pre-create the run with effectiveRunId so the workspace
   // path (which references the run ID) is consistent, then resume it.

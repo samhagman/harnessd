@@ -71,6 +71,7 @@ export async function runPlanReview(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(opts.config.model ? { model: opts.config.model } : {}),
+      ...(opts.config.effort ? { effort: opts.config.effort } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
       sandboxMode: "read-only",

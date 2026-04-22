@@ -134,6 +134,7 @@ export async function runBuilder(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
+      ...(ctx.config.effort ? { effort: ctx.config.effort } : {}),
       mcpServers: {
         "harnessd-validation": createValidationMcpServer(),
         "harnessd-gate-check": createGateCheckMcpServer(

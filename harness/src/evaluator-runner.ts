@@ -173,6 +173,7 @@ export async function runEvaluator(
       permissionMode: "bypassPermissions",
       settingSources: ["user"],
       ...(ctx.config.model ? { model: ctx.config.model } : {}),
+      ...(ctx.config.effort ? { effort: ctx.config.effort } : {}),
       allowedTools: READ_ONLY_ALLOWED_TOOLS,
       disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
       mcpServers: {

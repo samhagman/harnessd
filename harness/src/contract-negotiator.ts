@@ -116,6 +116,7 @@ export async function negotiateContract(
         permissionMode: "bypassPermissions",
         settingSources: ["user"],
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
+        ...(negConfig.config.effort ? { effort: negConfig.config.effort } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: {
@@ -199,6 +200,7 @@ export async function negotiateContract(
         permissionMode: "bypassPermissions",
         settingSources: ["user"],
         ...(negConfig.config.model ? { model: negConfig.config.model } : {}),
+        ...(negConfig.config.effort ? { effort: negConfig.config.effort } : {}),
         allowedTools: READ_ONLY_ALLOWED_TOOLS,
         disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
         mcpServers: {

@@ -9,7 +9,7 @@
     "test:live": "HARNESSD_LIVE=1 vitest run src/test/live/"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.83",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.112",
     "@upstash/context7-mcp": "^2.1.7",
     "zod": "^4.0.0"
   },

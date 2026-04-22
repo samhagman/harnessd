@@ -702,6 +702,8 @@ export const ProjectConfigSchema = z.object({
   renderStatusOnEveryEvent: z.boolean().default(true),
   maxConsecutiveResumeFailures: z.number().int().default(8),
   model: z.string().optional(),
+  /** Effort level for Claude Code sessions. Controls reasoning depth. Defaults to "high". */
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
   // QA and Round 2 settings
   maxRounds: z.number().int().default(10),
   qaPassThreshold: QAPassThresholdSchema.default({ maxCritical: 0, maxMajor: 0, maxMinor: 5 }),
@@ -725,7 +727,7 @@ export const ProjectConfigSchema = z.object({
     perplexity: z.boolean().default(false),
   }).default({ context7: true, perplexity: false }),
   /** Enable run memory (memvid). When false, no .mv2 file is created, search_memory is not available, and memory sections are omitted from prompts. */
-  enableMemory: z.boolean().default(true),
+  enableMemory: z.boolean().default(false),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -879,6 +881,9 @@ export const PlanningContextSchema = z.object({
   avoidList: z.array(z.string()).default([]),
   doneDefinition: z.string().optional(),
   customNotes: z.string().optional(),
+  // Tool gate overrides from operator
+  toolGates: z.array(ToolGateConfigSchema).optional(),
+  enableDefaultGates: z.boolean().optional(),
 });
 
 export type PlanningContext = z.infer<typeof PlanningContextSchema>;
