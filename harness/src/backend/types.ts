@@ -10,6 +10,23 @@
  */
 
 // ------------------------------------
+// Nudge outcome union — returned by queueNudge()
+// ------------------------------------
+
+/**
+ * Describes how (or whether) a nudge was handled by the backend.
+ *
+ * - `{ handled: true; via: "stream" }` — nudge was queued for live streamInput injection (Claude SDK).
+ * - `{ handled: true; via: "abort-resume"; sessionId; nudgeText }` — session was aborted; caller should
+ *   resume with the nudge text prepended to the next prompt (Codex abort+resume flow).
+ * - `{ handled: false }` — no active session; caller should use file-based fallback.
+ */
+export type NudgeOutcome =
+  | { handled: true; via: "stream" }
+  | { handled: true; via: "abort-resume"; sessionId: string; nudgeText: string }
+  | { handled: false };
+
+// ------------------------------------
 // Normalized message from an agent session
 // ------------------------------------
 
@@ -97,9 +114,39 @@ export interface AgentSessionOptions {
    */
   sandboxMode?: "read-only" | "workspace-write";
 
-  /** Claude SDK session ID to resume. Loads full conversation history.
-   *  Ignored by Codex backend. */
+  /**
+   * Session ID to resume. Loads full conversation history from a prior session.
+   * - Claude SDK backend: native resume via `resume: sessionId`.
+   * - Codex backend: honored via `codex exec resume <sessionId>` (Phase 1).
+   */
   resume?: string;
+
+  /**
+   * MCP servers to register with the agent session.
+   *
+   * Shape depends on the backend:
+   * - Claude SDK (supportsMcpServers: true, kind: "claude"): accepts both the
+   *   in-process createSdkMcpServer() form and the LogicalMcpServerDescriptor form.
+   * - Codex CLI (supportsMcpServers: true, kind: "codex"): only accepts the
+   *   LogicalMcpServerDescriptor form `{ command, args, env? }`, which is translated
+   *   to `-c mcp_servers.<name>.* ` flags in buildCodexArgs().
+   *
+   * Use LogicalMcpServerDescriptors (from mcp-descriptors.ts) as the common
+   * intermediate representation that both backends accept.
+   */
+  mcpServers?: Record<string, unknown>;
+
+  /**
+   * Absolute path to a JSON Schema file for structured output.
+   * - Codex backend: passed as `--output-schema <path>` flag.
+   *   When set, Codex emits a `final_answer` item whose payload is the structured
+   *   JSON. The backend synthesizes this into an envelope-wrapped AgentMessage so
+   *   downstream callers (worker.ts:extractEnvelope) stay unchanged.
+   * - Claude SDK backend: ignored (Claude uses prompt-level envelope instructions).
+   *
+   * Gate the pass-through on `backend.supportsOutputSchema()`.
+   */
+  outputSchemaPath?: string;
 
   /**
    * Additional options passed through to the SDK.
@@ -132,13 +179,15 @@ export interface AgentBackend {
 
   /**
    * Queue a user message to be injected into the currently running session.
-   * The message will be delivered via streamInput() from within the
-   * for-await loop — the correct async context for the SDK.
    *
-   * Returns true if a session is active and the message was queued.
-   * Returns false if no session is running (caller should use file fallback).
+   * - Claude SDK backend: delivered via streamInput() from within the for-await loop.
+   * - Codex backend (Phase 3): aborts the child process and returns an abort-resume handle;
+   *   the caller is responsible for resuming with the nudge text prepended to the prompt.
+   * - FakeBackend / no active session: returns `{ handled: false }` so callers use file fallback.
+   *
+   * Returns a NudgeOutcome describing how the nudge was handled.
    */
-  queueNudge(text: string): boolean;
+  queueNudge(text: string): NudgeOutcome;
 
   /**
    * Abort the currently running query session.
@@ -146,4 +195,36 @@ export interface AgentBackend {
    * Returns the session ID of the killed session (for resume/fork), or null.
    */
   abortSession(): string | null;
+
+  /**
+   * Whether this backend supports native session resume via `opts.resume`.
+   * - Claude SDK: true (native `resume: sessionId`).
+   * - Codex CLI: true (via `codex exec resume <sessionId>`).
+   * - FakeBackend: true (simulates resume by accepting opts.resume without error).
+   */
+  supportsResume(): boolean;
+
+  /**
+   * Whether this backend supports in-process MCP server registration.
+   * - Claude SDK: true (mcpServers passed to SDK options).
+   * - Codex CLI: true (Phase 2: translated to -c mcp_servers.* flags).
+   * - FakeBackend: false (MCP registration is a no-op in tests).
+   */
+  supportsMcpServers(): boolean;
+
+  /**
+   * How nudges are delivered to this backend.
+   * - "stream": live streamInput() injection mid-session (Claude SDK).
+   * - "abort-resume": abort the child process; caller resumes with nudge text (Codex, Phase 3).
+   * - "none": backend does not support live nudges; use file-based fallback.
+   */
+  nudgeStrategy(): "stream" | "abort-resume" | "none";
+
+  /**
+   * Whether this backend supports structured output via an output schema file.
+   * - Codex CLI: true (passes --output-schema flag and synthesizes envelope from final_answer).
+   * - Claude SDK: false (Claude uses prompt-level envelope instructions instead).
+   * - FakeBackend: false (tests use envelope-in-text approach by default).
+   */
+  supportsOutputSchema(): boolean;
 }

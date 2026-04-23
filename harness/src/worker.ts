@@ -61,6 +61,12 @@ export interface WorkerResult<T = unknown> {
   numTurns?: number;
   /** Whether the session ended with an error */
   hadError: boolean;
+  /**
+   * Set when the backend attempted `codex exec resume <id>` and the session
+   * was rejected (not found / expired). Caller should retry with a fresh
+   * session, optionally prepending transcript-summary recovery context.
+   */
+  resumeFailed?: boolean;
   /** Path to the transcript JSONL file */
   transcriptPath: string;
 }
@@ -126,13 +132,36 @@ export function extractEnvelope(text: string): string | null {
 /**
  * Parse and validate the envelope payload against a Zod schema.
  */
+/**
+ * Recursively strip null-valued keys from an object. OpenAI structured-outputs
+ * strict mode requires every schema property to be present — optional fields
+ * are emulated by a nullable union, so the model emits `null` where Zod
+ * expects the key to be absent (undefined). We drop explicit nulls before
+ * Zod parsing so `.optional()` / `.nullish()` fields pass validation.
+ */
+function stripNulls<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => stripNulls(v)) as unknown as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === null) continue;
+      out[k] = stripNulls(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 export function parseEnvelopePayload<T>(
   envelopeJson: string,
   schema: z.ZodType<T>,
 ): { payload: T; error: null } | { payload: null; error: string } {
   try {
     const raw = JSON.parse(envelopeJson);
-    const parsed = schema.parse(raw);
+    const cleaned = stripNulls(raw);
+    const parsed = schema.parse(cleaned);
     return { payload: parsed, error: null };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -207,6 +236,7 @@ export async function runWorker<T = unknown>(
   let sessionId: string | null = null;
   let numTurns: number | undefined;
   let hadError = false;
+  let resumeFailed = false;
   let turnCount = 0;
 
   // Write initial session info
@@ -305,6 +335,7 @@ export async function runWorker<T = unknown>(
         if (msg.sessionId) sessionId = msg.sessionId;
         numTurns = msg.numTurns;
         if (msg.isError) hadError = true;
+        if (msg.subtype === "error_resume_failed") resumeFailed = true;
         if (msg.text) combinedText += msg.text;
         break;
       }
@@ -365,6 +396,7 @@ export async function runWorker<T = unknown>(
     sessionId: session.sessionId,
     numTurns,
     hadError,
+    ...(resumeFailed ? { resumeFailed: true } : {}),
     transcriptPath,
   };
 

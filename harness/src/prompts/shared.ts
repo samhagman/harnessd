@@ -86,7 +86,7 @@ Call \`validate_envelope\` with schema_name="${schemaName}" and json_string=<you
 
 **Option 2 — CLI (if MCP tool unavailable):**
 \`\`\`bash
-echo '<your JSON>' | npx tsx harness/bin/validate-envelope.mts --schema ${schemaName}${criterionIdsArg} --json -
+echo '<your JSON>' | npx tsx harness/bin/validate-envelope-cli.mts --schema ${schemaName}${criterionIdsArg} --json -
 \`\`\`
 ${criterionIdsNote}
 If validation returns {valid: false}, FIX the errors and validate again.

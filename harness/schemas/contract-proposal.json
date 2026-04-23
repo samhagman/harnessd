@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packetId": {
+      "type": "string"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "accepted",
+        "revise",
+        "split",
+        "escalate"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "packetType": {
+      "type": "string",
+      "enum": [
+        "bugfix",
+        "ui_feature",
+        "backend_feature",
+        "migration",
+        "refactor",
+        "long_running_job",
+        "integration",
+        "tooling"
+      ]
+    },
+    "objective": {
+      "type": "string"
+    },
+    "inScope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outOfScope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "mitigation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "mitigation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "likelyFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "implementationPlan": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "backgroundJobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "heartbeatExpected": {
+            "type": "boolean"
+          },
+          "completionSignal": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "command",
+          "heartbeatExpected",
+          "completionSignal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "microFanoutPlan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "research",
+              "draft",
+              "validate"
+            ]
+          },
+          "brief": {
+            "type": "string"
+          },
+          "maxAgents": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "directRepoEditsAllowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "brief",
+          "maxAgents",
+          "directRepoEditsAllowed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "command",
+              "scenario",
+              "api",
+              "artifact",
+              "invariant",
+              "negative",
+              "observability",
+              "performance",
+              "rubric"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "playwright",
+                      "bash",
+                      "manual-script",
+                      "chrome-devtools"
+                    ]
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "expects": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "tool",
+                  "steps",
+                  "expects"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "scale": {
+                    "type": "string",
+                    "const": "1-5"
+                  },
+                  "threshold": {
+                    "type": "number"
+                  },
+                  "dimensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "scale",
+                  "threshold",
+                  "dimensions"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidenceRequired": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "contract",
+                  "evaluator"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "addedInEvalRound": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "description",
+          "blocking",
+          "evidenceRequired",
+          "threshold",
+          "command",
+          "expected",
+          "scenario",
+          "rubric",
+          "source",
+          "severity",
+          "rationale",
+          "addedInEvalRound"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "goals": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "acceptanceCriteriaIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "acceptanceCriteriaIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "constraints": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "scope",
+              "tech-stack",
+              "behavior",
+              "safety",
+              "process"
+            ]
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "kind",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "guidance": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "architectural-principles",
+              "codebase-pattern",
+              "operator-preference",
+              "domain-convention"
+            ]
+          },
+          "principle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "source",
+          "principle"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reviewChecklist": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "proposedCommitMessage": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "packetId",
+    "round",
+    "status",
+    "title",
+    "packetType",
+    "objective",
+    "inScope",
+    "outOfScope",
+    "assumptions",
+    "risks",
+    "likelyFiles",
+    "implementationPlan",
+    "backgroundJobs",
+    "microFanoutPlan",
+    "acceptance",
+    "goals",
+    "constraints",
+    "guidance",
+    "reviewChecklist",
+    "proposedCommitMessage"
+  ],
+  "additionalProperties": false
+}

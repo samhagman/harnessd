@@ -74,10 +74,4 @@ export class BackendFactory {
   get claudeBackend(): AgentBackend {
     return this.claude;
   }
-
-  /** Returns true if the given role uses the Claude SDK backend (supports resume). */
-  isClaudeBackend(role: string): boolean {
-    const backendType = (this.config.roleBackends as Record<string, string | undefined>)[role] ?? "claude";
-    return backendType === "claude";
-  }
 }

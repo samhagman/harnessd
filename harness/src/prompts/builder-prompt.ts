@@ -19,6 +19,27 @@ import type { BaselineGateFailure } from "../tool-gates.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 
 /**
+ * Backend capability hints for prompt adaptation.
+ *
+ * When absent, the prompt defaults to Claude-flavored behavior (envelope sentinels,
+ * validate_envelope MCP section, Task tool sub-agent guidance). Pass this when the
+ * backend differs from Claude so the prompt guides the agent correctly.
+ *
+ * - `supportsMcpServers`: when true, include the validate_envelope MCP tool section
+ *   and gate_check MCP tool guidance. Use as the proxy for "Claude-flavored" in prompts —
+ *   only Claude has both in-process MCP and the Claude Task tool.
+ * - `nudgeStrategy`: when "abort-resume", add a paragraph warning that nudges will
+ *   interrupt the current turn and the agent should write progress to disk frequently.
+ * - `supportsOutputSchema`: when true, replace envelope sentinel instructions with
+ *   "emit as structured JSON matching the output schema — do not use envelope sentinels."
+ */
+export interface BackendCapabilities {
+  supportsMcpServers: boolean;
+  nudgeStrategy: "stream" | "abort-resume" | "none";
+  supportsOutputSchema?: boolean;
+}
+
+/**
  * Options bag for `buildBuilderPrompt`.
  *
  * All fields are optional — only `spec` is typically required for a meaningful
@@ -53,6 +74,12 @@ export interface BuilderPromptOptions {
   criticalConstraints?: string[];
   /** Pre-existing gate failures from baseline check (informational). */
   baselineGateFailures?: BaselineGateFailure[];
+  /**
+   * Backend capability hints for prompt adaptation.
+   * When absent, defaults to Claude-flavored behavior (envelope sentinels,
+   * validate_envelope MCP, Task tool sub-agent guidance).
+   */
+  backendCapabilities?: BackendCapabilities;
 }
 import {
   RESULT_START_SENTINEL,
@@ -130,7 +157,17 @@ export function buildBuilderPrompt(
     expectedFiles,
     criticalConstraints,
     baselineGateFailures,
+    backendCapabilities,
   } = opts;
+
+  // Derived capability flags — default to Claude-flavored behavior when absent.
+  // `supportsMcpServers` is used as the proxy for "Claude-flavored" in prompt sections.
+  // Codex has in-process MCP support (supportsMcpServers: true) AND supportsOutputSchema: true.
+  // Claude has supportsMcpServers: true AND supportsOutputSchema: false.
+  // FakeBackend has supportsMcpServers: false.
+  const supportsMcp = backendCapabilities?.supportsMcpServers ?? true;
+  const nudgeStrategy = backendCapabilities?.nudgeStrategy ?? "stream";
+  const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
 
   const sections: string[] = [];
 
@@ -183,8 +220,10 @@ Use whatever delegation pattern works best for you (fan-out, sequential, hybrid)
 
 If you cannot finish every AC in this session, do NOT loop retrying. Stop at a coherent checkpoint, self-check what's done, emit claimsDone:true with the partial result + an accurate list of what's incomplete. The evaluator will drive the remainder through the fix loop.`);
 
-  // 1b. Mandatory validate_envelope gate
-  sections.push(buildValidateEnvelopeSection("BuilderReport"));
+  // 1b. Mandatory validate_envelope gate (only included when MCP tools are available)
+  if (supportsMcp) {
+    sections.push(buildValidateEnvelopeSection("BuilderReport"));
+  }
 
   // 1b2. Baseline gate failures (pre-existing issues)
   if (baselineGateFailures && baselineGateFailures.length > 0) {
@@ -323,7 +362,11 @@ ${criticalConstraints.map((c) => `- ⚠ ${c}`).join("\n")}`);
   }
 
   // 2c. Mandatory pre-implementation exploration
-  sections.push(`## Before You Start Implementing
+  // The sub-agent guidance is Claude-specific (Task tool). For Codex (no Task tool),
+  // we use the same exploration mandate but with sequential-subtask language.
+  if (supportsMcp) {
+    // Claude-flavored: recommends launching a sonnet Explore agent via Task tool
+    sections.push(`## Before You Start Implementing
 
 MANDATORY: Before writing any code, you MUST:
 
@@ -344,6 +387,29 @@ missing a function signature that a prior builder established, or breaking an
 integration point that's already wired up.
 
 Remember: you are implementing **${contract.packetId}: ${contract.title}**. Stay focused on this packet's scope.`);
+  } else {
+    // Codex-flavored: sequential exploration within the same session
+    sections.push(`## Before You Start Implementing
+
+MANDATORY: Before writing any code, you MUST:
+
+1. Run \`git log --oneline -20\` to see what prior builders committed.
+   Read the commit messages to understand what was changed and why.
+
+2. Read the relevant files to understand the current state of the code
+   in the areas you'll be modifying. For each file in your expectedFiles:
+   - Current state of each file
+   - What functions/types/exports exist from prior packets
+   - Any patterns you should follow
+
+3. Only after steps 1 and 2 should you begin implementation.
+
+This exploration prevents you from re-implementing something that already exists,
+missing a function signature that a prior builder established, or breaking an
+integration point that's already wired up.
+
+Remember: you are implementing **${contract.packetId}: ${contract.title}**. Stay focused on this packet's scope.`);
+  }
 
   // 3. Acceptance criteria
   sections.push(`## Acceptance Criteria
@@ -544,7 +610,8 @@ ${contextOverrides}`);
   }
 
   // 9c. Nudge file — operator can steer you mid-session
-  if (nudgeFilePath) {
+  if (nudgeFilePath && nudgeStrategy !== "abort-resume") {
+    // File-based nudges (Claude and FakeBackend): agent polls a file between steps
     sections.push(`## Operator Nudge Channel
 
 The operator may send you steering instructions while you work. **Before each major step** (before starting a new file, before running tests, before emitting your envelope), check this file:
@@ -560,8 +627,28 @@ If the file exists:
 If the file does not exist, continue normally. This check should be quick — just a file existence check.`);
   }
 
-  // 10. Quality gates — gate_check() MCP tool
-  sections.push(`## Quality Gates — Use gate_check() Before Emitting
+  // 9d. Abort+resume nudge notice (Codex only)
+  if (nudgeStrategy === "abort-resume") {
+    sections.push(`## Operator Nudge Delivery
+
+Operator nudges for this session are delivered via abort+resume: if the operator
+sends a nudge, your current turn will be INTERRUPTED and a new turn will be started
+with the nudge prepended to the prompt.
+
+**What this means for you:**
+- write your progress to disk frequently — after every significant change, commit
+  your work to git or write intermediate results to a file
+- If you receive a message starting with "OPERATOR NUDGE:" at the top of your context,
+  that is a steering instruction from the operator; incorporate it and continue working
+- Do NOT treat an interruption as a signal to stop — resume from where you left off
+  with the new context incorporated
+
+The harness preserves your session ID so you can continue from your last checkpoint.`);
+  }
+
+  // 10. Quality gates — gate_check() MCP tool (only when MCP is available)
+  if (supportsMcp) {
+    sections.push(`## Quality Gates — Use gate_check() Before Emitting
 
 You have a \`gate_check\` MCP tool that runs the EXACT same gates the harness
 verifies after you emit. Call it before emitting your envelope:
@@ -583,6 +670,20 @@ passing in isolation does NOT mean the gate will pass — cross-package regressi
 
 The harness still verifies gates after you emit (belt + suspenders). If you emit
 without a passing gate_check, you will be sent back to fix — wasting a full session.`);
+  } else {
+    // Non-MCP backend: gate_check is unavailable, guide to run commands manually
+    sections.push(`## Quality Gates — Run Manually Before Emitting
+
+You do not have a \`gate_check\` MCP tool in this session. Run the equivalent
+commands manually before emitting:
+
+1. Run typecheck: \`npx tsc --noEmit\` (or the project's typecheck command)
+2. Run tests: \`npx vitest run\` (or the project's test command)
+3. Fix any failures before emitting
+
+The harness verifies gates after you emit. If gates fail, you will be sent back
+to fix — running them yourself first saves a full session.`);
+  }
 
   // 11. Pre-submission quality passes
   sections.push(`## Pre-Submission Quality Review (MANDATORY)
@@ -756,7 +857,36 @@ Before claiming done:
 
 ### Result Envelope
 
-When done, emit your report:
+${supportsOutputSchema
+  ? `When done, emit your final answer as structured JSON matching the output schema.
+Do NOT use envelope sentinels — the output schema enforces the correct structure.
+Emit the JSON directly as your final answer.
+
+Your final answer JSON must match this shape:
+{
+  "packetId": "${contract.packetId}",
+  "sessionId": "(your session ID or empty string)",
+  "changedFiles": ["file1.ts", "file2.ts"],
+  "commandsRun": [
+    {"command": "npm test", "exitCode": 0, "summary": "all tests pass"}
+  ],
+  "backgroundJobs": [],
+  "microFanoutUsed": [],
+  "selfCheckResults": [
+    {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
+  ],
+  "keyDecisions": [
+    {"description": "...", "rationale": "..."}
+  ],
+  "remainingConcerns": [],
+  "claimsDone": true,
+  "commitShas": ["abc1234", "def5678"]
+}
+
+- Set \`claimsDone: false\` if you ran out of turns or could not complete
+- Set \`commitShas\` to an array of commit SHAs you created, or null if no changes
+- Emit your final answer ONCE — the harness reads the last structured output`
+  : `When done, emit your report:
 
 ${RESULT_START_SENTINEL}
 {
@@ -786,9 +916,9 @@ ${RESULT_END_SENTINEL}
 - Set \`commitShas\` to an array of commit SHAs you created, or null if no changes
 
 **IMPORTANT:** Before emitting the envelope:
-1. Call \`gate_check()\` and confirm all gates pass
-2. Validate using \`validate_envelope\` (MCP tool) from the section above
-Fix any errors before emitting.`);
+1. Call \`gate_check()\` and confirm all gates pass${supportsMcp ? `
+2. Validate using \`validate_envelope\` (MCP tool) from the section above` : ""}
+Fix any errors before emitting.`}`);
 
   return sections.join("\n\n");
 }

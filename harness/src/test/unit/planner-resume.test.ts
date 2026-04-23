@@ -15,7 +15,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { runPlanner } from "../../planner.js";
-import type { AgentBackend, AgentMessage, AgentSessionOptions } from "../../backend/types.js";
+import type { AgentBackend, AgentMessage, AgentSessionOptions, NudgeOutcome } from "../../backend/types.js";
 import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
@@ -53,13 +53,18 @@ class ScriptedBackend implements AgentBackend {
     return this.lastSessionId;
   }
 
-  queueNudge(_text: string): boolean {
-    return false;
+  queueNudge(_text: string): NudgeOutcome {
+    return { handled: false };
   }
 
   abortSession(): string | null {
     return this.lastSessionId;
   }
+
+  supportsResume(): boolean { return true; }
+  supportsMcpServers(): boolean { return false; }
+  nudgeStrategy(): "stream" | "abort-resume" | "none" { return "none"; }
+  supportsOutputSchema(): boolean { return false; }
 }
 
 // ------------------------------------

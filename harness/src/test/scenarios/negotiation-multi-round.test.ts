@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-import type { AgentMessage, AgentBackend, AgentSessionOptions } from "../../backend/types.js";
+import type { AgentMessage, AgentBackend, AgentSessionOptions, NudgeOutcome } from "../../backend/types.js";
 import { getRunDir, getLatestRunId } from "../../state-store.js";
 import { readEvents } from "../../event-log.js";
 import {
@@ -264,13 +264,18 @@ class ScriptedBackend implements AgentBackend {
     return this.lastSessionId;
   }
 
-  queueNudge(_text: string): boolean {
-    return false;
+  queueNudge(_text: string): NudgeOutcome {
+    return { handled: false };
   }
 
   abortSession(): string | null {
     return this.lastSessionId;
   }
+
+  supportsResume(): boolean { return true; }
+  supportsMcpServers(): boolean { return false; }
+  nudgeStrategy(): "stream" | "abort-resume" | "none" { return "none"; }
+  supportsOutputSchema(): boolean { return false; }
 }
 
 function makeScript(text: string, sessionId: string = "sess"): AgentMessage[] {

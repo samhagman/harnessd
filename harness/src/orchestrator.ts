@@ -149,7 +149,7 @@ function getResumeSessionId(
   runId: string,
   artifactDir: string,
 ): string | null {
-  if (!factory.isClaudeBackend(role)) return null;
+  if (!factory.forRole(role).supportsResume()) return null;
   return readPriorSessionId(repoRoot, runId, artifactDir);
 }
 
@@ -241,9 +241,26 @@ export async function runOrchestrator(
   let lastPhase: RunPhase = runState.phase;
   let consecutiveRetries = 0;
 
-  // Start global background inbox poller for nudges — runs during all phases
-  // Uses the Claude backend directly since only Claude supports live nudges via streamInput
-  const globalNudgePoller = startGlobalNudgePoller(repoRoot, runState.runId, factory.claudeBackend, memory);
+  // Mutable ref to the backend instance currently executing a builder/fixer session.
+  // Updated by executeBuilder before each runBuilder() call and cleared on completion.
+  // The nudge poller reads this ref to route queueNudge() to the right backend instance,
+  // especially for Codex backends where each runSession() owns a distinct child process.
+  const activeBackendRef: { current: AgentBackend | null } = { current: null };
+
+  // Pending abort+resume nudge state — set by the nudge poller when a Codex child is
+  // aborted, consumed by handleBuilding/handleFixing on the next invocation.
+  let pendingOperatorNudge: { sessionId: string; text: string } | null = null;
+
+  // Start global background inbox poller for nudges — runs during all phases.
+  // Routes nudges to the currently active backend via the activeBackendRef getter,
+  // falling back to file-based delivery when no session is active.
+  const globalNudgePoller = startGlobalNudgePoller(
+    repoRoot,
+    runState.runId,
+    () => activeBackendRef.current ?? factory.claudeBackend,
+    memory,
+    (outcome) => { pendingOperatorNudge = outcome; },
+  );
 
   // Main phase loop — resilient, never dies from agent crashes
   while (runState.phase !== "completed" && runState.phase !== "failed") {
@@ -279,8 +296,12 @@ export async function runOrchestrator(
     }
 
     const sessionStart = Date.now();
+    // Capture and clear the pending nudge before passing to executePhase so it is
+    // consumed exactly once (the next builder invocation that reads it).
+    const nudgeForThisPhase = pendingOperatorNudge;
+    pendingOperatorNudge = null;
     try {
-      const nextState = await executePhase(factory, repoRoot, workspaceDir, runState, config, memory);
+      const nextState = await executePhase(factory, repoRoot, workspaceDir, runState, config, memory, activeBackendRef, nudgeForThisPhase);
 
       if (nextState) {
         // Phase handler succeeded and returned a new state
@@ -399,6 +420,8 @@ async function executePhase(
   runState: RunState,
   config: ProjectConfig,
   memory: RunMemory | null,
+  activeBackendRef?: { current: AgentBackend | null },
+  pendingNudge?: { sessionId: string; text: string } | null,
 ): Promise<RunState | null> {
   switch (runState.phase) {
     case "planning":
@@ -417,13 +440,13 @@ async function executePhase(
       return handleContractNegotiation(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "building_packet":
-      return handleBuilding(factory, repoRoot, workspaceDir, runState, config, memory);
+      return handleBuilding(factory, repoRoot, workspaceDir, runState, config, memory, activeBackendRef, pendingNudge);
 
     case "evaluating_packet":
       return handleEvaluation(factory, repoRoot, workspaceDir, runState, config, memory);
 
     case "fixing_packet":
-      return handleFixing(factory, repoRoot, workspaceDir, runState, config, memory);
+      return handleFixing(factory, repoRoot, workspaceDir, runState, config, memory, activeBackendRef, pendingNudge);
 
     case "awaiting_human_review":
       return handleAwaitingHumanReview(runState);
@@ -612,7 +635,7 @@ async function handlePlanReview(
     integrationScenariosContent,
     planningContextContent,
     runState.objective,
-    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.isClaudeBackend("plan_reviewer") },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.forRole("plan_reviewer").supportsMcpServers() },
   );
 
   if (!reviewResult.success || !reviewResult.review) {
@@ -914,6 +937,8 @@ async function executeBuilder(
   resumeSessionId?: string | null,
   memory?: RunMemory | null,
   baselineGateFailures?: BaselineGateFailure[],
+  pendingNudgeText?: string,
+  activeBackendRef?: { current: AgentBackend | null },
 ): Promise<BuilderRunResult> {
   const packetId = runState.currentPacketId!;
   const contract = readArtifact(repoRoot, runState.runId, `packets/${packetId}/contract/final.json`, PacketContractSchema);
@@ -971,8 +996,22 @@ async function executeBuilder(
     criticalConstraints: currentPacket?.criticalConstraints && currentPacket.criticalConstraints.length > 0 ? currentPacket.criticalConstraints : undefined,
     packetType: contract.packetType,
     baselineGateFailures,
+    pendingNudgeText,
   };
-  return runBuilder(factory.forRole("builder"), contract, builderCtx);
+
+  // Create the backend instance and store it in the ref so the nudge poller
+  // can call queueNudge() on the exact instance that is running the session.
+  const builderBackend = factory.forRole("builder");
+  if (activeBackendRef) {
+    activeBackendRef.current = builderBackend;
+  }
+  try {
+    return await runBuilder(builderBackend, contract, builderCtx);
+  } finally {
+    if (activeBackendRef) {
+      activeBackendRef.current = null;
+    }
+  }
 }
 
 async function handleBuilding(
@@ -982,6 +1021,8 @@ async function handleBuilding(
   runState: RunState,
   config: ProjectConfig,
   memory: RunMemory | null,
+  activeBackendRef?: { current: AgentBackend | null },
+  pendingNudge?: { sessionId: string; text: string } | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
 
@@ -989,6 +1030,7 @@ async function handleBuilding(
     event: "builder.started",
     phase: "building_packet",
     packetId,
+    detail: pendingNudge ? "nudge resume (abort+resume)" : undefined,
   });
 
   // Baseline gate check — run once before first build to catch pre-existing issues.
@@ -1031,13 +1073,22 @@ async function handleBuilding(
     }
   }
 
-  // Attempt SDK resume if the backend is Claude and a prior session crashed
-  const resumeSessionId = getResumeSessionId(
-    factory, "builder", repoRoot, runState.runId,
-    `packets/${packetId}/builder`,
-  );
+  // If an abort+resume nudge is pending (Codex backend), use the nudge session ID for
+  // resume and pass the nudge text to the prompt. Otherwise attempt normal SDK resume
+  // if the backend is Claude and a prior session crashed.
+  let resumeSessionId: string | null | undefined;
+  let nudgeText: string | undefined;
+  if (pendingNudge) {
+    resumeSessionId = pendingNudge.sessionId;
+    nudgeText = pendingNudge.text;
+  } else {
+    resumeSessionId = getResumeSessionId(
+      factory, "builder", repoRoot, runState.runId,
+      `packets/${packetId}/builder`,
+    );
+  }
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId, memory, baselineGateFailures);
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, undefined, resumeSessionId, memory, baselineGateFailures, nudgeText, activeBackendRef);
 
   if (result.report?.claimsDone) {
     appendEvent(repoRoot, runState.runId, {
@@ -1117,25 +1168,28 @@ async function handleEvaluation(
   // Load gate results to inject into evaluator context
   const gateResultsSummary = readGateResultsSummary(repoRoot, runState.runId, packetId);
 
-  // Check for prior crashed evaluator session and attempt resume or recovery
+  // Resume any prior evaluator session (operator forces fresh by running
+  // `./harness/reset-worker.sh <run-id> <packet-id> evaluator`, which
+  // deletes session.json → getResumeSessionId returns null). If resume
+  // later fails server-side (session expired / not found), the post-run
+  // fallback below summarizes the prior transcript into a fresh session.
   let recoveryContext: string | null = null;
-  let resumeSessionId: string | null = null;
-  const events = readEvents(repoRoot, runState.runId);
-  const lastEvalEvent = [...events].reverse().find(
-    (e) => e.packetId === packetId && e.event === "evaluator.failed",
+  let resumeSessionId: string | null = getResumeSessionId(
+    factory, "evaluator", repoRoot, runState.runId,
+    `packets/${packetId}/evaluator`,
   );
-  if (lastEvalEvent?.detail?.includes("without report")) {
-    // Tier 1: SDK resume (Claude backend only)
-    resumeSessionId = getResumeSessionId(
-      factory, "evaluator", repoRoot, runState.runId,
-      `packets/${packetId}/evaluator`,
+  if (resumeSessionId) {
+    console.log(
+      `[${runState.runId}] Resuming evaluator session for ${packetId} (session: ${resumeSessionId.slice(0, 8)}...)`,
     );
-    if (resumeSessionId) {
-      console.log(
-        `[${runState.runId}] Resuming evaluator session for ${packetId} (session: ${resumeSessionId.slice(0, 8)}...)`,
-      );
-    } else {
-      // Tier 2: Recovery-agent fallback (Codex backend or no prior session)
+  } else {
+    // No prior session.json — check whether a transcript from a previous
+    // "crashed without report" run exists and summarize it as context.
+    const events = readEvents(repoRoot, runState.runId);
+    const lastEvalEvent = [...events].reverse().find(
+      (e) => e.packetId === packetId && e.event === "evaluator.failed",
+    );
+    if (lastEvalEvent?.detail?.includes("without report")) {
       const priorTranscript = findLatestTranscript(repoRoot, runState.runId, packetId, "evaluator");
       if (priorTranscript) {
         console.log(
@@ -1188,9 +1242,31 @@ async function handleEvaluation(
       ? currentPacketForEval.expectedFiles
       : undefined,
     builderCommitCount: builderReport.commitShas?.length ?? 0,
-    useClaudeBackend: factory.isClaudeBackend("evaluator"),
+    useClaudeBackend: factory.forRole("evaluator").supportsMcpServers(),
   };
   const result = await runEvaluator(factory.forRole("evaluator"), contract, builderReport, evaluatorCtx);
+
+  // `codex exec resume <id>` was rejected (session expired or not found on
+  // the server). The stale session.json would loop the retry forever against
+  // the same dead ID — remove it so the next attempt starts fresh, and the
+  // prior transcript gets picked up by the recovery-agent branch above.
+  if (result.workerResult.resumeFailed) {
+    const staleSessionPath = path.join(
+      getRunDir(repoRoot, runState.runId),
+      "packets", packetId, "evaluator", "session.json",
+    );
+    try { fs.unlinkSync(staleSessionPath); } catch { /* already gone */ }
+    console.log(
+      `[${runState.runId}] Evaluator resume failed for ${packetId}; cleared stale session.json. Next retry will start fresh with recovery context.`,
+    );
+    appendEvent(repoRoot, runState.runId, {
+      event: "evaluator.failed",
+      phase: "evaluating_packet",
+      packetId,
+      detail: "Session resume failed (expired/not found) — cleared stale session.json, will retry fresh without report",
+    });
+    return null; // retry same phase — no session.json → fresh run
+  }
 
   if (!result.report) {
     // Evaluator session crashed without producing output — retry
@@ -1391,6 +1467,8 @@ async function handleFixing(
   runState: RunState,
   config: ProjectConfig,
   memory: RunMemory | null,
+  activeBackendRef?: { current: AgentBackend | null },
+  pendingNudge?: { sessionId: string; text: string } | null,
 ): Promise<RunState | null> {
   const packetId = runState.currentPacketId!;
 
@@ -1465,15 +1543,25 @@ async function handleFixing(
       new Date(e.ts).getTime() > new Date(lastBuilderFixStart.ts).getTime(),
   );
   const isFirstFixAttempt = !lastBuilderFixStart && !!evalReport;
-  const resumeSessionId = (!evalFollowed && !isFirstFixAttempt)
-    ? getResumeSessionId(factory, "builder", repoRoot, runState.runId, `packets/${packetId}/builder`)
-    : null;
+
+  // If an abort+resume nudge is pending (Codex backend), use the nudge session ID for
+  // resume and pass the nudge text to the prompt. Otherwise attempt normal SDK resume.
+  let resumeSessionId: string | null;
+  let nudgeText: string | undefined;
+  if (pendingNudge) {
+    resumeSessionId = pendingNudge.sessionId;
+    nudgeText = pendingNudge.text;
+  } else {
+    resumeSessionId = (!evalFollowed && !isFirstFixAttempt)
+      ? getResumeSessionId(factory, "builder", repoRoot, runState.runId, `packets/${packetId}/builder`)
+      : null;
+  }
 
   appendEvent(repoRoot, runState.runId, {
     event: "builder.started",
     phase: "fixing_packet",
     packetId,
-    detail: `Fix attempt ${fixAttempts + 1}/${config.maxFixLoopsPerPacket}${resumeSessionId ? " (resuming)" : ""}`,
+    detail: `Fix attempt ${fixAttempts + 1}/${config.maxFixLoopsPerPacket}${resumeSessionId ? (pendingNudge ? " (nudge resume)" : " (resuming)") : ""}`,
   });
 
   // Re-read baseline gate failures (persisted as events in handleBuilding) so fix-loop
@@ -1486,7 +1574,7 @@ async function handleFixing(
     baselineGateFailures = parseBaselineGateFailures(baselineEvent.detail);
   }
 
-  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory, baselineGateFailures);
+  const result = await executeBuilder(factory, repoRoot, workspaceDir, runState, config, evalReport, resumeSessionId, memory, baselineGateFailures, nudgeText, activeBackendRef);
 
   if (result.report?.claimsDone) {
     // Encode builder artifacts into run memory (fix phase)
@@ -1589,7 +1677,7 @@ async function handleQAReview(
     evaluatorGuide,
     integrationScenarios,
     completionContexts,
-    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.isClaudeBackend("qa_agent") },
+    { repoRoot, workspaceDir, runId: runState.runId, config, memory, useClaudeBackend: factory.forRole("qa_agent").supportsMcpServers() },
     round,
     config.devServer ?? undefined,
     resumeSessionId ?? undefined,
@@ -2686,12 +2774,21 @@ async function processInbox(
  * Global background inbox poller — runs for the ENTIRE orchestrator lifecycle.
  * Handles send_to_agent (live nudge via streamInput) and inject_context continuously.
  * Phase-transition messages (approve/reject/reset/pause/stop) are left for synchronous processInbox.
+ *
+ * `getActiveBackend` returns the backend that is currently executing a session (or null
+ * when no session is running). This allows the poller to route nudges to the exact
+ * CodexCliBackend instance that holds the active child process.
+ *
+ * `onAbortResume` is called when a Codex abort+resume nudge is successfully queued.
+ * The orchestrator stores the resulting {sessionId, text} so the next builder invocation
+ * can resume with the nudge text prepended to its prompt.
  */
 function startGlobalNudgePoller(
   repoRoot: string,
   runId: string,
-  backend: AgentBackend,
+  getActiveBackend: () => AgentBackend | null,
   memory: RunMemory | null,
+  onAbortResume: (outcome: { sessionId: string; text: string }) => void,
 ): { stop: () => void } {
   const inboxDir = path.join(getRunDir(repoRoot, runId), "inbox");
   const intervalMs = 3000;
@@ -2728,8 +2825,13 @@ function startGlobalNudgePoller(
         }
 
         if (msg.type === "send_to_agent" && msg.message) {
-          // Queue for live injection via streamInput (drained inside for-await loop)
-          const injectedLive = backend.queueNudge(msg.message);
+          // Route nudge to the backend that currently owns the active session.
+          // Falls back to the Claude backend (which supports live stream injection)
+          // when no Codex backend is active.
+          const activeBackend = getActiveBackend();
+          const nudgeOutcome = activeBackend
+            ? activeBackend.queueNudge(msg.message)
+            : { handled: false as const };
 
           // Also write to nudge file + context-overrides as fallback/record
           try {
@@ -2740,11 +2842,29 @@ function startGlobalNudgePoller(
           } catch (writeErr) {
           }
 
+          // Determine log tag based on delivery mechanism
+          let nudgeTag: string;
+          if (nudgeOutcome.handled && nudgeOutcome.via === "stream") {
+            nudgeTag = "[LIVE]";
+          } else if (nudgeOutcome.handled && nudgeOutcome.via === "abort-resume") {
+            nudgeTag = "[ABORT-RESUME]";
+            // Notify orchestrator to resume with nudge on next builder invocation
+            onAbortResume({ sessionId: nudgeOutcome.sessionId, text: nudgeOutcome.nudgeText });
+            appendEvent(repoRoot, runId, {
+              event: "builder.aborted-for-nudge",
+              phase: currentPhase as RunPhase,
+              packetId: currentPacketId ?? undefined,
+              detail: `Session ${nudgeOutcome.sessionId.slice(0, 8)} aborted for nudge: ${msg.message.slice(0, 160)}`,
+            });
+          } else {
+            nudgeTag = "[FILE]";
+          }
+
           appendEvent(repoRoot, runId, {
             event: "nudge.sent",
             phase: currentPhase as RunPhase,
             packetId: currentPacketId ?? undefined,
-            detail: `${injectedLive ? "[LIVE] " : "[FILE] "}${msg.message.slice(0, 190)}`,
+            detail: `${nudgeTag} ${msg.message.slice(0, 190)}`,
           });
         } else if (msg.type === "inject_context" && msg.context) {
           appendContextOverride(repoRoot, runId, msg.context);
@@ -2754,7 +2874,8 @@ function startGlobalNudgePoller(
           });
         } else if (msg.type === "pivot_agent" && msg.message) {
           // Kill the running agent — orchestrator retry loop will restart with new context
-          const killedSessionId = backend.abortSession();
+          const pivotBackend = getActiveBackend();
+          const killedSessionId = pivotBackend ? pivotBackend.abortSession() : null;
           appendContextOverride(repoRoot, runId, `PIVOT: ${msg.message}`);
           if (currentPacketId) {
             writeNudgeFile(repoRoot, runId, currentPacketId, `PIVOT: ${msg.message}`);

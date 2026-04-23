@@ -1,0 +1,463 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "spec": {
+      "type": "string"
+    },
+    "packets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "bugfix",
+              "ui_feature",
+              "backend_feature",
+              "migration",
+              "refactor",
+              "long_running_job",
+              "integration",
+              "tooling"
+            ]
+          },
+          "objective": {
+            "type": "string"
+          },
+          "whyNow": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "negotiating",
+              "building",
+              "evaluating",
+              "fixing",
+              "done",
+              "blocked",
+              "failed"
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "estimatedSize": {
+            "type": "string",
+            "enum": [
+              "S",
+              "M",
+              "L",
+              "XL"
+            ]
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expectedFiles": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "criticalConstraints": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "integrationInputs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fromPacket": {
+                  "type": "string"
+                },
+                "provides": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "fromPacket",
+                "provides"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "requiresHumanReview": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "type",
+          "objective",
+          "whyNow",
+          "dependencies",
+          "status",
+          "priority",
+          "estimatedSize",
+          "risks",
+          "notes",
+          "expectedFiles",
+          "criticalConstraints",
+          "integrationInputs",
+          "requiresHumanReview"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "riskRegister": {
+      "type": "object",
+      "properties": {
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              "mitigation": {
+                "type": "string"
+              },
+              "watchpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "description",
+              "severity",
+              "mitigation",
+              "watchpoints"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "risks"
+      ],
+      "additionalProperties": false
+    },
+    "evaluatorGuide": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "qualityCriteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "weight": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "weight",
+              "description"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "antiPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "referenceStandard": {
+          "type": "string"
+        },
+        "edgeCases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "browserVerification": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "viewports": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "width": {
+                        "type": "number"
+                      },
+                      "height": {
+                        "type": "number"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "width",
+                      "height",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "interactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "enabled",
+                "viewports",
+                "interactions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibrationExamples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dimension": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "dimension",
+              "score",
+              "description"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "skepticismLevel": {
+          "default": "normal",
+          "type": "string",
+          "enum": [
+            "normal",
+            "high",
+            "adversarial"
+          ]
+        }
+      },
+      "required": [
+        "domain",
+        "qualityCriteria",
+        "antiPatterns",
+        "referenceStandard",
+        "edgeCases",
+        "calibrationExamples",
+        "skepticismLevel",
+        "browserVerification"
+      ],
+      "additionalProperties": false
+    },
+    "planSummary": {
+      "type": "string"
+    },
+    "integrationScenarios": {
+      "default": {
+        "scenarios": []
+      },
+      "type": "object",
+      "properties": {
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "packetDependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "type": "string"
+                    },
+                    "expected": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "packetDependencies",
+              "steps"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "scenarios"
+      ],
+      "additionalProperties": false
+    },
+    "devServer": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "readyPattern": {
+                  "default": "Local:",
+                  "type": "string"
+                },
+                "port": {
+                  "default": 5173,
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "backendPort": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "command",
+                "readyPattern",
+                "port",
+                "backendPort"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "spec",
+    "packets",
+    "riskRegister",
+    "evaluatorGuide",
+    "planSummary",
+    "integrationScenarios",
+    "devServer"
+  ],
+  "additionalProperties": false
+}

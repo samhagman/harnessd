@@ -16,6 +16,8 @@
 import process from "node:process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 import { ClaudeSdkBackend } from "./backend/claude-sdk.js";
 import { BackendFactory } from "./backend/backend-factory.js";
@@ -76,6 +78,63 @@ function loadEnvFile(filePath: string): number {
 }
 
 // ------------------------------------
+// Schema freshness check
+// ------------------------------------
+
+/**
+ * Regenerate harness/schemas/*.json if they are missing or older than
+ * harness/src/schemas.ts. Fast-path: if all files are newer, returns
+ * immediately with no filesystem writes.
+ *
+ * Runs synchronously and early — before any role dispatch — so the schemas
+ * are always up-to-date without a manual build step.
+ */
+function ensureSchemasAreUpToDate(): void {
+  const srcDir = path.dirname(fileURLToPath(import.meta.url));
+  const schemasTs = path.join(srcDir, "schemas.ts");
+  const schemasDir = path.join(srcDir, "..", "schemas");
+  const schemaNames = [
+    "builder-report",
+    "evaluator-report",
+    "qa-report",
+    "contract-proposal",
+    "contract-review",
+    "plan-review",
+    "spec-packets",
+  ];
+
+  let sourcesMtime: number;
+  try {
+    sourcesMtime = fs.statSync(schemasTs).mtimeMs;
+  } catch {
+    // schemas.ts not found (unusual) — skip
+    return;
+  }
+
+  const needsRegen = schemaNames.some((name) => {
+    try {
+      return fs.statSync(path.join(schemasDir, `${name}.json`)).mtimeMs < sourcesMtime;
+    } catch {
+      return true; // file missing
+    }
+  });
+
+  if (!needsRegen) return;
+
+  // Run the generator in a child process so it can import ../src/schemas.ts
+  // from its own scripts/ context without polluting the main module graph.
+  const generatorPath = path.join(srcDir, "..", "scripts", "generate-schemas.mts");
+  const result = spawnSync(
+    process.execPath, // node
+    ["--import", "tsx/esm", generatorPath],
+    { stdio: "inherit", encoding: "utf-8" },
+  );
+  if (result.status !== 0) {
+    console.warn("[schema] Warning: schema regeneration failed — continuing with existing schemas");
+  }
+}
+
+// ------------------------------------
 // Main
 // ------------------------------------
 
@@ -96,6 +155,10 @@ async function main(): Promise<void> {
     const count = loadEnvFile(defaultEnv);
     if (count > 0) console.log(`[env] Loaded ${count} vars from .env`);
   }
+
+  // Ensure harness/schemas/*.json are up-to-date before any role dispatch.
+  // Fast-path: no-op when all schemas are newer than schemas.ts.
+  ensureSchemasAreUpToDate();
 
   const repoRoot = process.env.WIGGUM_REPO_ROOT ?? process.cwd();
 
@@ -274,7 +337,9 @@ async function main(): Promise<void> {
   npx tsx src/main.ts --no-memory "your objective"
   npx tsx src/main.ts --no-context7 "your objective"
   npx tsx src/main.ts --env .env.local "your objective"
-  npx tsx src/main.ts --effort xhigh "your objective"  # effort: low|medium|high|xhigh|max`);
+  npx tsx src/main.ts --effort xhigh "your objective"  # effort: low|medium|high|xhigh|max
+  npx tsx src/main.ts --codex-roles builder,evaluator "your objective"
+  npx tsx src/main.ts --codex-roles builder,evaluator,qa_agent,contract_evaluator "your objective"`);
     process.exit(1);
   }
 

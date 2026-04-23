@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packetId": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commandsRun": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "exitCode",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "backgroundJobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "microFanoutUsed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "selfCheckResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "unknown",
+              "untested"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "criterionId",
+          "status",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "keyDecisions": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "remainingConcerns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "claimsDone": {
+      "type": "boolean"
+    },
+    "commitShas": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "packetId",
+    "sessionId",
+    "changedFiles",
+    "commandsRun",
+    "backgroundJobs",
+    "microFanoutUsed",
+    "selfCheckResults",
+    "keyDecisions",
+    "remainingConcerns",
+    "claimsDone",
+    "commitShas"
+  ],
+  "additionalProperties": false
+}

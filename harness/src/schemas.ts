@@ -634,6 +634,8 @@ export const EventTypeSchema = z.enum([
   // Memory events
   "memory.encoded",
   "memory.error",
+  // Nudge abort+resume events (Codex backend)
+  "builder.aborted-for-nudge",
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;

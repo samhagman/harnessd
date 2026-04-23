@@ -4,8 +4,8 @@
  * Used by Codex agents (which can't use MCP tools) to validate their output before emitting.
  *
  * Usage:
- *   npx tsx harness/bin/validate-envelope.mts --schema EvaluatorReport --json '{"overall":"pass",...}'
- *   npx tsx harness/bin/validate-envelope.mts --schema EvaluatorReport --criterion-ids AC-1,AC-2,AC-3 --json '...'
+ *   npx tsx harness/bin/validate-envelope-cli.mts --schema EvaluatorReport --json '{"overall":"pass",...}'
+ *   npx tsx harness/bin/validate-envelope-cli.mts --schema EvaluatorReport --criterion-ids AC-1,AC-2,AC-3 --json '...'
  *
  * Reads --json arg or stdin if --json is "-".
  * Exits 0 with {"valid":true} or exits 1 with {"valid":false,"errors":[...]}.

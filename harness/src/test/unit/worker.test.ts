@@ -3,12 +3,17 @@
  */
 
 import { describe, it, expect } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { z } from "zod";
 
 import {
   extractEnvelope,
   parseEnvelopePayload,
+  runWorker,
 } from "../../worker.js";
+import { FakeBackend } from "../../backend/fake-backend.js";
 import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
@@ -179,5 +184,61 @@ describe("parseEnvelopePayload", () => {
     const invalid = JSON.stringify({ report: { status: "unknown", count: 5 } });
     const invalidResult = parseEnvelopePayload(invalid, schema);
     expect(invalidResult.payload).toBeNull();
+  });
+});
+
+// ------------------------------------
+// runWorker — resumeFailed propagation
+// ------------------------------------
+
+describe("runWorker — resumeFailed flag", () => {
+  it("surfaces the resumeFailed flag when the backend emits error_resume_failed", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "harnessd-worker-"));
+    fs.mkdirSync(path.join(tmp, ".harnessd/runs/test-run/packets/PKT-001/evaluator"), { recursive: true });
+
+    const backend = FakeBackend.fromScript([
+      { type: "system", subtype: "init", sessionId: "sess-stale" },
+      {
+        type: "result",
+        subtype: "error_resume_failed",
+        text: "Codex session resume failed (session: sess-stale).",
+        isError: true,
+        sessionId: "sess-stale",
+      },
+    ]);
+
+    const result = await runWorker(backend, { prompt: "irrelevant", cwd: tmp }, {
+      repoRoot: tmp,
+      runId: "test-run",
+      role: "evaluator",
+      packetId: "PKT-001",
+      artifactDir: "packets/PKT-001/evaluator",
+      heartbeatIntervalSeconds: 0,
+    });
+
+    expect(result.resumeFailed).toBe(true);
+    expect(result.hadError).toBe(true);
+    expect(result.envelopeFound).toBe(false);
+  });
+
+  it("leaves resumeFailed undefined for a successful session", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "harnessd-worker-"));
+    fs.mkdirSync(path.join(tmp, ".harnessd/runs/test-run/packets/PKT-001/evaluator"), { recursive: true });
+
+    const backend = FakeBackend.success(
+      `${RESULT_START_SENTINEL}\n{"ok":true}\n${RESULT_END_SENTINEL}`,
+    );
+
+    const result = await runWorker(backend, { prompt: "irrelevant", cwd: tmp }, {
+      repoRoot: tmp,
+      runId: "test-run",
+      role: "evaluator",
+      packetId: "PKT-001",
+      artifactDir: "packets/PKT-001/evaluator",
+      heartbeatIntervalSeconds: 0,
+    });
+
+    expect(result.resumeFailed).toBeUndefined();
+    expect(result.hadError).toBe(false);
   });
 });

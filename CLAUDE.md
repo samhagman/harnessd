@@ -121,7 +121,7 @@ Holistic end-to-end testing after all R1 packets complete. Browser-based verific
 Generates targeted fix packets from QA findings. Verifies root causes before creating packets. Round-specific packet IDs (`PKT-R{round}-NNN`).
 
 ### Session Recovery
-Native SDK session resume (`resume: sessionId`) for Claude agents — full context on crash recovery. Codex agents fall back to a recovery agent that summarizes prior transcript.
+Native SDK session resume (`resume: sessionId`) for Claude agents. Codex agents use `codex exec resume <sessionId>` for native resume. Both fall back to the recovery agent (transcript summary → fresh-session prompt) when session IDs are unavailable or expired.
 
 ### Completion Summary
 Cross-packet context propagation — summaries of completed packets are passed to subsequent builders and evaluators.
@@ -129,8 +129,14 @@ Cross-packet context propagation — summaries of completed packets are passed t
 ### Multi-Model Backend
 ```
 BackendFactory.forRole(role) → AgentBackend
-  ├── ClaudeSdkBackend — planner, builder, contract_builder (session resume, MCP tools)
-  ├── CodexCliBackend  — evaluator, qa_agent, contract_evaluator (CLI validate, no resume)
+  ├── ClaudeSdkBackend — any role (session resume, in-process MCP tools)
+  │     supportsResume: true  |  supportsMcpServers: true  |  nudgeStrategy: "stream"
+  ├── CodexCliBackend  — any role (--codex-roles selects; all capabilities now parity)
+  │     session resume: codex exec resume <id>
+  │     MCP: per-invocation -c mcp_servers.* flags → harness/bin/*-mcp.mts stdio binaries
+  │     structured output: --output-schema harness/schemas/<role>-report.json
+  │     nudges: abort + resume (SIGTERM → resume with nudge prepended)
+  │     supportsResume: true  |  supportsMcpServers: true  |  nudgeStrategy: "abort-resume"
   └── FakeBackend      — tests (zero quota, deterministic replay)
 ```
 
@@ -147,7 +153,7 @@ BackendFactory.forRole(role) → AgentBackend
 | **Result envelope** | `===HARNESSD_RESULT_START===` ... JSON ... `===HARNESSD_RESULT_END===` |
 | **Tool gates** | Automated quality checks (typecheck, test) between builder and evaluator |
 | **QA round** | Holistic e2e testing after all packets; triggers round 2+ fix planning |
-| **Session resume** | Native SDK resume for Claude; transcript-summary fallback for Codex |
+| **Session resume** | Native SDK resume for Claude; `codex exec resume` for Codex; transcript-summary fallback when session expired |
 | **AgentBackend** | Abstraction over SDK — enables testing with FakeBackend (zero quota) |
 | **Linear execution** | One packet at a time; parallelism happens inside the active builder and inside read-only verification roles via the Task tool. |
 
@@ -205,7 +211,22 @@ harnessd/
 │   │       └── scenarios/           # 2 scenario test files
 │   │
 │   ├── bin/
-│   │   └── validate-envelope.mts    # CLI validate_envelope for Codex agents
+│   │   ├── validate-envelope-cli.mts  # CLI validate_envelope for Codex agents (no MCP)
+│   │   ├── validate-envelope-mcp.mts  # MCP stdio server: validate_envelope tool
+│   │   ├── gate-check-mcp.mts         # MCP stdio server: gate_check tool
+│   │   └── memory-search-mcp.mts      # MCP stdio server: memory_search tool
+│   │
+│   ├── scripts/
+│   │   └── generate-schemas.mts     # Zod → JSON Schema generator (run on schemas.ts change)
+│   │
+│   ├── schemas/                     # Generated JSON schemas for --output-schema (committed)
+│   │   ├── builder-report.json
+│   │   ├── evaluator-report.json
+│   │   ├── qa-report.json
+│   │   ├── contract-proposal.json
+│   │   ├── contract-review.json
+│   │   ├── plan-review.json
+│   │   └── spec-packets.json
 │   │
 │   ├── run.sh                       # Launch harness
 │   ├── tail.sh                      # Tail logs (multiple modes)
@@ -249,8 +270,9 @@ cd harness && npx tsx src/main.ts --workspace /tmp/my-project "your objective"
 # Name a run explicitly
 cd harness && npx tsx src/main.ts --run-id my-project "your objective"
 
-# Use Codex for adversarial roles
+# Use Codex for specific roles (any role: builder, planner, evaluator, qa_agent, etc.)
 cd harness && npx tsx src/main.ts --codex-roles evaluator,qa_agent,contract_evaluator "your objective"
+cd harness && npx tsx src/main.ts --codex-roles builder,evaluator "your objective"
 cd harness && npx tsx src/main.ts --codex-model gpt-5.4 --codex-roles evaluator "your objective"
 
 # Override model for all agents
@@ -388,7 +410,7 @@ expect(backend.calls[0].prompt).toContain("...");  // check prompt content
 2. **`permissionMode: "plan"` blocks ALL tools** — this activates Claude Code's built-in plan mode. For read-only agents that still need Read/Grep/Glob/Bash, use `permissionMode: "bypassPermissions"` with `disallowedTools` instead.
 3. **`streamInput()` hangs from `setInterval`** — must be called from within the `for-await` loop that consumes query messages. The nudge queue pattern (`backend.queueNudge()` → drain inside loop) is the correct approach.
 4. **Read-only agents will try to write files** — without an explicit CRITICAL RULES section at the top of the prompt saying "You CANNOT write files, your only output is the envelope", agents default to trying Write/Edit/Agent tools.
-5. **All agents must call `validate_envelope` before emitting** — Claude agents use the MCP tool, Codex agents use `bin/validate-envelope.mts`. Without this, agents emit malformed JSON that fails parsing and wastes a full retry cycle.
+5. **All agents must call `validate_envelope` before emitting** — Claude agents use the in-process MCP tool, Codex agents with MCP support use `bin/validate-envelope-mcp.mts`, Codex agents without MCP use `bin/validate-envelope-cli.mts`. Without this, agents emit malformed JSON that fails parsing and wastes a full retry cycle.
 6. **Dirty data accumulates across QA rounds** — builders/evaluators leave test artifacts in shared state. Multi-round QA can fail on stale data, not real bugs. No automated cleanup mechanism exists yet.
 
 ---

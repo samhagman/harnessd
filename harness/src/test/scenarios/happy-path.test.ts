@@ -9,18 +9,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { z } from "zod";
 
-import { FakeBackend } from "../../backend/fake-backend.js";
-import type { AgentMessage, AgentBackend, AgentSessionOptions } from "../../backend/types.js";
+import type { AgentMessage, AgentBackend, AgentSessionOptions, NudgeOutcome } from "../../backend/types.js";
 import { runOrchestrator } from "../../orchestrator.js";
-import { getRunDir, getLatestRunId, HARNESSD_DIR } from "../../state-store.js";
+import { getRunDir, getLatestRunId } from "../../state-store.js";
 import { readEvents } from "../../event-log.js";
 import {
   RESULT_START_SENTINEL,
   RESULT_END_SENTINEL,
   RunStateSchema,
-  StatusSnapshotSchema,
 } from "../../schemas.js";
 
 // ------------------------------------
@@ -223,13 +220,18 @@ class ScriptedBackend implements AgentBackend {
     return this.lastSessionId;
   }
 
-  queueNudge(_text: string): boolean {
-    return false;
+  queueNudge(_text: string): NudgeOutcome {
+    return { handled: false };
   }
 
   abortSession(): string | null {
     return this.lastSessionId;
   }
+
+  supportsResume(): boolean { return true; }
+  supportsMcpServers(): boolean { return false; }
+  nudgeStrategy(): "stream" | "abort-resume" | "none" { return "none"; }
+  supportsOutputSchema(): boolean { return false; }
 }
 
 function makeScript(text: string, sessionId: string = "sess-001"): AgentMessage[] {

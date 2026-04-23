@@ -2,9 +2,7 @@
  * Unit tests for CodexCliBackend, BackendFactory, and JSONL parsing.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
   parseCodexLine,
@@ -274,6 +272,22 @@ describe("buildCodexArgs", () => {
     const args = buildCodexArgs({ prompt: "test", cwd: "" }, {});
     expect(args).not.toContain("--cd");
   });
+
+  it("uses 'exec resume <sessionId>' form when opts.resume is set", () => {
+    const args = buildCodexArgs({ ...baseOpts, resume: "sess-abc-123" }, {});
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("resume");
+    expect(args[2]).toBe("sess-abc-123");
+    expect(args[3]).toBe("--json");
+    // Prompt is the LAST positional arg (after any flags like -c reasoning, --model)
+    expect(args[args.length - 1]).toBe("Write a test");
+  });
+
+  it("uses normal 'exec --json' form when opts.resume is not set", () => {
+    const args = buildCodexArgs(baseOpts, {});
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("--json");
+  });
 });
 
 // ------------------------------------
@@ -281,9 +295,10 @@ describe("buildCodexArgs", () => {
 // ------------------------------------
 
 describe("CodexCliBackend", () => {
-  it("queueNudge always returns false (batch mode)", () => {
+  it("queueNudge returns { handled: false } when no active session", () => {
     const backend = new CodexCliBackend();
-    expect(backend.queueNudge("hello")).toBe(false);
+    const outcome = backend.queueNudge("hello");
+    expect(outcome.handled).toBe(false);
   });
 
   it("getLastSessionId returns null before any session", () => {
@@ -295,6 +310,21 @@ describe("CodexCliBackend", () => {
     const backend = new CodexCliBackend();
     expect(backend.abortSession()).toBeNull();
   });
+
+  it("supportsResume returns true", () => {
+    const backend = new CodexCliBackend();
+    expect(backend.supportsResume()).toBe(true);
+  });
+
+  it("supportsMcpServers returns true", () => {
+    const backend = new CodexCliBackend();
+    expect(backend.supportsMcpServers()).toBe(true);
+  });
+
+  it("nudgeStrategy returns 'abort-resume'", () => {
+    const backend = new CodexCliBackend();
+    expect(backend.nudgeStrategy()).toBe("abort-resume");
+  });
 });
 
 // ------------------------------------
@@ -302,18 +332,6 @@ describe("CodexCliBackend", () => {
 // ------------------------------------
 
 describe("CodexCliBackend.runSession (mocked spawn)", () => {
-  let spawnMock: ReturnType<typeof vi.fn>;
-  let originalSpawn: typeof import("node:child_process").spawn;
-
-  beforeEach(async () => {
-    const cp = await import("node:child_process");
-    originalSpawn = cp.spawn;
-    spawnMock = vi.fn();
-    // Monkey-patch spawn on the module (vi.mock with ESM is tricky;
-    // instead we'll test via the exported parseCodexLine + buildCodexArgs
-    // and test integration via a fake process below)
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -375,7 +393,7 @@ describe("CodexCliBackend.abortSession (with mock child)", () => {
     // Simulate an active child process
     const fakeChild = {
       killed: false,
-      kill: vi.fn((signal: string) => {
+      kill: vi.fn(() => {
         fakeChild.killed = true;
       }),
     };
@@ -405,6 +423,83 @@ describe("CodexCliBackend.abortSession (with mock child)", () => {
     backend.abortSession();
 
     expect(fakeChild.kill).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------
+// CodexCliBackend — queueNudge abort+resume (Phase 3)
+// ------------------------------------
+
+describe("CodexCliBackend.queueNudge (abort+resume)", () => {
+  it("sends SIGTERM and returns abort-resume outcome when session is active", () => {
+    const backend = new CodexCliBackend();
+
+    const fakeChild = {
+      killed: false,
+      kill: vi.fn(() => {
+        fakeChild.killed = true;
+      }),
+    };
+
+    (backend as unknown as { activeChild: unknown }).activeChild = fakeChild;
+    (backend as unknown as { lastSessionId: string }).lastSessionId = "test-uuid";
+
+    const outcome = backend.queueNudge("add a debug log to line 42");
+
+    // Child should have received SIGTERM
+    expect(fakeChild.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(fakeChild.killed).toBe(true);
+
+    // Outcome should describe the abort+resume handle
+    expect(outcome.handled).toBe(true);
+    if (outcome.handled && outcome.via === "abort-resume") {
+      expect(outcome.sessionId).toBe("test-uuid");
+      expect(outcome.nudgeText).toBe("add a debug log to line 42");
+    } else {
+      // Force the test to fail if we didn't get abort-resume
+      expect(outcome.handled && (outcome as { via?: string }).via).toBe("abort-resume");
+    }
+  });
+
+  it("returns { handled: false } when no active session (no activeChild)", () => {
+    const backend = new CodexCliBackend();
+    // lastSessionId is set but no activeChild
+    (backend as unknown as { lastSessionId: string }).lastSessionId = "test-uuid";
+
+    const outcome = backend.queueNudge("nudge text");
+    expect(outcome.handled).toBe(false);
+  });
+
+  it("returns { handled: false } when no lastSessionId", () => {
+    const backend = new CodexCliBackend();
+
+    const fakeChild = {
+      killed: false,
+      kill: vi.fn(),
+    };
+    (backend as unknown as { activeChild: unknown }).activeChild = fakeChild;
+    // lastSessionId is null (session ID not yet received from Codex)
+
+    const outcome = backend.queueNudge("nudge text");
+    expect(outcome.handled).toBe(false);
+    expect(fakeChild.kill).not.toHaveBeenCalled();
+  });
+
+  it("includes the full nudge text in the returned outcome", () => {
+    const backend = new CodexCliBackend();
+
+    const fakeChild = { killed: false, kill: vi.fn() };
+    (backend as unknown as { activeChild: unknown }).activeChild = fakeChild;
+    (backend as unknown as { lastSessionId: string }).lastSessionId = "sess-xyz";
+
+    const nudgeText = "OPERATOR NUDGE: please also add error handling for the case where the file is missing";
+    const outcome = backend.queueNudge(nudgeText);
+
+    expect(outcome.handled).toBe(true);
+    if (outcome.handled && outcome.via === "abort-resume") {
+      expect(outcome.nudgeText).toBe(nudgeText);
+      expect(outcome.sessionId).toBe("sess-xyz");
+    }
   });
 });
 
@@ -479,5 +574,214 @@ describe("BackendFactory", () => {
     expect(factory.forRole("contract_builder")).toBeInstanceOf(CodexCliBackend);
     // Unknown role defaults to claude
     expect(factory.forRole("some_future_role")).toBe(claude);
+  });
+});
+
+// ------------------------------------
+// buildCodexArgs — MCP flag generation (Phase 2 part 2)
+// ------------------------------------
+
+describe("buildCodexArgs — MCP server flag generation", () => {
+  const baseOpts: AgentSessionOptions = {
+    prompt: "test prompt",
+    cwd: "/tmp/project",
+  };
+
+  it("emits -c mcp_servers.* flags for LogicalMcpServerDescriptor entries", () => {
+    const opts: AgentSessionOptions = {
+      ...baseOpts,
+      mcpServers: {
+        foo: {
+          command: "tsx",
+          args: ["a.mts", "b.mts"],
+          env: { K: "v", X: "y" },
+        },
+      },
+    };
+    const args = buildCodexArgs(opts, {});
+    // command flag
+    expect(args).toContain("-c");
+    const commandIdx = args.indexOf(`mcp_servers.foo.command="tsx"`);
+    expect(commandIdx).toBeGreaterThan(-1);
+    // args flag
+    const argsFlag = `mcp_servers.foo.args=${JSON.stringify(["a.mts", "b.mts"])}`;
+    expect(args).toContain(argsFlag);
+    // env flags
+    expect(args).toContain(`mcp_servers.foo.env.K="v"`);
+    expect(args).toContain(`mcp_servers.foo.env.X="y"`);
+  });
+
+  it("handles multiple MCP servers", () => {
+    const opts: AgentSessionOptions = {
+      ...baseOpts,
+      mcpServers: {
+        server1: { command: "npx", args: ["tsx", "/abs/a.mts"] },
+        server2: { command: "node", args: ["/abs/b.js"], env: { FOO: "bar" } },
+      },
+    };
+    const args = buildCodexArgs(opts, {});
+    expect(args).toContain(`mcp_servers.server1.command="npx"`);
+    expect(args).toContain(`mcp_servers.server2.command="node"`);
+    expect(args).toContain(`mcp_servers.server2.env.FOO="bar"`);
+  });
+
+  it("skips non-LogicalMcpServerDescriptor values (SDK in-process form)", () => {
+    // A Claude SDK in-process McpServer object doesn't have a top-level `command` field
+    const opts: AgentSessionOptions = {
+      ...baseOpts,
+      mcpServers: {
+        "in-process-server": { tools: [], name: "test", version: "1" } as unknown as Record<string, unknown>,
+      },
+    };
+    const args = buildCodexArgs(opts, {});
+    // Should NOT emit any mcp_servers.* flags for this non-descriptor entry
+    expect(args.some((a) => a.includes("mcp_servers.in-process-server"))).toBe(false);
+  });
+
+  it("re-registers MCP flags on resume branch (MCP servers are process-scoped, not session-scoped)", () => {
+    const opts: AgentSessionOptions = {
+      ...baseOpts,
+      resume: "sess-abc",
+      mcpServers: {
+        foo: { command: "tsx", args: ["a.mts"] },
+      },
+    };
+    const args = buildCodexArgs(opts, {});
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("resume");
+    // MCP flags MUST re-appear on resume so the child process can spawn the MCP server again.
+    expect(args.some((a) => a === 'mcp_servers.foo.command="tsx"')).toBe(true);
+    expect(args.some((a) => a === 'mcp_servers.foo.args=["a.mts"]')).toBe(true);
+  });
+});
+
+// ------------------------------------
+// buildCodexArgs — output schema flag (Phase 4 part 2)
+// ------------------------------------
+
+describe("buildCodexArgs — output schema flag", () => {
+  const baseOpts: AgentSessionOptions = {
+    prompt: "test",
+    cwd: "/tmp/project",
+  };
+
+  it("appends --output-schema flag when outputSchemaPath is set", () => {
+    const args = buildCodexArgs({ ...baseOpts, outputSchemaPath: "/tmp/x.json" }, {});
+    const schemaIdx = args.indexOf("--output-schema");
+    expect(schemaIdx).toBeGreaterThan(-1);
+    expect(args[schemaIdx + 1]).toBe("/tmp/x.json");
+  });
+
+  it("does not add --output-schema when outputSchemaPath is absent", () => {
+    const args = buildCodexArgs(baseOpts, {});
+    expect(args).not.toContain("--output-schema");
+  });
+
+  it("does not add --output-schema on resume branch", () => {
+    const args = buildCodexArgs(
+      { ...baseOpts, resume: "sess-abc", outputSchemaPath: "/tmp/x.json" },
+      {},
+    );
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("resume");
+    expect(args).not.toContain("--output-schema");
+  });
+});
+
+// ------------------------------------
+// parseCodexLine — final_answer envelope synthesis (Phase 4 part 2)
+// ------------------------------------
+
+describe("parseCodexLine — final_answer item synthesis", () => {
+  it("synthesizes envelope sentinels from item.completed with final_answer type", () => {
+    const payload = { verdict: "pass", score: 95 };
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "final_answer",
+        content: JSON.stringify(payload),
+      },
+    });
+    const msg = parseCodexLine(line);
+    expect(msg).not.toBeNull();
+    expect(msg!.type).toBe("assistant");
+    expect(msg!.subtype).toBe("final_answer_envelope");
+    expect(msg!.text).toContain("===HARNESSD_RESULT_START===");
+    expect(msg!.text).toContain("===HARNESSD_RESULT_END===");
+    // Payload should appear between sentinels
+    expect(msg!.text).toContain(JSON.stringify(payload));
+  });
+
+  it("handles final_answer with object content (auto-serializes)", () => {
+    const payload = { verdict: "fail", issues: ["missing field"] };
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "final_answer",
+        content: payload,
+      },
+    });
+    const msg = parseCodexLine(line);
+    expect(msg).not.toBeNull();
+    expect(msg!.text).toContain("===HARNESSD_RESULT_START===");
+    // Content should be serialized JSON
+    expect(msg!.text).toContain("verdict");
+    expect(msg!.text).toContain("missing field");
+  });
+
+  it("uses output field when content is absent", () => {
+    const payload = { result: "ok" };
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "final_answer",
+        output: JSON.stringify(payload),
+      },
+    });
+    const msg = parseCodexLine(line);
+    expect(msg).not.toBeNull();
+    expect(msg!.text).toContain("===HARNESSD_RESULT_START===");
+    expect(msg!.text).toContain("result");
+  });
+
+  it("wraps agent_message text in envelope when outputSchemaActive is true", () => {
+    // Codex CLI 0.117.0 emits structured output as agent_message, not final_answer.
+    const payload = { verdict: "pass", hardFailures: [] };
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "item_0",
+        type: "agent_message",
+        text: JSON.stringify(payload),
+      },
+    });
+    const msg = parseCodexLine(line, true);
+    expect(msg).not.toBeNull();
+    expect(msg!.subtype).toBe("final_answer_envelope");
+    expect(msg!.text).toContain("===HARNESSD_RESULT_START===");
+    expect(msg!.text).toContain("===HARNESSD_RESULT_END===");
+    expect(msg!.text).toContain(JSON.stringify(payload));
+  });
+
+  it("does NOT wrap agent_message when outputSchemaActive is false", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: { id: "item_0", type: "agent_message", text: "{\"a\":1}" },
+    });
+    const msg = parseCodexLine(line, false);
+    expect(msg).not.toBeNull();
+    expect(msg!.subtype).toBeUndefined();
+    expect(msg!.text).not.toContain("===HARNESSD_RESULT_START===");
+  });
+});
+
+// ------------------------------------
+// CodexCliBackend.supportsOutputSchema
+// ------------------------------------
+
+describe("CodexCliBackend.supportsOutputSchema", () => {
+  it("returns true", () => {
+    const backend = new CodexCliBackend();
+    expect(backend.supportsOutputSchema()).toBe(true);
   });
 });

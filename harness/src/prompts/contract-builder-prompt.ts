@@ -21,6 +21,7 @@ import {
   buildHarnessContextSection,
   buildMemorySearchSection,
 } from "./shared.js";
+import type { BackendCapabilities } from "./builder-prompt.js";
 
 export function buildContractBuilderPrompt(
   packet: Packet,
@@ -30,7 +31,10 @@ export function buildContractBuilderPrompt(
   existingContract?: PacketContract,
   evaluatorReport?: EvaluatorReport,
   enableMemory?: boolean,
+  backendCapabilities?: BackendCapabilities,
 ): string {
+  const supportsMcp = backendCapabilities?.supportsMcpServers ?? true;
+  const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
   const sections: string[] = [];
 
   // 0. Autonomous preamble
@@ -40,8 +44,10 @@ export function buildContractBuilderPrompt(
   sections.push(buildHarnessContextSection("contract_builder", { packetId: packet.id, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("contract_builder", enableMemory));
 
-  // 0b. Mandatory validate_envelope gate
-  sections.push(buildValidateEnvelopeSection("PacketContract"));
+  // 0b. Mandatory validate_envelope gate (only when MCP is available)
+  if (supportsMcp) {
+    sections.push(buildValidateEnvelopeSection("PacketContract"));
+  }
 
   // 0c. Renegotiation context (additive renegotiation after evaluator gap)
   if (existingContract && evaluatorReport) {
@@ -258,13 +264,8 @@ ${priorReview.suggestedCriteriaAdditions.length > 0 ? priorReview.suggestedCrite
 Address ALL required changes. Do not ignore the evaluator's feedback.`);
   }
 
-  // 6. Output format
-  sections.push(`## Output Format
-
-Emit your contract proposal as a structured JSON envelope:
-
-${RESULT_START_SENTINEL}
-{
+  // 6. Output format — conditional on whether the backend supports structured output schema
+  const exampleJson = `{
   "packetId": "${packet.id}",
   "round": ${priorReview ? priorReview.round + 1 : 1},
   "status": "proposed",
@@ -299,7 +300,26 @@ ${RESULT_START_SENTINEL}
   ],
   "reviewChecklist": ["..."],
   "proposedCommitMessage": "harnessd(${packet.id}): ..."
-}
+}`;
+
+  if (supportsOutputSchema) {
+    sections.push(`## Output Format
+
+Emit your contract proposal as structured JSON matching the output schema.
+Do NOT use envelope sentinels. The output schema enforces the correct structure.
+
+Your final answer must match this shape:
+
+${exampleJson}
+
+- Emit your final answer ONCE — the harness reads the last structured output`);
+  } else {
+    sections.push(`## Output Format
+
+Emit your contract proposal as a structured JSON envelope:
+
+${RESULT_START_SENTINEL}
+${exampleJson}
 ${RESULT_END_SENTINEL}
 
 - Emit this envelope ONCE at the very end
@@ -307,6 +327,7 @@ ${RESULT_END_SENTINEL}
 
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
+  }
 
   return sections.join("\n\n");
 }

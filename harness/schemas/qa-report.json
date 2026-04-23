@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "overallVerdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "scenariosChecked": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "major",
+              "minor"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "stepsToReproduce": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "screenshotPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relatedPackets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "diagnosticHypothesis": {
+            "type": "string",
+            "description": "Code-level root cause hypothesis: which file, function, and logic error causes this issue"
+          },
+          "filesInvolved": {
+            "default": [],
+            "description": "File paths the agent believes contain the bug",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rootCauseLayer": {
+            "default": "unknown",
+            "description": "Which architectural layer the root cause lives in",
+            "type": "string",
+            "enum": [
+              "ui",
+              "state",
+              "api",
+              "data",
+              "infra",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "title",
+          "description",
+          "stepsToReproduce",
+          "relatedPackets",
+          "diagnosticHypothesis",
+          "filesInvolved",
+          "rootCauseLayer",
+          "screenshotPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scenarioResults": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "blocked"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenarioId",
+          "name",
+          "status",
+          "notes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "consoleErrors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "overallVerdict",
+    "scenariosChecked",
+    "issues",
+    "scenarioResults",
+    "consoleErrors",
+    "summary"
+  ],
+  "additionalProperties": false
+}

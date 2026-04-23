@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "revise"
+      ]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "major",
+              "minor"
+            ]
+          },
+          "area": {
+            "type": "string",
+            "enum": [
+              "architecture",
+              "scope",
+              "risk",
+              "acceptance_criteria",
+              "integration",
+              "ux"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "area",
+          "description",
+          "suggestion"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missingIntegrationScenarios": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "verdict",
+    "issues",
+    "missingIntegrationScenarios",
+    "summary"
+  ],
+  "additionalProperties": false
+}

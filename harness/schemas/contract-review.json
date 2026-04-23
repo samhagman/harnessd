@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packetId": {
+      "type": "string"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "revise",
+        "split",
+        "escalate"
+      ]
+    },
+    "scores": {
+      "type": "object",
+      "properties": {
+        "scopeFit": {
+          "type": "number"
+        },
+        "testability": {
+          "type": "number"
+        },
+        "riskCoverage": {
+          "type": "number"
+        },
+        "clarity": {
+          "type": "number"
+        },
+        "specAlignment": {
+          "type": "number"
+        },
+        "intentSeparation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "scopeFit",
+        "testability",
+        "riskCoverage",
+        "clarity",
+        "specAlignment",
+        "intentSeparation"
+      ],
+      "additionalProperties": false
+    },
+    "requiredChanges": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suggestedCriteriaAdditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "command",
+              "scenario",
+              "api",
+              "artifact",
+              "invariant",
+              "negative",
+              "observability",
+              "performance",
+              "rubric"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "playwright",
+                      "bash",
+                      "manual-script",
+                      "chrome-devtools"
+                    ]
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "expects": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "tool",
+                  "steps",
+                  "expects"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "scale": {
+                    "type": "string",
+                    "const": "1-5"
+                  },
+                  "threshold": {
+                    "type": "number"
+                  },
+                  "dimensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "scale",
+                  "threshold",
+                  "dimensions"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidenceRequired": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "contract",
+                  "evaluator"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "addedInEvalRound": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "description",
+          "blocking",
+          "evidenceRequired",
+          "threshold",
+          "command",
+          "expected",
+          "scenario",
+          "rubric",
+          "source",
+          "severity",
+          "rationale",
+          "addedInEvalRound"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missingRisks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rationale": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "packetId",
+    "round",
+    "decision",
+    "scores",
+    "requiredChanges",
+    "suggestedCriteriaAdditions",
+    "missingRisks",
+    "rationale"
+  ],
+  "additionalProperties": false
+}

@@ -20,6 +20,7 @@ import {
   buildResearchToolsSection,
 } from "./shared.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
+import type { BackendCapabilities } from "./builder-prompt.js";
 
 export function buildPlannerPrompt(
   objective: string,
@@ -28,7 +29,10 @@ export function buildPlannerPrompt(
   planningContext?: PlanningContext,
   researchTools?: ResearchToolAvailability,
   enableMemory?: boolean,
+  backendCapabilities?: BackendCapabilities,
 ): string {
+  const supportsMcp = backendCapabilities?.supportsMcpServers ?? true;
+  const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
   const sections: string[] = [];
 
   // 0. Autonomous preamble
@@ -71,8 +75,10 @@ ${researchRule}
     sections.push(`## Research Phase (DO THIS FIRST)\n\nBefore planning, use your research tools to investigate:\n- **Domain context**: Look up the subject matter of the objective. If building for a museum, research that museum. If building an API, research best practices for that API domain.\n- **Design inspiration**: For UI work, search for best-in-class examples in the domain. What do the best websites in this category look like? What patterns do they use?\n- **Technical best practices**: Search for current best practices, recommended libraries, and common patterns for the tech stack involved.\n\n${researchPhase}`);
   }
 
-  // 1b. Mandatory validate_envelope gate
-  sections.push(buildValidateEnvelopeSection("PlannerOutput"));
+  // 1b. Mandatory validate_envelope gate (only when MCP is available)
+  if (supportsMcp) {
+    sections.push(buildValidateEnvelopeSection("PlannerOutput"));
+  }
 
   // 2. Planning constraints
   sections.push(`## Planning Constraints
@@ -352,13 +358,8 @@ Choose the most appropriate type for each packet:
 - **integration** — connect multiple components (requires end-to-end scenario)
 - **tooling** — dev tools, scripts, CI (requires usage proof). ⚠ Horizontal by nature. Should be <10% of the plan. Fold into the first vertical packet that consumes it whenever possible; only stand alone if it's a time-boxed spike answering a specific question.`);
 
-  // 7. Output format
-  sections.push(`## Output Format
-
-After your analysis, emit your output as a structured JSON envelope:
-
-${RESULT_START_SENTINEL}
-{
+  // 7. Output format — conditional on whether the backend supports structured output schema
+  const EXAMPLE_JSON = `{
   "spec": "(your full SPEC.md content as a string)",
   "packets": [
     {
@@ -423,17 +424,7 @@ ${RESULT_START_SENTINEL}
       {
         "dimension": "Visual Design Quality",
         "score": 5,
-        "description": "Looks like a shipped product from a top-tier design team. Custom colors, thoughtful spacing, polished micro-interactions."
-      },
-      {
-        "dimension": "Visual Design Quality",
-        "score": 3,
-        "description": "Functional and clean but generic. Looks like a well-done template. No obvious flaws but nothing memorable."
-      },
-      {
-        "dimension": "Visual Design Quality",
-        "score": 1,
-        "description": "Default framework styling. Unstyled or broken layouts. Looks like a prototype or homework assignment."
+        "description": "Looks like a shipped product from a top-tier design team."
       }
     ],
     "skepticismLevel": "high"
@@ -458,7 +449,28 @@ ${RESULT_START_SENTINEL}
     "backendPort": 3101,
     "readyPattern": "Local:"
   }
-}
+}`;
+
+  if (supportsOutputSchema) {
+    sections.push(`## Output Format
+
+After your analysis, emit your output as structured JSON matching the output schema.
+Do NOT use envelope sentinels — the output schema enforces the correct structure.
+Emit the JSON directly as your final answer.
+
+Your final answer must match this shape:
+
+${EXAMPLE_JSON}
+
+- All string fields that contain markdown should use \\n for newlines
+- Emit your final answer ONCE — the harness reads the last structured output`);
+  } else {
+    sections.push(`## Output Format
+
+After your analysis, emit your output as a structured JSON envelope:
+
+${RESULT_START_SENTINEL}
+${EXAMPLE_JSON}
 ${RESULT_END_SENTINEL}
 
 - Emit this envelope ONCE at the very end
@@ -467,6 +479,7 @@ ${RESULT_END_SENTINEL}
 
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
+  }
 
   return sections.join("\n\n");
 }

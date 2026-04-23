@@ -14,7 +14,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Options, SDKMessage, SDKUserMessage, Query } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentBackend, AgentMessage, AgentSessionOptions } from "./types.js";
+import type { AgentBackend, AgentMessage, AgentSessionOptions, NudgeOutcome } from "./types.js";
 
 // ------------------------------------
 // Helpers: extract content from SDK assistant messages
@@ -208,6 +208,14 @@ export class ClaudeSdkBackend implements AgentBackend {
       abortController,
       model,
       effort,
+      // Destructure harness-specific fields that are not SDK Options fields.
+      // mcpServers is typed as Record<string, unknown> in AgentSessionOptions to
+      // accommodate both Claude in-process MCP form and Codex LogicalMcpServerDescriptor.
+      // The Claude SDK requires Record<string, McpServerConfig> — cast is safe because
+      // Claude runners always pass in-process MCP objects (createSdkMcpServer() return values).
+      mcpServers,
+      // outputSchemaPath is a Codex-only flag; Claude ignores it entirely.
+      outputSchemaPath: _outputSchemaPath,
       ...rest
     } = opts;
 
@@ -225,6 +233,11 @@ export class ClaudeSdkBackend implements AgentBackend {
       ...(maxBudgetUsd != null ? { maxBudgetUsd } : {}),
       ...(abortController != null ? { abortController } : {}),
       ...(model != null ? { model } : {}),
+      // Pass mcpServers through with a cast: callers of ClaudeSdkBackend always pass
+      // in-process McpServerConfig objects (createSdkMcpServer return values), so this
+      // is safe even though AgentSessionOptions types it as Record<string, unknown>.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(mcpServers != null ? { mcpServers: mcpServers as any } : {}),
       ...rest,
     };
 
@@ -292,12 +305,12 @@ export class ClaudeSdkBackend implements AgentBackend {
     return this.lastSessionId;
   }
 
-  queueNudge(text: string): boolean {
+  queueNudge(text: string): NudgeOutcome {
     if (!this.activeQuery || !this.sessionId) {
-      return false;
+      return { handled: false };
     }
     this.nudgeQueue.push(text);
-    return true;
+    return { handled: true, via: "stream" };
   }
 
   abortSession(): string | null {
@@ -307,5 +320,22 @@ export class ClaudeSdkBackend implements AgentBackend {
       // The for-await loop will terminate, finally block will clean up
     }
     return sid;
+  }
+
+  supportsResume(): boolean {
+    return true;
+  }
+
+  supportsMcpServers(): boolean {
+    return true;
+  }
+
+  nudgeStrategy(): "stream" | "abort-resume" | "none" {
+    return "stream";
+  }
+
+  supportsOutputSchema(): boolean {
+    // Claude uses prompt-level envelope instructions instead of output schemas.
+    return false;
   }
 }

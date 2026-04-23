@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packetId": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "overall": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "hardFailures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "reproduction": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "diagnosticHypothesis": {
+            "type": "string"
+          },
+          "filesInvolved": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "criterionId",
+          "description",
+          "evidence",
+          "reproduction",
+          "diagnosticHypothesis",
+          "filesInvolved"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "rubricScores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "threshold": {
+            "type": "number"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "criterionId",
+          "score",
+          "threshold",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "criterionVerdicts": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "skip"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "skipReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "criterionId",
+          "verdict",
+          "evidence",
+          "skipReason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missingEvidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "contractGapDetected": {
+      "type": "boolean"
+    },
+    "addedCriteria": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "command",
+              "scenario",
+              "api",
+              "artifact",
+              "invariant",
+              "negative",
+              "observability",
+              "performance",
+              "rubric"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "evidenceRequired": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "playwright",
+                      "bash",
+                      "manual-script",
+                      "chrome-devtools"
+                    ]
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "expects": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "tool",
+                  "steps",
+                  "expects"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "description",
+          "blocking",
+          "evidenceRequired",
+          "severity",
+          "rationale",
+          "evidence",
+          "command",
+          "expected",
+          "scenario"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "additionalIssuesOmitted": {
+      "default": false,
+      "type": "boolean"
+    },
+    "advisoryEscalations": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "criterionId",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "packetId",
+    "sessionId",
+    "overall",
+    "hardFailures",
+    "rubricScores",
+    "criterionVerdicts",
+    "missingEvidence",
+    "nextActions",
+    "contractGapDetected",
+    "addedCriteria",
+    "additionalIssuesOmitted",
+    "advisoryEscalations"
+  ],
+  "additionalProperties": false
+}

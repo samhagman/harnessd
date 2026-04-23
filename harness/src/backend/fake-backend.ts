@@ -8,7 +8,7 @@
  * Reference: plan Phase 2
  */
 
-import type { AgentBackend, AgentMessage, AgentSessionOptions } from "./types.js";
+import type { AgentBackend, AgentMessage, AgentSessionOptions, NudgeOutcome } from "./types.js";
 
 // ------------------------------------
 // Helpers
@@ -140,12 +140,32 @@ export class FakeBackend implements AgentBackend {
   /** Record of nudge messages queued via queueNudge(). */
   readonly nudgeMessages: string[] = [];
 
-  queueNudge(text: string): boolean {
+  queueNudge(text: string): NudgeOutcome {
     this.nudgeMessages.push(text);
-    return true;
+    // FakeBackend has no active session concept — return handled:false so callers
+    // exercise the file-based fallback path in tests. If a test needs to simulate
+    // a live nudge receipt, use FakeBackend.fromScript() with a scripted nudge message.
+    return { handled: false };
   }
 
   abortSession(): string | null {
     return this.lastSessionId;
+  }
+
+  supportsResume(): boolean {
+    return true;
+  }
+
+  supportsMcpServers(): boolean {
+    return false;
+  }
+
+  nudgeStrategy(): "stream" | "abort-resume" | "none" {
+    return "none";
+  }
+
+  supportsOutputSchema(): boolean {
+    // FakeBackend uses the envelope-in-text approach (same as Claude) for tests.
+    return false;
   }
 }
