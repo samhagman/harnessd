@@ -386,8 +386,25 @@ export function appendEvaluatorAdditions(
   const filePath = path.join(
     getRunDir(repoRoot, runId), "packets", packetId, "contract", "evaluator-additions.json"
   );
-  let existing: any[] = [];
-  try { existing = JSON.parse(fs.readFileSync(filePath, "utf-8")); } catch {}
+  let existing: unknown[] = [];
+  if (fs.existsSync(filePath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (!Array.isArray(raw)) {
+        console.warn(
+          `[${runId}] appendEvaluatorAdditions(${packetId}): existing evaluator-additions.json is not an array (got ${typeof raw}). ` +
+          `Refusing to overwrite — keeping existing file untouched. New criteria for evalRound ${evalRound} will NOT be persisted.`,
+        );
+        return;
+      }
+      existing = raw;
+    } catch (err) {
+      console.warn(
+        `[${runId}] appendEvaluatorAdditions(${packetId}): failed to parse existing evaluator-additions.json — ` +
+        `prior entries will be lost on overwrite. Error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
   const entry = {
     timestamp: new Date().toISOString(),
     evalRound,

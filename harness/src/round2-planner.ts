@@ -41,7 +41,11 @@ import { createValidationMcpServer } from "./validation-tool.js";
 import { createMemorySearchMcpServer } from "./memory-tool.js";
 import { createResearchMcpServerRecord } from "./research-tools.js";
 
-// Schema for the round 2 planner's structured output
+// Schema for the round 2 planner's structured output.
+// IMPORTANT: this must match the generated `round2-spec-packets.json`
+// schema used as `--output-schema` for the Codex backend; otherwise
+// Codex envelopes pass Codex's own schema check but fail this in-process
+// parse, or vice versa.
 const Round2PlannerOutputSchema = z.object({
   spec: z.string(),
   packets: z.array(PacketSchema),
@@ -148,7 +152,7 @@ export async function runRound2Planner(
         disallowedTools: [...READ_ONLY_DISALLOWED_TOOLS, "Agent", "TaskCreate"],
         mcpServers: effectiveRound2PlannerMcp,
         ...(backend.supportsOutputSchema() ? {
-          outputSchemaPath: path.join(_schemasDir, "spec-packets.json"),
+          outputSchemaPath: path.join(_schemasDir, "round2-spec-packets.json"),
         } : {}),
         hooks: {
           PreToolUse: [

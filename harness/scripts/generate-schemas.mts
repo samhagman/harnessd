@@ -49,6 +49,16 @@ const PlannerOutputSchema = z.object({
   devServer: DevServerConfigSchema.nullish(),
 });
 
+// Round-2 planner output: narrower than R1 — no integrationScenarios / devServer.
+// Must match the local Round2PlannerOutputSchema in round2-planner.ts.
+const Round2PlannerOutputSchema = z.object({
+  spec: z.string(),
+  packets: z.array(PacketSchema),
+  riskRegister: RiskRegisterSchema,
+  evaluatorGuide: EvaluatorGuideSchema,
+  planSummary: z.string(),
+});
+
 // ------------------------------------
 // Schema registry
 // ------------------------------------
@@ -88,6 +98,11 @@ const SCHEMAS: Array<{ name: string; schema: z.ZodType; sourceSchema: string }> 
     name: "spec-packets",
     schema: PlannerOutputSchema,
     sourceSchema: "PlannerOutputSchema (reconstructed from PacketSchema + RiskRegisterSchema + EvaluatorGuideSchema + IntegrationScenarioListSchema + DevServerConfigSchema)",
+  },
+  {
+    name: "round2-spec-packets",
+    schema: Round2PlannerOutputSchema,
+    sourceSchema: "Round2PlannerOutputSchema (reconstructed; no integrationScenarios / devServer — R2 reuses R1's plan-level decisions)",
   },
 ];
 

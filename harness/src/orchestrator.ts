@@ -41,7 +41,7 @@ import {
   EvaluatorGuideSchema,
   PlanningContextSchema,
   QAReportSchema,
-  IntegrationScenarioSchema,
+  IntegrationScenarioListSchema,
   qaPassesThreshold,
   defaultProjectConfig,
 } from "./schemas.js";
@@ -1760,7 +1760,12 @@ async function handleRound2Planning(
   if (runState.qaReportPath) {
     try {
       qaReport = readArtifact(repoRoot, runState.runId, runState.qaReportPath, QAReportSchema);
-    } catch { /* fall through */ }
+    } catch (err) {
+      console.error(
+        `[${runState.runId}] handleRound2Planning: failed to parse QA report at ${runState.qaReportPath}. ` +
+        `Run will escalate to needs_human. Error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   if (!qaReport) {
     console.error(`[${runState.runId}] Cannot start R${runState.round} planning: no QA report at ${runState.qaReportPath}`);
@@ -2098,10 +2103,19 @@ function readRound2Packets(repoRoot: string, runId: string): Packet[] {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(specDir, file), "utf-8"));
           allPackets.push(...z.array(PacketSchema).parse(data));
-        } catch { /* skip corrupt files */ }
+        } catch (err) {
+          console.warn(
+            `[${runId}] readRound2Packets: failed to parse ${file} — its packets will not appear in selectNextPacket and the run may stall on this round. ` +
+            `Error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
-  } catch { /* spec dir missing */ }
+  } catch (err) {
+    console.warn(
+      `[${runId}] readRound2Packets: failed to read spec dir ${specDir}. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   return allPackets;
 }
 
@@ -2190,11 +2204,16 @@ export function buildRunTimeline(repoRoot: string, runId: string, events?: Event
 }
 
 function readIntegrationScenarios(repoRoot: string, runId: string): IntegrationScenario[] {
+  const scenariosPath = path.join(getRunDir(repoRoot, runId), "spec", "integration-scenarios.json");
+  if (!fs.existsSync(scenariosPath)) return [];
   try {
-    const scenariosPath = path.join(getRunDir(repoRoot, runId), "spec", "integration-scenarios.json");
     const raw = JSON.parse(fs.readFileSync(scenariosPath, "utf-8"));
-    return z.array(IntegrationScenarioSchema).parse(raw);
-  } catch {
+    return IntegrationScenarioListSchema.parse(raw).scenarios;
+  } catch (err) {
+    console.warn(
+      `[orchestrator] Failed to parse integration-scenarios.json — QA agent will run without scenario list. ` +
+      `Path: ${scenariosPath}. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return [];
   }
 }
@@ -2216,7 +2235,15 @@ function gatherArtifacts<T>(
   for (const packetId of allIds) {
     try {
       results.push(readArtifact(repoRoot, runId, pathFn(packetId), schema));
-    } catch { /* skip packets without this artifact */ }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("ENOENT") && !msg.includes("no such file")) {
+        console.warn(
+          `[${runId}] gatherArtifacts: ${pathFn(packetId)} exists but failed schema validation — ` +
+          `downstream consumers will see partial context. Error: ${msg}`,
+        );
+      }
+    }
   }
   return results;
 }
@@ -2350,10 +2377,19 @@ export function readCompletionContexts(
       const parsed = PacketCompletionContextSchema.safeParse(raw);
       if (parsed.success) {
         contexts.push(parsed.data);
+      } else {
+        console.warn(
+          `[${runId}] readCompletionContexts: ${packetId}/completion-context.json failed schema — ` +
+          `downstream packets will see partial cross-packet context. Issues: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        );
       }
-    } catch {
-      // Context might not exist for packets from before this feature was added
-      // (old runs with only completion-summary.md are gracefully skipped)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("ENOENT") && !msg.includes("no such file")) {
+        console.warn(
+          `[${runId}] readCompletionContexts: ${packetId}/completion-context.json read failed — ${msg}`,
+        );
+      }
     }
   }
 
@@ -2927,7 +2963,12 @@ async function markPacketStatus(
     const packets = readArtifact(repoRoot, runId, "spec/packets.json", z.array(PacketSchema));
     const updated = packets.map((p) => p.id === packetId ? { ...p, status } : p);
     atomicWriteJson(path.join(getRunDir(repoRoot, runId), "spec", "packets.json"), updated);
-  } catch {}
+  } catch (err) {
+    console.warn(
+      `[${runId}] markPacketStatus(${packetId}, ${status}) failed — packet status NOT updated in spec/packets.json. ` +
+      `selectNextPacket may now miscount. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /** Read unconsumed inbox files (excludes CONSUMED__ prefix). */
