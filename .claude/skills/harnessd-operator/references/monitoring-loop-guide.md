@@ -72,6 +72,19 @@ cat "$RUN_DIR/monitor-state.json" 2>/dev/null || echo "No state file (first chec
 - Process count = 0 → restart
 - `phase: rate_limited` → report wait time, no action needed
 
+**High-signal events to grep for in `events.jsonl` (act if seen, don't wait):**
+
+```bash
+# Surface infra-level signals from the last 50 events. Each of these means
+# the run is in a non-routine state worth a sentence in your report.
+grep -E "worker\.(api_retry_storm|envelope_format_drift|session_crashed)|run\.(failed|needs_human|completed)|packet\.failed|gate\.baseline_failed" \
+  <(tail -50 "$RUN_DIR/events.jsonl") | tail -10
+```
+
+- `worker.api_retry_storm` — 3+ consecutive `api_retry` events from one session. Strong signal of a sustained Anthropic API outage. Wait for SDK to recover (up to 10 retries / ~4h budget) OR kill if you've already confirmed via Anthropic status page that the outage is sustained. Do NOT mistake this for "silent thinking."
+- `worker.envelope_format_drift` — the orchestrator recovered the envelope from a markdown-fenced fallback path because the model omitted the `===HARNESSD_RESULT_*===` delimiters. The work is real and was accepted; this is telemetry only. No action needed unless it recurs frequently for a single role/model.
+- `worker.session_crashed` — usually means the model session ended without emitting a parseable envelope. With Fix 1 in place this should be rare; if seen, run `./harness/diagnose.sh <packet>` to classify before intervening.
+
 ### Step 2: Compute Transcript Deltas
 
 Read `monitor-state.json` for `transcriptLinesSeen` and `lastEventCount`.

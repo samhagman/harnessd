@@ -231,6 +231,7 @@ harnessd/
 │   ├── run.sh                       # Launch harness
 │   ├── tail.sh                      # Tail logs (multiple modes)
 │   ├── status.sh                    # Print run status
+│   ├── session.sh                   # Narrative summary of a worker session
 │   ├── nudge.sh                     # Send nudge to running builder
 │   ├── poke.sh                      # Send poke to running harness
 │   ├── resume.sh                    # Resume an interrupted run
@@ -302,6 +303,12 @@ cd harness && npx tsx src/main.ts --resume [run-id]
 ./harness/tail.sh --events     # event stream
 ./harness/tail.sh --builder    # latest builder transcript
 ./harness/tail.sh --evaluator  # latest evaluator transcript
+
+# Narrative session summary — turns, tool calls, api_retry, compact_boundary, envelope status
+./harness/session.sh PKT-001                          # latest session for PKT-001
+./harness/session.sh PKT-001 --role evaluator         # specific role
+./harness/session.sh PKT-001 --role builder --attempt 1  # specific attempt
+./harness/session.sh PKT-001 --all                    # every session for the packet
 
 # Tests
 cd harness && npx vitest run           # all tests

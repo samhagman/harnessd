@@ -222,6 +222,44 @@ conclusions from tool-call patterns alone is the #1 source of false-
 positive "stuck loop" diagnoses. See `monitoring-loop-guide.md` §3 for
 the mandatory text-reading protocol.
 
+### Diagnostic-First Rule (MANDATORY before claiming session state)
+
+Before reporting that a session is silent-thinking, idle, stuck, looping,
+corrupted, crashing, or otherwise misbehaving — and before ANY operator
+intervention (kill, nudge, manual envelope, contract amendment) — run:
+
+```bash
+./harness/diagnose.sh <packet-id> [--role <role>] [--attempt N]
+```
+
+Quote the emitted classification AND at least one supporting evidence line
+in your assessment. Hypotheses without diagnostic evidence are unreliable;
+treat them as "I should check" not "I conclude."
+
+**Why this rule exists:** in run `onhq-arch-refactor`, three operator
+misdiagnoses came from drawing macro-conclusions from heartbeat +
+events.jsonl + transcript file size signals without inspecting the
+underlying SDK events (`api_retry`, `compact_boundary`, `result.subtype`).
+The most expensive case mistook a 4h46m API outage (10 sequential
+`api_retry` events) for "silent extended thinking" and killed a session
+that was about to produce useful output post-compaction.
+
+**The eleven sealed classifications** `diagnose.sh` can return:
+`envelope_emitted_clean`, `envelope_format_drift`, `api_outage_terminal`,
+`api_outage_in_progress`, `compaction_in_progress`,
+`compaction_completed_recently`, `rate_limited_pending`,
+`awaiting_envelope_emit`, `silent_extended_thinking`,
+`stuck_loop_definite`, `unclassified`. See
+`references/session-diagnostics.md` for evidence rules and recommended
+actions per classification. If the classification is `unclassified`, do
+NOT act — investigate further by reading raw transcripts. Absence of a
+clean classification is itself signal.
+
+For deeper context on a session that diagnose.sh has classified, run
+`./harness/session.sh <packet-id> --role <role>` for a full narrative
+summary (turn count, tool-call mix, api_retry/compact_boundary detail,
+gap analysis, envelope-source telemetry).
+
 ### When to Offer
 
 Proactively offer monitoring when:
