@@ -24,8 +24,19 @@ import {
   type Heartbeat,
 } from "./schemas.js";
 import { getRunDir, atomicWriteJson } from "./state-store.js";
+import { appendEvent } from "./event-log.js";
+import { writeSessionSummary, type SessionSummaryContext } from "./session-summary.js";
 import type { MemvidBuffer } from "./memvid.js";
 import { agentMessageToDocuments, promptToDocuments } from "./memvid.js";
+
+/**
+ * Threshold for emitting `worker.api_retry_storm`. The Anthropic SDK retries
+ * up to 10 times with exponential backoff; observing 3+ in a row from the same
+ * session is a strong signal of a sustained API outage and lets cron monitoring
+ * surface it immediately instead of waiting for the terminal 10/10 exhaustion
+ * (which can take 4+ hours).
+ */
+const API_RETRY_STORM_THRESHOLD = 3;
 
 // ------------------------------------
 // Types
@@ -49,6 +60,14 @@ export interface WorkerConfig {
 export interface WorkerResult<T = unknown> {
   /** Whether a valid envelope was found and parsed */
   envelopeFound: boolean;
+  /**
+   * Which discovery path produced the envelope:
+   * - "staged" (preferred): the validate_envelope tool persisted it on `valid:true`
+   * - "delimiters": extracted from `===HARNESSD_RESULT_*===` markers in assistant text
+   * - "fence_fallback": last-ditch ```json``` block recovery (with telemetry event)
+   * Null when no envelope was found.
+   */
+  envelopeSource: "staged" | "delimiters" | "fence_fallback" | null;
   /** Parsed payload from the envelope (null if not found or parse failed) */
   payload: T | null;
   /** Parse error if envelope was found but payload failed validation */
@@ -130,6 +149,85 @@ export function extractEnvelope(text: string): string | null {
 }
 
 /**
+ * Source from which `resolveEnvelope` recovered the envelope body.
+ *
+ * - `"staged"` — the model called `validate_envelope` with a body that returned
+ *   `valid:true`, and the tool persisted the body to staged-envelope.json.
+ *   This is the preferred path because it's independent of how the model
+ *   formatted its final assistant text.
+ * - `"delimiters"` — extracted from `===HARNESSD_RESULT_*===` delimiters in
+ *   the combined assistant text (the historical contract).
+ * - `"fence_fallback"` — last-ditch recovery: parsed from the first ```json
+ *   fenced JSON block in the combined text. Triggers a
+ *   `worker.envelope_format_drift` telemetry event so we can phase out
+ *   delimiter dependence over time.
+ */
+export type EnvelopeSource = "staged" | "delimiters" | "fence_fallback";
+
+/**
+ * Layered envelope discovery: staged-envelope.json > delimiter regex > markdown-fence fallback.
+ *
+ * The staged-envelope.json file is written by the `validate_envelope` MCP
+ * tool (or CLI binary) when the model calls it with a body that passes
+ * schema validation. Reading from there first means the orchestrator
+ * recovers the envelope regardless of how the model formats its final
+ * assistant text — neutralizing the recurring markdown-fence regression
+ * where Opus 4.7 wraps the JSON in ```json ... ``` instead of the
+ * required `===HARNESSD_RESULT_*===` delimiters.
+ *
+ * Returns null if no envelope is recoverable from any of the three paths.
+ */
+export function resolveEnvelope(args: {
+  stagedEnvelopePath: string;
+  combinedText: string;
+  sessionStartedAt: string;
+}): { source: EnvelopeSource; body: string } | null {
+  // Path 1: staged-envelope.json from a successful validate_envelope call
+  if (fs.existsSync(args.stagedEnvelopePath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(args.stagedEnvelopePath, "utf-8"));
+      if (
+        raw &&
+        typeof raw === "object" &&
+        typeof raw.validatedAt === "string" &&
+        "validatedBody" in raw
+      ) {
+        const validatedAtMs = Date.parse(raw.validatedAt);
+        const sessionStartMs = Date.parse(args.sessionStartedAt);
+        if (Number.isFinite(validatedAtMs) && validatedAtMs >= sessionStartMs) {
+          return { source: "staged", body: JSON.stringify(raw.validatedBody) };
+        }
+      }
+    } catch {
+      // Malformed staged file — fall through to delimiter parsing.
+    }
+  }
+
+  // Path 2: existing delimiter-based extraction (handles inner-fence cases).
+  const delimiterBody = extractEnvelope(args.combinedText);
+  if (delimiterBody) return { source: "delimiters", body: delimiterBody };
+
+  // Path 3: last-ditch markdown-fenced JSON recovery. Some models emit
+  // ```json ... ``` with no `===HARNESSD_RESULT_*===` delimiters at all.
+  // Look for the LAST ```json fenced block whose contents parse as JSON
+  // (last-wins, mirroring delimiter behavior).
+  const fenceRe = /```json\s*\n([\s\S]*?)\n```/g;
+  let lastValidJson: string | null = null;
+  for (const match of args.combinedText.matchAll(fenceRe)) {
+    const candidate = match[1].trim();
+    try {
+      JSON.parse(candidate);
+      lastValidJson = candidate;
+    } catch {
+      // Skip un-parseable fences.
+    }
+  }
+  if (lastValidJson) return { source: "fence_fallback", body: lastValidJson };
+
+  return null;
+}
+
+/**
  * Parse and validate the envelope payload against a Zod schema.
  */
 /**
@@ -189,6 +287,19 @@ function buildTranscriptPath(
   return path.join(transcriptDir, `${role}-${ts}.jsonl`);
 }
 
+function finishStream(stream: fs.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    stream.once("error", finish);
+    stream.end(finish);
+  });
+}
+
 // ------------------------------------
 // Worker runner
 // ------------------------------------
@@ -226,6 +337,21 @@ export async function runWorker<T = unknown>(
   const sessionPath = path.join(artifactPath, "session.json");
   const heartbeatPath = path.join(artifactPath, "heartbeat.json");
   const resultPath = path.join(artifactPath, "result.json");
+  const stagedEnvelopePath = path.join(artifactPath, "staged-envelope.json");
+  const sessionSummaryPath = path.join(artifactPath, "session-summary.json");
+
+  // Clear any stale staged envelope from a prior session in this same artifact
+  // dir. The validatedAt > sessionStartedAt check in resolveEnvelope already
+  // protects against staleness, but deletion here is cheap belt-and-suspenders
+  // and prevents accidental cross-session contamination if clocks are skewed.
+  try { fs.rmSync(stagedEnvelopePath, { force: true }); } catch { /* noop */ }
+
+  // Tell the validate_envelope tool (in-process MCP, Codex stdio MCP, or CLI
+  // binary) where to persist the validated body on `valid:true`. Reading
+  // this file is the orchestrator's primary envelope-recovery path —
+  // making the model's final-text format irrelevant.
+  const priorStagedEnvVar = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
+  process.env.HARNESSD_STAGED_ENVELOPE_PATH = stagedEnvelopePath;
 
   const transcriptStream = fs.createWriteStream(transcriptPath, { flags: "a" });
   const legacyStream = fs.createWriteStream(legacyTranscriptPath, { flags: "a" });
@@ -300,6 +426,34 @@ export async function runWorker<T = unknown>(
     ? setInterval(writeHeartbeat, heartbeatMs)
     : null;
 
+  // Periodic session-summary write — gives operators a structured view of
+  // what's happening mid-session (api_retry counts, compact_boundary, tool
+  // call mix) without needing to re-parse the JSONL transcript. Slower
+  // cadence than heartbeat to avoid IO churn on long sessions.
+  const PERIODIC_SUMMARY_MS = 60_000;
+  const writePeriodicSummary = () => {
+    try {
+      const ctx: SessionSummaryContext = {
+        sessionId,
+        role: config.role,
+        packetId: config.packetId,
+        runId: config.runId,
+        startedAt: session.startedAt,
+        // No endedAt → endReason becomes "still_running" or "compaction_pending"
+      };
+      writeSessionSummary(transcriptPath, ctx, sessionSummaryPath);
+    } catch { /* periodic summary is best-effort */ }
+  };
+  const summaryTimer = heartbeatMs > 0
+    ? setInterval(writePeriodicSummary, PERIODIC_SUMMARY_MS)
+    : null;
+
+  // Track consecutive `api_retry` events so we can emit `worker.api_retry_storm`
+  // once on the threshold-th retry (not on every retry after that). Reset
+  // whenever any non-api_retry message arrives.
+  let consecutiveApiRetries = 0;
+  let stormEventEmitted = false;
+
   try {
     for await (const msg of backend.runSession(sessionOptions)) {
       // Log to transcript and raw event log
@@ -330,6 +484,28 @@ export async function runWorker<T = unknown>(
         turnCount++;
       }
 
+      // API-retry storm detection. The SDK emits `event` messages with
+      // subtype "api_retry" on every retry attempt. 3+ in a row from one
+      // session is a strong outage signal worth surfacing to events.jsonl
+      // immediately so cron monitoring catches it without waiting hours
+      // for the 10/10 terminal exhaustion.
+      if (msg.type === "event" && msg.subtype === "api_retry") {
+        consecutiveApiRetries++;
+        if (consecutiveApiRetries >= API_RETRY_STORM_THRESHOLD && !stormEventEmitted) {
+          appendEvent(config.repoRoot, config.runId, {
+            event: "worker.api_retry_storm",
+            packetId: config.packetId,
+            detail: `${consecutiveApiRetries} consecutive api_retry events from ${config.role} session ${sessionId ?? "?"} — possible API outage`,
+          });
+          stormEventEmitted = true;
+        }
+      } else if (msg.type !== "event" || msg.subtype !== "rate_limit_event") {
+        // Reset on any non-retry message except rate_limit_event (which is
+        // a peer signal that doesn't break a retry storm).
+        consecutiveApiRetries = 0;
+        stormEventEmitted = false;
+      }
+
       // Capture result info — result is the terminal message, stop iterating
       if (msg.type === "result") {
         if (msg.sessionId) sessionId = msg.sessionId;
@@ -351,9 +527,12 @@ export async function runWorker<T = unknown>(
     });
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
-    transcriptStream.end();
-    legacyStream.end();
-    rawEventStream.end();
+    if (summaryTimer) clearInterval(summaryTimer);
+    await Promise.all([
+      finishStream(transcriptStream),
+      finishStream(legacyStream),
+      finishStream(rawEventStream),
+    ]);
     if (memvidBuffer) memvidBuffer.stop();
   }
 
@@ -365,31 +544,58 @@ export async function runWorker<T = unknown>(
   session.endedAt = new Date().toISOString();
   atomicWriteJson(sessionPath, session);
 
-  // Extract envelope
+  // Restore prior env var value (if any) — make this function safe to call
+  // recursively or in parallel without leaking the staged-envelope path
+  // across sessions in the same Node process.
+  if (priorStagedEnvVar === undefined) {
+    delete process.env.HARNESSD_STAGED_ENVELOPE_PATH;
+  } else {
+    process.env.HARNESSD_STAGED_ENVELOPE_PATH = priorStagedEnvVar;
+  }
+
+  // Layered envelope discovery: staged file > delimiters > markdown-fence fallback.
   let envelopeFound = false;
+  let envelopeSource: EnvelopeSource | null = null;
   let payload: T | null = null;
   let parseError: string | undefined;
 
-  const envelopeJson = extractEnvelope(combinedText);
-  if (envelopeJson) {
+  const resolved = resolveEnvelope({
+    stagedEnvelopePath,
+    combinedText,
+    sessionStartedAt: session.startedAt,
+  });
+  if (resolved) {
     envelopeFound = true;
+    envelopeSource = resolved.source;
     if (payloadSchema) {
-      const result = parseEnvelopePayload(envelopeJson, payloadSchema);
+      const result = parseEnvelopePayload(resolved.body, payloadSchema);
       payload = result.payload;
       if (result.error) parseError = result.error;
     } else {
-      // No schema provided, try raw JSON parse
       try {
-        payload = JSON.parse(envelopeJson) as T;
+        payload = JSON.parse(resolved.body) as T;
       } catch (err: unknown) {
         parseError = err instanceof Error ? err.message : String(err);
       }
+    }
+
+    // Telemetry: mark the markdown-fence recovery path so we can track how
+    // often models drift from the delimiter contract over time.
+    if (resolved.source === "fence_fallback") {
+      try {
+        appendEvent(config.repoRoot, config.runId, {
+          event: "worker.envelope_format_drift",
+          packetId: config.packetId,
+          detail: `${config.role} session ${session.sessionId ?? "?"} omitted HARNESSD_RESULT delimiters; envelope recovered from markdown-fence fallback (work accepted)`,
+        });
+      } catch { /* event-log write failure should not block envelope return */ }
     }
   }
 
   // Write result
   const workerResult: WorkerResult<T> = {
     envelopeFound,
+    envelopeSource,
     payload,
     parseError,
     fullText: combinedText,
@@ -401,6 +607,23 @@ export async function runWorker<T = unknown>(
   };
 
   atomicWriteJson(resultPath, workerResult);
+
+  // Final session-summary write — runs synchronously after envelope
+  // resolution so endReason captures the actual outcome (envelope_emitted,
+  // session_crashed_no_envelope, api_timeout_after_retries, etc.) rather
+  // than the still_running placeholder.
+  try {
+    const finalCtx: SessionSummaryContext = {
+      sessionId: session.sessionId,
+      role: config.role,
+      packetId: config.packetId,
+      runId: config.runId,
+      startedAt: session.startedAt,
+      endedAt: session.endedAt ?? new Date().toISOString(),
+      envelopeOutcome: { found: envelopeFound, source: envelopeSource },
+    };
+    writeSessionSummary(transcriptPath, finalCtx, sessionSummaryPath);
+  } catch { /* summary write is best-effort; never block envelope return */ }
 
   return workerResult;
 }

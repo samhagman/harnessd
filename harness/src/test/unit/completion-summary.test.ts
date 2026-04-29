@@ -99,7 +99,7 @@ function makeBuilderReport(overrides: Partial<BuilderReport> = {}): BuilderRepor
     sessionId: "session-builder-001",
     changedFiles: ["src/middleware/auth.ts", "src/config/clerk.ts"],
     commandsRun: [{ command: "npx tsc --noEmit", exitCode: 0, summary: "No type errors" }],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [
       { criterionId: "AC-001", status: "pass", evidence: "All routes return 401 without session" },

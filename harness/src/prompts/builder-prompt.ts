@@ -855,6 +855,48 @@ Before claiming done:
 ### Proposed Commit Message
 \`${contract.proposedCommitMessage}\`
 
+### Canonical BuilderReport Example (full shape)
+
+Use this as the structural template for your final report. Pay special attention to which arrays should be \`[]\` when not used:
+
+\`\`\`json
+{
+  "packetId": "PKT-EXAMPLE",
+  "sessionId": "your-session-id-or-empty-string",
+  "changedFiles": [
+    "apps/web/src/auth.ts",
+    "apps/web/src/__tests__/auth.test.ts"
+  ],
+  "commandsRun": [
+    {"command": "pnpm typecheck", "exitCode": 0, "summary": "AC-001 PASS — no type errors"},
+    {"command": "pnpm test", "exitCode": 0, "summary": "AC-002 PASS — 142/142 tests"},
+    {"command": "pnpm eslint --quiet src/", "exitCode": 0, "summary": "AC-003 PASS — zero errors"}
+  ],
+  "liveBackgroundJobs": [],
+  "microFanoutUsed": [],
+  "selfCheckResults": [
+    {"criterionId": "AC-001", "status": "pass", "evidence": "pnpm typecheck exits 0"},
+    {"criterionId": "AC-002", "status": "pass", "evidence": "pnpm test 142/142, exit 0"},
+    {"criterionId": "AC-003", "status": "pass", "evidence": "eslint --quiet exit 0"}
+  ],
+  "keyDecisions": [
+    {"description": "Used the existing AuthService rather than introducing a new abstraction", "rationale": "Single existing call site; abstraction was premature"}
+  ],
+  "remainingConcerns": [],
+  "claimsDone": true,
+  "commitShas": ["abc1234", "def5678"]
+}
+\`\`\`
+
+**Critical field semantics:**
+- \`liveBackgroundJobs\`: ONLY long-running processes (dev servers, watchers) STILL ALIVE at envelope time. **Default \`[]\`.** One-shot commands (vitest, tsc, eslint, grep, git) belong in \`commandsRun\`, NEVER here.
+- \`microFanoutUsed\`: \`[]\` if you didn't dispatch Task subagents.
+- \`keyDecisions\`: \`[]\` if no notable design choices to record (or 1-3 entries; this is for nuance the evaluator should see, not a changelog).
+- \`remainingConcerns\`: \`[]\` if everything is clean.
+- \`commitShas\`: array of SHAs (string), or \`null\` if no commits.
+${supportsMcp ? `
+If \`validate_envelope\` rejects your report, READ THE RETURNED \`schemaSource\` (the entire schemas.ts file is included). It is the authoritative spec — do not guess.` : ""}
+
 ### Result Envelope
 
 ${supportsOutputSchema
@@ -870,7 +912,7 @@ Your final answer JSON must match this shape:
   "commandsRun": [
     {"command": "npm test", "exitCode": 0, "summary": "all tests pass"}
   ],
-  "backgroundJobs": [],
+  "liveBackgroundJobs": [],
   "microFanoutUsed": [],
   "selfCheckResults": [
     {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
@@ -896,7 +938,7 @@ ${RESULT_START_SENTINEL}
   "commandsRun": [
     {"command": "npm test", "exitCode": 0, "summary": "all tests pass"}
   ],
-  "backgroundJobs": [],
+  "liveBackgroundJobs": [],
   "microFanoutUsed": [],
   "selfCheckResults": [
     {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
@@ -917,7 +959,7 @@ ${RESULT_END_SENTINEL}
 
 **IMPORTANT:** Before emitting the envelope:
 1. Call \`gate_check()\` and confirm all gates pass${supportsMcp ? `
-2. Validate using \`validate_envelope\` (MCP tool) from the section above` : ""}
+2. Validate using \`validate_envelope\` (MCP tool) from the section above. **A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` / \`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as a normal final assistant message, but do NOT wrap them in markdown \`\`\`json fences (the harness will recover from fences via fallback but it logs format-drift telemetry). If you only call \`validate_envelope\` successfully and never emit delimiters, the harness still gets your report.**` : ""}
 Fix any errors before emitting.`}`);
 
   return sections.join("\n\n");

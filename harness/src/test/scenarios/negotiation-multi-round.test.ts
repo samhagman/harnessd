@@ -195,7 +195,7 @@ function builderDoneEnvelope(): string {
     sessionId: "builder-sess",
     changedFiles: ["src/x.ts"],
     commandsRun: [{ command: "npx tsc --noEmit", exitCode: 0, summary: "ok" }],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [
       { criterionId: "AC-001", status: "pass", evidence: "Works" },

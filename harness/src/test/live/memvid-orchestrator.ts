@@ -125,7 +125,7 @@ function builderEnvelope(packetId: string): string {
     sessionId: "builder-sess",
     changedFiles: ["src/middleware/auth.ts", "src/config/redis.ts"],
     commandsRun: [{ command: "npm test", exitCode: 0, summary: "8 tests passed" }],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [
       { criterionId: "AC-001", status: "pass", evidence: "Clerk middleware validates tokens. Redis session store configured." },

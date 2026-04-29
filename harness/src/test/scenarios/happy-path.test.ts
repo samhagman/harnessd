@@ -152,7 +152,7 @@ function builderReportEnvelope(packetId: string): string {
     sessionId: "builder-session-001",
     changedFiles: ["src/helper.ts"],
     commandsRun: [{ command: "npx tsc --noEmit", exitCode: 0, summary: "type check passes" }],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [
       { criterionId: "AC-001", status: "pass", evidence: "Script runs with exit 0" },

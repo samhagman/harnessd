@@ -161,7 +161,7 @@ const sampleBuilderReport: BuilderReport = {
   commandsRun: [
     { command: "npx tsc --noEmit", exitCode: 0, summary: "No type errors" },
   ],
-  backgroundJobs: [],
+  liveBackgroundJobs: [],
   microFanoutUsed: [],
   selfCheckResults: [
     { criterionId: "AC-001", status: "pass", evidence: "npm test passed with 0 failures" },

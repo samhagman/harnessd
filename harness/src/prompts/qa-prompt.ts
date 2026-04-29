@@ -349,7 +349,13 @@ ${RESULT_END_SENTINEL}
 - Be specific in stepsToReproduce — another agent needs to verify the fix
 
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
-from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
+from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.
+
+**A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it
+persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` /
+\`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as your final assistant message,
+but do NOT wrap them in markdown \`\`\`json fences. If you only call \`validate_envelope\`
+successfully and never emit the delimiters, the harness still gets your report.**`);
 
   return sections.join("\n\n");
 }

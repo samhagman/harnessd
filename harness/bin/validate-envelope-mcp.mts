@@ -25,6 +25,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
   PacketContractSchema,
@@ -33,6 +36,22 @@ import {
   EvaluatorReportSchema,
   QAReportSchema,
 } from "../src/schemas.js";
+
+// ---------------------------------------------------------------------------
+// Schema source — included in failure responses so the agent can see the
+// authoritative TypeScript Zod definitions and self-correct without guessing.
+// Read once at startup; cached for the process lifetime.
+// ---------------------------------------------------------------------------
+const SCHEMA_SOURCE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/schemas.ts",
+);
+let SCHEMA_SOURCE_CONTENTS = "";
+try {
+  SCHEMA_SOURCE_CONTENTS = readFileSync(SCHEMA_SOURCE_PATH, "utf-8");
+} catch {
+  SCHEMA_SOURCE_CONTENTS = "(schemas.ts source unavailable — read failed)";
+}
 
 // ---------------------------------------------------------------------------
 // Schema registry
@@ -55,6 +74,30 @@ const expectedCriterionIds: string[] = (process.env.HARNESSD_CRITERION_IDS ?? ""
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+// ---------------------------------------------------------------------------
+// Staged-envelope persistence — writes the validated body to disk on
+// `valid:true` so the orchestrator can recover it regardless of how the
+// model formats its final assistant text. Path is from env var.
+// ---------------------------------------------------------------------------
+
+function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void {
+  const stagedPath = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
+  if (!stagedPath) return;
+  try {
+    mkdirSync(dirname(stagedPath), { recursive: true });
+    const tmp = stagedPath + ".tmp";
+    writeFileSync(tmp, JSON.stringify({
+      validatedAt: new Date().toISOString(),
+      schemaName,
+      validatedBody,
+    }, null, 2));
+    renameSync(tmp, stagedPath);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[validate_envelope] failed to persist staged envelope to ${stagedPath}: ${msg}\n`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Timeout helper
@@ -138,7 +181,17 @@ server.registerTool(
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({ valid: false, errors }, null, 2),
+              text: JSON.stringify(
+                {
+                  valid: false,
+                  errors,
+                  schemaSourcePath: SCHEMA_SOURCE_PATH,
+                  schemaSource: SCHEMA_SOURCE_CONTENTS,
+                  hint: "The full Zod schema source is included above. Read it as the authoritative spec for every field. If a field's value is empty/unknown, pass [] for arrays or omit optional fields — do not invent placeholder content.",
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
@@ -180,6 +233,10 @@ server.registerTool(
           };
         }
       }
+
+      // Persist validated body so the orchestrator can recover it from
+      // staged-envelope.json regardless of the model's final-text format.
+      persistStagedEnvelope(schema_name, parsed);
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ valid: true }) }],

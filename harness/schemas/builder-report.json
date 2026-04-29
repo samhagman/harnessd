@@ -39,7 +39,7 @@
         "additionalProperties": false
       }
     },
-    "backgroundJobs": {
+    "liveBackgroundJobs": {
       "type": "array",
       "items": {
         "type": "object",
@@ -168,7 +168,7 @@
     "sessionId",
     "changedFiles",
     "commandsRun",
-    "backgroundJobs",
+    "liveBackgroundJobs",
     "microFanoutUsed",
     "selfCheckResults",
     "keyDecisions",

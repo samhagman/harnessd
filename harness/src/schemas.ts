@@ -390,7 +390,9 @@ export const BuilderReportSchema = z.object({
   sessionId: z.string(),
   changedFiles: z.array(z.string()),
   commandsRun: z.array(CommandRunSchema),
-  backgroundJobs: z.array(BackgroundJobStatusSchema),
+  // Long-running processes (dev servers, watchers) STILL ALIVE at envelope time.
+  // Pass [] if all your work was synchronous shell commands (vitest, tsc, eslint, grep, etc. go in commandsRun).
+  liveBackgroundJobs: z.array(BackgroundJobStatusSchema),
   microFanoutUsed: z.array(MicroFanoutUsedSchema),
   selfCheckResults: z.array(SelfCheckResultSchema),
   keyDecisions: z.array(z.object({
@@ -636,6 +638,13 @@ export const EventTypeSchema = z.enum([
   "memory.error",
   // Nudge abort+resume events (Codex backend)
   "builder.aborted-for-nudge",
+  // SDK-level signal: 3+ consecutive api_retry events from the same session.
+  // Surfaces API outages to cron monitoring without waiting for terminal exhaustion.
+  "worker.api_retry_storm",
+  // Envelope was recovered via the markdown-fence fallback path because the model
+  // omitted the HARNESSD_RESULT delimiters. The work is real; this event records
+  // the format drift for telemetry so we can phase out delimiter dependence over time.
+  "worker.envelope_format_drift",
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -877,6 +886,119 @@ export const HeartbeatSchema = z.object({
 });
 
 export type Heartbeat = z.infer<typeof HeartbeatSchema>;
+
+// ------------------------------------
+// Staged envelope
+// ------------------------------------
+
+/**
+ * Persisted by the `validate_envelope` MCP tool / CLI on a successful
+ * (`valid:true`) call. The orchestrator's envelope resolver prefers this
+ * file over delimiter parsing because it captures the validated body at
+ * the moment the model filed it, independent of how the model formats
+ * its final assistant text. This neutralizes the recurring markdown-fence
+ * regression where Opus omits the `===HARNESSD_RESULT_*===` delimiters.
+ *
+ * Last-write-wins semantics: each successful validate_envelope call
+ * overwrites the previous staged file. The model's final pre-emission
+ * call is what the orchestrator reads.
+ */
+export const StagedEnvelopeSchema = z.object({
+  validatedAt: z.string(),    // ISO-8601 timestamp set by the validate tool at write time
+  schemaName: z.string(),     // e.g. "BuilderReport" | "EvaluatorReport" | "QAReport"
+  validatedBody: z.unknown(), // The parsed envelope body that passed schema validation
+});
+
+export type StagedEnvelope = z.infer<typeof StagedEnvelopeSchema>;
+
+// ------------------------------------
+// Session summary
+// ------------------------------------
+
+/**
+ * Why this exists: operator monitoring drew confident macro-conclusions
+ * from sparse signals (heartbeat + events.jsonl + transcript file size)
+ * and missed underlying SDK events (api_retry, compact_boundary,
+ * result.subtype). The session-summary.json artifact captures the high-
+ * signal slices in one place so operators and sub-agents read a structured
+ * narrative instead of crawling raw JSONL with the wrong jq filters.
+ *
+ * Written by the harness at session end and (for long sessions) periodically
+ * during the SDK loop. Path: <runDir>/<artifactDir>/session-summary.json,
+ * alongside heartbeat.json and staged-envelope.json.
+ */
+export const SessionSummaryEndReasonSchema = z.enum([
+  // Terminal — envelope was found and recovered
+  "envelope_emitted",                       // delimiter path
+  "envelope_emitted_via_staged_file",       // validate_envelope persisted; preferred
+  "envelope_emitted_via_fence_fallback",    // markdown-fence fallback (drift)
+  // Terminal — no envelope
+  "session_crashed_no_envelope",            // SDK ended cleanly but no parseable body
+  "api_timeout_after_retries",              // SDK exhausted retries; synthetic timeout
+  "rate_limited",                           // sustained rate limit, no recovery
+  "operator_kill",                          // operator interrupted (best-effort)
+  // Non-terminal (used while session is still alive)
+  "compaction_pending",                     // compacting status, no boundary yet
+  "still_running",                          // session live, no result yet
+  "unknown",                                // catch-all
+]);
+export type SessionSummaryEndReason = z.infer<typeof SessionSummaryEndReasonSchema>;
+
+export const SessionSummarySchema = z.object({
+  sessionId: z.string().nullable(),
+  role: WorkerRoleSchema,
+  packetId: z.string().optional(),
+  runId: z.string(),
+  /** Operator-meaningful label e.g. "fix-2/20", "round-1", "retry-3/10". Optional. */
+  attempt: z.string().optional(),
+
+  startedAt: z.string(),
+  endedAt: z.string().optional(),
+  durationMs: z.number().optional(),
+
+  endReason: SessionSummaryEndReasonSchema,
+
+  turnCount: z.number().int(),
+  toolCallCount: z.number().int(),
+  toolCallsByName: z.record(z.string(), z.number().int()),
+
+  apiRetries: z.array(z.object({
+    attempt: z.number().int(),
+    error: z.string(),
+    ts: z.string(),
+  })),
+  rateLimitEvents: z.array(z.object({
+    ts: z.string(),
+    rateLimitType: z.string(),
+    status: z.string(),
+  })),
+  compactBoundaries: z.array(z.object({
+    ts: z.string(),
+    trigger: z.string(),
+    preTokens: z.number().int(),
+    postTokens: z.number().int(),
+    durationMs: z.number().int(),
+  })),
+
+  envelope: z.object({
+    found: z.boolean(),
+    source: z.enum(["staged", "delimiters", "fence_fallback"]).nullable(),
+    formatIssue: z.string().nullable(),
+  }),
+
+  /** Largest gap between consecutive transcript timestamps (catches stalls). */
+  longestGapMs: z.number().int(),
+  /** Whatever event preceded the longest gap — lets you see WHY the stall happened. */
+  longestGapPriorEvent: z.string().nullable(),
+
+  costUsd: z.number().optional(),
+  numTurnsReportedBySdk: z.number().int().optional(),
+
+  lastAssistantTextSnippet: z.string().optional(),
+  lastToolCall: z.string().nullable(),
+});
+
+export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
 // ------------------------------------
 // Inbox / Outbox

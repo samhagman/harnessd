@@ -123,7 +123,7 @@ function builderReportEnvelope(packetId: string): string {
     sessionId: "builder-session-resumed",
     changedFiles: ["src/util.ts"],
     commandsRun: [],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [{ criterionId: "AC-001", status: "pass", evidence: "Runs OK" }],
     remainingConcerns: [],

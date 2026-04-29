@@ -110,7 +110,7 @@ async function main() {
     sessionId: "sess-001",
     changedFiles: ["src/middleware/auth.ts", "src/config/clerk.ts", "src/routes/index.ts"],
     commandsRun: [{ command: "npm test", exitCode: 0, summary: "All 12 tests passed" }],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [
       { criterionId: "AC-001", status: "pass", evidence: "Clerk middleware validates tokens correctly" },

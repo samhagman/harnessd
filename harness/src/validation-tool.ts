@@ -6,6 +6,9 @@
  * the agent gets errors inline and can fix them in the same session.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
 
@@ -24,6 +27,69 @@ const SCHEMAS: Record<string, z.ZodType<unknown>> = {
   EvaluatorReport: EvaluatorReportSchema as z.ZodType<unknown>,
   QAReport: QAReportSchema as z.ZodType<unknown>,
 };
+
+const SCHEMA_SOURCE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "schemas.ts",
+);
+let SCHEMA_SOURCE_CONTENTS = "";
+try {
+  SCHEMA_SOURCE_CONTENTS = fs.readFileSync(SCHEMA_SOURCE_PATH, "utf-8");
+} catch {
+  SCHEMA_SOURCE_CONTENTS = "(schemas.ts source unavailable - read failed)";
+}
+
+const SCHEMA_HINT = "The full Zod schema source is included above. Read it as the authoritative spec for every field. If a field's value is empty/unknown, pass [] for arrays or omit optional fields - do not invent placeholder content.";
+
+function invalidValidationResponse(payload: Record<string, unknown>) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        ...payload,
+        schemaSourcePath: SCHEMA_SOURCE_PATH,
+        schemaSource: SCHEMA_SOURCE_CONTENTS,
+        hint: SCHEMA_HINT,
+      }, null, 2),
+    }],
+  };
+}
+
+/**
+ * Persist a successfully-validated envelope body to disk so the orchestrator
+ * can recover it even if the model fails to wrap its final assistant text
+ * in `===HARNESSD_RESULT_*===` delimiters (the recurring markdown-fence
+ * regression).
+ *
+ * Path is read from `HARNESSD_STAGED_ENVELOPE_PATH` env var, set by the
+ * harness at session launch. If unset (e.g. unit tests, ad-hoc runs), the
+ * persistence step is silently skipped — validation behavior is unchanged.
+ *
+ * Last-write-wins: the model can call validate_envelope multiple times in
+ * one session iterating on shape; the final pre-emission call is what the
+ * orchestrator reads.
+ */
+function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void {
+  const stagedPath = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
+  if (!stagedPath) return;
+  try {
+    fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
+    const tmp = stagedPath + ".tmp";
+    const payload = JSON.stringify({
+      validatedAt: new Date().toISOString(),
+      schemaName,
+      validatedBody,
+    }, null, 2);
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, stagedPath);
+  } catch (err) {
+    // Persistence is best-effort: if the staged file can't be written,
+    // the orchestrator falls back to delimiter parsing. Log via stderr
+    // (visible in harness logs) but never throw inside the MCP tool.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[validate_envelope] failed to persist staged envelope to ${stagedPath}: ${msg}\n`);
+  }
+}
 
 /**
  * Create an MCP server config with a `validate_envelope` tool.
@@ -71,9 +137,7 @@ export function createValidationMcpServer(expectedCriterionIds?: string[]) {
                 expected: issue.expected,
                 received: issue.received,
               }));
-              return {
-                content: [{ type: "text" as const, text: JSON.stringify({ valid: false, errors }, null, 2) }],
-              };
+              return invalidValidationResponse({ valid: false, errors });
             }
 
             // Extra validation for EvaluatorReport: check criterion IDs match the contract
@@ -102,20 +166,21 @@ export function createValidationMcpServer(expectedCriterionIds?: string[]) {
                 );
               }
               if (warnings.length > 0) {
-                return {
-                  content: [{ type: "text" as const, text: JSON.stringify({ valid: false, errors: warnings }, null, 2) }],
-                };
+                return invalidValidationResponse({ valid: false, errors: warnings });
               }
             }
+
+            // Persist the validated body so the orchestrator can recover it
+            // from staged-envelope.json regardless of how the model formats
+            // its final assistant text (delimiters, markdown fences, plain).
+            persistStagedEnvelope(args.schema_name, parsed);
 
             return {
               content: [{ type: "text" as const, text: JSON.stringify({ valid: true }) }],
             };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [{ type: "text" as const, text: JSON.stringify({ valid: false, errors: [`JSON parse error: ${msg}`] }) }],
-            };
+            return invalidValidationResponse({ valid: false, errors: [`JSON parse error: ${msg}`] });
           }
         },
       ),

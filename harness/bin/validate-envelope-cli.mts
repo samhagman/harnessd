@@ -11,6 +11,9 @@
  * Exits 0 with {"valid":true} or exits 1 with {"valid":false,"errors":[...]}.
  */
 
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
   PacketContractSchema,
@@ -20,6 +23,19 @@ import {
   QAReportSchema,
 } from "../src/schemas.js";
 
+const SCHEMA_SOURCE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/schemas.ts",
+);
+let SCHEMA_SOURCE_CONTENTS = "";
+try {
+  SCHEMA_SOURCE_CONTENTS = readFileSync(SCHEMA_SOURCE_PATH, "utf-8");
+} catch {
+  SCHEMA_SOURCE_CONTENTS = "(schemas.ts source unavailable — read failed)";
+}
+
+const SCHEMA_HINT = "The full Zod schema source is included above. Read it as the authoritative spec for every field. If a field's value is empty/unknown, pass [] for arrays or omit optional fields — do not invent placeholder content.";
+
 const SCHEMAS: Record<string, z.ZodType<unknown>> = {
   PacketContract: PacketContractSchema as z.ZodType<unknown>,
   ContractReview: ContractReviewSchema as z.ZodType<unknown>,
@@ -27,6 +43,30 @@ const SCHEMAS: Record<string, z.ZodType<unknown>> = {
   EvaluatorReport: EvaluatorReportSchema as z.ZodType<unknown>,
   QAReport: QAReportSchema as z.ZodType<unknown>,
 };
+
+/**
+ * Persist a successfully-validated envelope body to disk so the orchestrator
+ * can recover it even when the model omits the `===HARNESSD_RESULT_*===`
+ * delimiters in its final output. Path is from env var; silently skipped
+ * if unset (so this CLI remains usable for ad-hoc validation).
+ */
+function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void {
+  const stagedPath = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
+  if (!stagedPath) return;
+  try {
+    mkdirSync(dirname(stagedPath), { recursive: true });
+    const tmp = stagedPath + ".tmp";
+    writeFileSync(tmp, JSON.stringify({
+      validatedAt: new Date().toISOString(),
+      schemaName,
+      validatedBody,
+    }, null, 2));
+    renameSync(tmp, stagedPath);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[validate-envelope-cli] failed to persist staged envelope to ${stagedPath}: ${msg}\n`);
+  }
+}
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -84,7 +124,19 @@ async function main() {
         message: issue.message,
         code: issue.code,
       }));
-      console.log(JSON.stringify({ valid: false, errors }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            valid: false,
+            errors,
+            schemaSourcePath: SCHEMA_SOURCE_PATH,
+            schemaSource: SCHEMA_SOURCE_CONTENTS,
+            hint: SCHEMA_HINT,
+          },
+          null,
+          2,
+        ),
+      );
       process.exit(1);
     }
 
@@ -116,6 +168,10 @@ async function main() {
         process.exit(1);
       }
     }
+
+    // Persist validated body so the orchestrator can recover it from
+    // staged-envelope.json regardless of the model's final-text format.
+    persistStagedEnvelope(schemaName, parsed);
 
     console.log(JSON.stringify({ valid: true }));
     process.exit(0);

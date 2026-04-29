@@ -69,7 +69,7 @@ function makeBuilderReport(): BuilderReport {
     sessionId: "session-abc",
     changedFiles: [],
     commandsRun: [],
-    backgroundJobs: [],
+    liveBackgroundJobs: [],
     microFanoutUsed: [],
     selfCheckResults: [],
     keyDecisions: [],

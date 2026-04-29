@@ -339,7 +339,7 @@ describe("BuilderReportSchema field defaults", () => {
       sessionId: "session-abc-123",
       changedFiles: ["src/index.ts"],
       commandsRun: [],
-      backgroundJobs: [],
+      liveBackgroundJobs: [],
       microFanoutUsed: [],
       selfCheckResults: [],
       remainingConcerns: [],
