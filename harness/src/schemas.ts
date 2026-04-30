@@ -813,8 +813,16 @@ export const ProjectConfigSchema = z.object({
     context7: z.boolean().default(true),
     perplexity: z.boolean().default(false),
   }).default({ context7: true, perplexity: false }),
-  /** Enable run memory (sqlite-vec + FTS5). When false, no .db file is created, search_memory is not available, and memory sections are omitted from prompts. */
-  enableMemory: z.boolean().default(false),
+  /**
+   * Enable run memory (sqlite-vec + FTS5). When true (the default), the
+   * orchestrator initializes memory.db, the `search_memory` MCP tool is
+   * registered for every agent, queryMemoryContext() pre-injects prior-
+   * packet hits into builder + evaluator prompts, and every agent turn is
+   * encoded for retrieval. When false, none of that happens. Toggle via the
+   * `--no-memory` CLI flag. Default flipped to true in v6.0.3 once the
+   * sqlite stack proved reliable in production.
+   */
+  enableMemory: z.boolean().default(true),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
