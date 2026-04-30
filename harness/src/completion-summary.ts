@@ -57,13 +57,11 @@ export function generateCompletionContext(
   evaluatorReport: EvaluatorReport,
   opts?: { cwd?: string; commitShas?: string[] | null },
 ): PacketCompletionContext {
-  // Extract commit messages via git log
   const commitMessages = extractCommitMessages(
     opts?.cwd,
     opts?.commitShas ?? builderReport.commitShas,
   );
 
-  // Acceptance results from evaluator verdicts
   const verdicts = evaluatorReport.criterionVerdicts;
   const acceptanceResults = {
     passed: verdicts.filter((v) => v.verdict === "pass").length,
@@ -77,20 +75,14 @@ export function generateCompletionContext(
     title: packet.title,
     packetType: packet.type,
     objective: contract.objective,
-
-    // Intent — direct from contract, no filtering
     goals: contract.goals ?? [],
     constraints: contract.constraints ?? [],
     guidance: contract.guidance ?? [],
-
-    // Execution — direct from builder report, no filtering
     changedFiles: builderReport.changedFiles,
     keyDecisions: builderReport.keyDecisions ?? [],
     inScope: contract.inScope,
     outOfScope: contract.outOfScope,
     commitMessages,
-
-    // Outcome — direct from evaluator, no filtering
     acceptanceResults,
     evaluatorAddedCriteria: evaluatorReport.addedCriteria.map(
       (c) => `${c.kind}: ${c.description}`,

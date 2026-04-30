@@ -38,6 +38,9 @@ import { agentMessageToDocuments, promptToDocuments } from "./memvid.js";
  */
 const API_RETRY_STORM_THRESHOLD = 3;
 
+// Slower cadence than heartbeat to avoid IO churn on multi-hour sessions.
+const PERIODIC_SUMMARY_MS = 60_000;
+
 // ------------------------------------
 // Types
 // ------------------------------------
@@ -227,9 +230,6 @@ export function resolveEnvelope(args: {
   return null;
 }
 
-/**
- * Parse and validate the envelope payload against a Zod schema.
- */
 /**
  * Recursively strip null-valued keys from an object. OpenAI structured-outputs
  * strict mode requires every schema property to be present — optional fields
@@ -428,9 +428,7 @@ export async function runWorker<T = unknown>(
 
   // Periodic session-summary write — gives operators a structured view of
   // what's happening mid-session (api_retry counts, compact_boundary, tool
-  // call mix) without needing to re-parse the JSONL transcript. Slower
-  // cadence than heartbeat to avoid IO churn on long sessions.
-  const PERIODIC_SUMMARY_MS = 60_000;
+  // call mix) without needing to re-parse the JSONL transcript.
   const writePeriodicSummary = () => {
     try {
       const ctx: SessionSummaryContext = {
@@ -439,7 +437,6 @@ export async function runWorker<T = unknown>(
         packetId: config.packetId,
         runId: config.runId,
         startedAt: session.startedAt,
-        // No endedAt → endReason becomes "still_running" or "compaction_pending"
       };
       writeSessionSummary(transcriptPath, ctx, sessionSummaryPath);
     } catch { /* periodic summary is best-effort */ }
@@ -536,10 +533,8 @@ export async function runWorker<T = unknown>(
     if (memvidBuffer) memvidBuffer.stop();
   }
 
-  // Final heartbeat
   writeHeartbeat();
 
-  // Update session with end info
   session.sessionId = sessionId ?? backend.getLastSessionId();
   session.endedAt = new Date().toISOString();
   atomicWriteJson(sessionPath, session);
@@ -592,7 +587,6 @@ export async function runWorker<T = unknown>(
     }
   }
 
-  // Write result
   const workerResult: WorkerResult<T> = {
     envelopeFound,
     envelopeSource,

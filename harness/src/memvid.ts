@@ -22,6 +22,7 @@ import type {
   BuilderReport,
   EvaluatorReport,
   QAReport,
+  PacketCompletionContext,
 } from './schemas.js';
 
 import type { AgentMessage } from './backend/types.js';
@@ -983,6 +984,11 @@ async function queryMemoryContextImpl(
 /**
  * Convert a completion summary into a memory document.
  * These are the key decision/context narratives passed between packets.
+ *
+ * Accepts a pre-formatted markdown/text summary. For typed PacketCompletionContext
+ * objects (the JSON format written to packets/<id>/completion-context.json),
+ * use {@link completionContextToDocument} instead — passing raw JSON to this
+ * function will index JSON syntax instead of human-readable text.
  */
 export function completionSummaryToDocument(
   summary: string,
@@ -1000,6 +1006,108 @@ export function completionSummaryToDocument(
       category: 'summary' as const,
     },
     tags: ['summary', packetId],
+  };
+}
+
+/**
+ * Convert a typed PacketCompletionContext into a memory document.
+ *
+ * Renders the structured intent / execution / outcome layers as human-readable
+ * markdown so the encoded text is searchable on natural-language terms (goals,
+ * decisions, files, evaluator notes) instead of JSON syntax.
+ *
+ * Use this for documents produced by writeCompletionSummary —
+ * `packets/<id>/completion-context.json`.
+ */
+export function completionContextToDocument(
+  ctx: PacketCompletionContext,
+  packetId?: string,
+): MemvidDocument {
+  const ts = new Date().toISOString();
+  const id = packetId ?? ctx.packetId;
+
+  const lines: string[] = [
+    `# Completion Context — ${ctx.title} (${id})`,
+    '',
+    `**Type**: ${ctx.packetType}`,
+    `**Objective**: ${ctx.objective}`,
+    '',
+    `**Acceptance**: ${ctx.acceptanceResults.passed} passed, ${ctx.acceptanceResults.failed} failed, ` +
+      `${ctx.acceptanceResults.skipped} skipped (of ${ctx.acceptanceResults.total})`,
+  ];
+
+  if (ctx.goals.length > 0) {
+    lines.push('', '## Goals');
+    for (const g of ctx.goals) {
+      lines.push(`- [${g.id}] ${g.description}`);
+    }
+  }
+
+  if (ctx.constraints.length > 0) {
+    lines.push('', '## Constraints');
+    for (const c of ctx.constraints) {
+      const rationale = c.rationale ? ` — ${c.rationale}` : '';
+      lines.push(`- [${c.id}] (${c.kind}) ${c.description}${rationale}`);
+    }
+  }
+
+  if (ctx.guidance.length > 0) {
+    lines.push('', '## Guidance');
+    for (const g of ctx.guidance) {
+      const principle = g.principle ? ` (${g.principle})` : '';
+      lines.push(`- [${g.id}] (${g.source}${principle}) ${g.description}`);
+    }
+  }
+
+  if (ctx.inScope.length > 0) {
+    lines.push('', '## In Scope', ...ctx.inScope.map((s) => `- ${s}`));
+  }
+  if (ctx.outOfScope.length > 0) {
+    lines.push('', '## Out of Scope', ...ctx.outOfScope.map((s) => `- ${s}`));
+  }
+
+  if (ctx.changedFiles.length > 0) {
+    lines.push('', '## Changed Files', ...ctx.changedFiles.map((f) => `- ${f}`));
+  }
+
+  if (ctx.keyDecisions.length > 0) {
+    lines.push('', '## Key Decisions');
+    for (const d of ctx.keyDecisions) {
+      lines.push(`- ${d.description} — ${d.rationale}`);
+    }
+  }
+
+  if (ctx.commitMessages.length > 0) {
+    lines.push('', '## Commit Messages', ...ctx.commitMessages.map((m) => `- ${m}`));
+  }
+
+  if (ctx.evaluatorAddedCriteria.length > 0) {
+    lines.push('', '## Evaluator-Added Criteria', ...ctx.evaluatorAddedCriteria.map((c) => `- ${c}`));
+  }
+
+  if (ctx.remainingConcerns.length > 0) {
+    lines.push('', '## Remaining Concerns', ...ctx.remainingConcerns.map((c) => `- ${c}`));
+  }
+
+  if (ctx.evaluatorNotes.length > 0) {
+    lines.push('', '## Evaluator Notes', ...ctx.evaluatorNotes.map((n) => `- ${n}`));
+  }
+
+  return {
+    title: `Completion context — ${ctx.title} (${id})`,
+    label: 'summary',
+    text: lines.join('\n'),
+    metadata: {
+      ts,
+      packetId: id,
+      category: 'summary' as const,
+      packetType: ctx.packetType,
+      acceptancePassed: ctx.acceptanceResults.passed,
+      acceptanceFailed: ctx.acceptanceResults.failed,
+      acceptanceTotal: ctx.acceptanceResults.total,
+      changedFileCount: ctx.changedFiles.length,
+    },
+    tags: ['summary', id, ctx.packetType],
   };
 }
 

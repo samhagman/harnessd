@@ -125,12 +125,36 @@ function ensureSchemasAreUpToDate(): void {
   // from its own scripts/ context without polluting the main module graph.
   const generatorPath = path.join(srcDir, "..", "scripts", "generate-schemas.mts");
   const result = spawnSync(
-    process.execPath, // node
+    process.execPath,
     ["--import", "tsx/esm", generatorPath],
     { stdio: "inherit", encoding: "utf-8" },
   );
   if (result.status !== 0) {
     console.warn("[schema] Warning: schema regeneration failed — continuing with existing schemas");
+  }
+}
+
+// ------------------------------------
+// Helpers
+// ------------------------------------
+
+/**
+ * Wait for pending memvid writes to flush (max 10s). Non-fatal: logs a warning on timeout.
+ * Called before process exit in plan-only mode so memory writes aren't truncated.
+ */
+async function flushMemory(memory: { waitForPendingWrites: () => Promise<void> }): Promise<void> {
+  try {
+    await Promise.race([
+      memory.waitForPendingWrites(),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 10_000),
+      ),
+    ]);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "timeout") {
+      console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
+    }
   }
 }
 
@@ -141,8 +165,7 @@ function ensureSchemasAreUpToDate(): void {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  // --env <path>: load env vars from a .env file (before anything else)
-  // Also auto-loads .env from cwd if it exists (standard convention)
+  // Load env vars: explicit --env <path> flag, or auto-load harness/.env
   const envIdx = args.indexOf("--env");
   if (envIdx !== -1 && args[envIdx + 1] && !args[envIdx + 1]!.startsWith("--")) {
     const envPath = path.resolve(args[envIdx + 1]!);
@@ -150,14 +173,11 @@ async function main(): Promise<void> {
     if (count > 0) console.log(`[env] Loaded ${count} vars from ${envPath}`);
     else console.log(`[env] No vars loaded from ${envPath} (file missing or empty)`);
   } else {
-    // Auto-load .env from harness directory (standard convention)
     const defaultEnv = path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".env");
     const count = loadEnvFile(defaultEnv);
     if (count > 0) console.log(`[env] Loaded ${count} vars from .env`);
   }
 
-  // Ensure harness/schemas/*.json are up-to-date before any role dispatch.
-  // Fast-path: no-op when all schemas are newer than schemas.ts.
   ensureSchemasAreUpToDate();
 
   const repoRoot = process.env.WIGGUM_REPO_ROOT ?? process.cwd();
@@ -318,9 +338,10 @@ async function main(): Promise<void> {
   // --no-context7: disable Context7 research tool
   const disableContext7 = args.includes("--no-context7");
 
+  // Flags that consume the next positional argument as their value (not part of the objective)
+  const flagsWithValues = new Set(["--workspace", "--context", "--model", "--effort", "--run-id", "--codex-roles", "--codex-model", "--env"]);
   const filteredArgs = args.filter((a, i) =>
-    !a.startsWith("--") &&
-    (i === 0 || (args[i - 1] !== "--workspace" && args[i - 1] !== "--context" && args[i - 1] !== "--model" && args[i - 1] !== "--effort" && args[i - 1] !== "--run-id" && args[i - 1] !== "--codex-roles" && args[i - 1] !== "--codex-model" && args[i - 1] !== "--env")),
+    !a.startsWith("--") && (i === 0 || !flagsWithValues.has(args[i - 1]!)),
   );
   const objective = filteredArgs.join(" ").trim();
 
@@ -438,23 +459,10 @@ async function main(): Promise<void> {
       atomicWriteJson(path.join(runDir, "status.json"), snapshot);
       fs.writeFileSync(path.join(runDir, "status.md"), renderStatusMarkdown(snapshot));
 
-      // Encode spec artifacts into memory
+      // Encode spec artifacts into memory then flush before exiting
       if (memory) {
         memory.encodeInBackground(specToDocuments(runDir));
-        try {
-          await Promise.race([
-            memory.waitForPendingWrites(),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error("timeout")), 10_000),
-            ),
-          ]);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg === "timeout") {
-            console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
-          }
-          // non-fatal either way
-        }
+        await flushMemory(memory);
         console.log("[memvid] Planning artifacts encoded into memory");
       }
 
@@ -467,23 +475,7 @@ async function main(): Promise<void> {
         phase: "planning",
         detail: result.error,
       });
-      // Wait for any buffered memory writes
-      if (memory) {
-        try {
-          await Promise.race([
-            memory.waitForPendingWrites(),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error("timeout")), 10_000),
-            ),
-          ]);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg === "timeout") {
-            console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
-          }
-          // non-fatal either way
-        }
-      }
+      if (memory) await flushMemory(memory);
       console.error(`\nPlanning failed: ${result.error}`);
       process.exit(1);
     }

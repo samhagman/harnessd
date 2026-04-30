@@ -101,7 +101,6 @@ export function summarizeTranscript(
 ): SessionSummary {
   const lines = readJsonlLines(transcriptPath);
 
-  // ---- Counters ----
   let turnCount = 0;
   let toolCallCount = 0;
   const toolCallsByName: Record<string, number> = {};
@@ -130,14 +129,13 @@ export function summarizeTranscript(
 
   // For api-timeout-after-retries detection: count consecutive retries that
   // ended at session terminus without a successful result.
-  let lastNonRetryWasRetry = false;
+  let prevWasRetry = false;
   let trailingRetryCount = 0;
 
   for (const line of lines) {
     const msg = line.msg ?? {};
     const ts = line.ts;
 
-    // Gap analysis on arrival timestamp
     if (ts) {
       const tsMs = Date.parse(ts);
       if (Number.isFinite(tsMs)) {
@@ -153,11 +151,9 @@ export function summarizeTranscript(
       }
     }
 
-    // Counters by type
     if (msg.type === "assistant") {
       turnCount++;
 
-      // Capture last assistant text (truncated to 200 chars for the snippet field).
       if (msg.text && msg.text.trim()) {
         lastAssistantText = msg.text.slice(0, 200);
       }
@@ -183,7 +179,7 @@ export function summarizeTranscript(
         }
       }
 
-      lastNonRetryWasRetry = false;
+      prevWasRetry = false;
       trailingRetryCount = 0;
     } else if (msg.type === "event" && msg.subtype === "api_retry") {
       const raw = msg.raw as { attempt?: number; error?: string } | undefined;
@@ -192,8 +188,8 @@ export function summarizeTranscript(
         error: raw?.error ?? "unknown",
         ts: ts ?? "",
       });
-      trailingRetryCount = lastNonRetryWasRetry ? trailingRetryCount + 1 : 1;
-      lastNonRetryWasRetry = true;
+      trailingRetryCount = prevWasRetry ? trailingRetryCount + 1 : 1;
+      prevWasRetry = true;
     } else if (msg.type === "event" && msg.subtype === "rate_limit_event") {
       const raw = msg.raw as {
         rate_limit_info?: { rateLimitType?: string; status?: string };
@@ -221,7 +217,7 @@ export function summarizeTranscript(
         durationMs: raw?.compact_metadata?.duration_ms ?? 0,
       });
       pendingCompactingSeen = false;
-      lastNonRetryWasRetry = false;
+      prevWasRetry = false;
       trailingRetryCount = 0;
     } else if (msg.type === "event" && msg.subtype === "status") {
       // SDK emits status:"compacting" before the boundary. We treat it as
@@ -230,25 +226,24 @@ export function summarizeTranscript(
       if (raw?.status === "compacting") {
         pendingCompactingSeen = true;
       }
-      lastNonRetryWasRetry = false;
+      prevWasRetry = false;
       trailingRetryCount = 0;
     } else if (msg.type === "result") {
       resultSubtype = msg.subtype;
       if (typeof msg.numTurns === "number") numTurnsReportedBySdk = msg.numTurns;
       if (typeof msg.costUsd === "number") costUsd = msg.costUsd;
       if (msg.isError) resultIsError = true;
-      lastNonRetryWasRetry = false;
+      prevWasRetry = false;
       trailingRetryCount = 0;
     } else {
       // Any other message type — still resets the retry chain (matches worker.ts behavior).
       if (msg.type !== undefined) {
-        lastNonRetryWasRetry = false;
+        prevWasRetry = false;
         trailingRetryCount = 0;
       }
     }
   }
 
-  // ---- Determine endReason ----
   const endReason = computeEndReason({
     sessionEnded: ctx.endedAt !== undefined,
     resultSubtype,
@@ -260,14 +255,12 @@ export function summarizeTranscript(
     envelopeOutcome: ctx.envelopeOutcome,
   });
 
-  // ---- Duration ----
   const startedMs = Date.parse(ctx.startedAt);
   const endedMs = ctx.endedAt ? Date.parse(ctx.endedAt) : null;
   const durationMs = endedMs !== null && Number.isFinite(startedMs) && Number.isFinite(endedMs)
     ? endedMs - startedMs
     : undefined;
 
-  // ---- Envelope outcome → typed object ----
   const envelope: SessionSummary["envelope"] = ctx.envelopeOutcome
     ? {
         found: ctx.envelopeOutcome.found,

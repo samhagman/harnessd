@@ -98,7 +98,7 @@ import {
   builderReportToDocument,
   evalReportToDocument,
   qaReportToDocument,
-  completionSummaryToDocument,
+  completionContextToDocument,
   queryMemoryContext,
   planReviewToDocument,
   inboxMessageToDocument,
@@ -189,7 +189,6 @@ export async function runOrchestrator(
   const repoRoot = orchConfig.repoRoot;
   const workspaceDir = orchConfig.workspaceDir ?? repoRoot;
 
-  // Resolve research tool availability (check env vars, log summary)
   const researchAvailability = resolveResearchToolAvailability(config);
   config.researchTools = researchAvailability;
 
@@ -198,10 +197,8 @@ export async function runOrchestrator(
     validateWorkspacePath(workspaceDir);
   }
 
-  // Ensure workspace directory exists
   fs.mkdirSync(workspaceDir, { recursive: true });
 
-  // Create or resume run
   let runState: RunState;
   if (orchConfig.resumeRunId) {
     runState = loadRun(repoRoot, orchConfig.resumeRunId);
@@ -220,13 +217,12 @@ export async function runOrchestrator(
     });
   }
 
-  // Initialize run memory (skip if disabled via config, or if @memvid/sdk not installed)
   let memory: RunMemory | null = null;
   if (config.enableMemory) {
     try {
       const memoryPath = getMemoryPath(repoRoot, runState.runId);
       console.log(`[memvid] Initializing memory at ${memoryPath}`);
-      // Try to open existing memory on resume; fall back to creating fresh
+      // Open existing memory on resume; fall back to creating fresh
       memory = orchConfig.resumeRunId
         ? (await openRunMemory(memoryPath, repoRoot, runState.runId)
            ?? await createRunMemory(memoryPath, repoRoot, runState.runId))
@@ -264,7 +260,6 @@ export async function runOrchestrator(
 
   // Main phase loop — resilient, never dies from agent crashes
   while (runState.phase !== "completed" && runState.phase !== "failed") {
-    // Check operator flags
     if (runState.operatorFlags.stopRequested) {
       runState = await transition(repoRoot, runState, "paused", "Operator requested stop");
       break;
@@ -272,8 +267,6 @@ export async function runOrchestrator(
 
     // Process inbox (may mutate runState phase for gate approvals)
     runState = await processInbox(repoRoot, runState, memory);
-
-    // Update status
     await writeStatusFiles(repoRoot, runState);
 
     // Track phase changes to reset retry counter and gate print flag
@@ -956,14 +949,12 @@ async function executeBuilder(
     }
   }
 
-  // Build full plan context and timeline for builder
-  // Read events once here; pass to buildRunTimeline to avoid a redundant file read.
+  // Read events once and pass to buildRunTimeline to avoid a second file read
   const allPackets = readAllPackets(repoRoot, runState.runId);
   const currentPacket = allPackets.find((p) => p.id === packetId);
   const currentEvents = readEvents(repoRoot, runState.runId);
   const runTimelineStr = buildRunTimeline(repoRoot, runState.runId, currentEvents);
 
-  // Map packets to the shape the builder prompt expects
   const packetSummaries = allPackets.map((p) => ({
     id: p.id,
     title: p.title,
@@ -1281,13 +1272,8 @@ async function handleEvaluation(
   }
 
   // Persist evaluator report so the fix loop can read it
-  const evalReportDir = path.join(
-    getRunDir(repoRoot, runState.runId),
-    "packets", packetId, "evaluator",
-  );
-  fs.mkdirSync(evalReportDir, { recursive: true });
   atomicWriteJson(
-    path.join(evalReportDir, "evaluator-report.json"),
+    path.join(getRunDir(repoRoot, runState.runId), "packets", packetId, "evaluator", "evaluator-report.json"),
     result.report,
   );
 
@@ -1385,13 +1371,21 @@ async function handleEvaluation(
       if (latestTranscript) {
         docs.push(...transcriptToDocuments(latestTranscript, packetId, "evaluator"));
       }
-      const summaryPath = path.join(
-        getRunDir(repoRoot, runState.runId), "packets", packetId, "completion-summary.md",
+      const contextPath = path.join(
+        getRunDir(repoRoot, runState.runId), "packets", packetId, "completion-context.json",
       );
       try {
-        const summary = fs.readFileSync(summaryPath, "utf-8");
-        docs.push(completionSummaryToDocument(summary, packetId));
-      } catch { /* summary not available */ }
+        const raw = JSON.parse(fs.readFileSync(contextPath, "utf-8")) as unknown;
+        const parsed = PacketCompletionContextSchema.safeParse(raw);
+        if (parsed.success) {
+          docs.push(completionContextToDocument(parsed.data, packetId));
+        } else {
+          console.log(
+            `[${runState.runId}] memory: ${packetId}/completion-context.json failed schema — ` +
+            `skipping context encoding`,
+          );
+        }
+      } catch { /* completion context not available yet */ }
       memory.encodeInBackground(docs);
     }
 
@@ -1632,7 +1626,7 @@ async function handleRateLimit(
 }
 
 // ------------------------------------
-// QA / Round 2 phase handlers (stubs -- full implementation pending)
+// QA / Round 2 phase handlers
 // ------------------------------------
 
 async function handleQAReview(
@@ -1949,45 +1943,24 @@ async function runGatesBetweenBuilderAndEvaluator(
       detail: `Skipping evaluator: ${blockingFailures.map((f) => f.gate).join(", ")} failed`,
     });
 
-    // Synthesize evaluator report from gate failures
+    // Synthesize evaluator report from gate failures and write so the fix loop can read it
     const syntheticReport = synthesizeEvalReportFromGates(packetId, gateResults);
-
-    // Write the synthetic report so the fix loop can read it
-    const evalDir = path.join(
-      getRunDir(repoRoot, runState.runId),
-      "packets",
-      packetId,
-      "evaluator",
-    );
-    fs.mkdirSync(evalDir, { recursive: true });
+    const runDir = getRunDir(repoRoot, runState.runId);
     atomicWriteJson(
-      path.join(evalDir, "evaluator-report.json"),
+      path.join(runDir, "packets", packetId, "evaluator", "evaluator-report.json"),
       syntheticReport,
     );
-
-    // Also store gate results for the evaluator prompt (when gates eventually pass)
     atomicWriteJson(
-      path.join(
-        getRunDir(repoRoot, runState.runId),
-        "packets",
-        packetId,
-        "gate-results.json",
-      ),
+      path.join(runDir, "packets", packetId, "gate-results.json"),
       gateResults,
     );
-
     return updateRun(repoRoot, runState.runId, { phase: "fixing_packet" });
   }
 
   // All blocking gates passed — store results for evaluator context
   if (gateResults.length > 0) {
     atomicWriteJson(
-      path.join(
-        getRunDir(repoRoot, runState.runId),
-        "packets",
-        packetId,
-        "gate-results.json",
-      ),
+      path.join(getRunDir(repoRoot, runState.runId), "packets", packetId, "gate-results.json"),
       gateResults,
     );
   }
@@ -2440,12 +2413,6 @@ async function writeStatusFiles(
 }
 
 /**
- * Process inbox messages. Handles all message types including gate approvals,
- * nudges (send_to_agent), context injection, and packet resets.
- *
- * Returns potentially updated runState (e.g. after gate approval transitions phase).
- */
-/**
  * Check if a message type requires a specific phase to be actionable.
  * Returns the required phase, or null if the message is always actionable.
  */
@@ -2828,13 +2795,12 @@ function startGlobalNudgePoller(
 ): { stop: () => void } {
   const inboxDir = path.join(getRunDir(repoRoot, runId), "inbox");
   const intervalMs = 3000;
-  let processing = false; // Prevent re-entrant processing
+  let processing = false;
 
   const timer = setInterval(async () => {
-    if (processing) return; // Skip if previous iteration still running
+    if (processing) return;
     processing = true;
     try {
-    // Read current run state for context
     let currentPacketId: string | null = null;
     let currentPhase: string = "";
     try {
@@ -2861,15 +2827,12 @@ function startGlobalNudgePoller(
         }
 
         if (msg.type === "send_to_agent" && msg.message) {
-          // Route nudge to the backend that currently owns the active session.
-          // Falls back to the Claude backend (which supports live stream injection)
-          // when no Codex backend is active.
           const activeBackend = getActiveBackend();
           const nudgeOutcome = activeBackend
             ? activeBackend.queueNudge(msg.message)
             : { handled: false as const };
 
-          // Also write to nudge file + context-overrides as fallback/record
+          // Write to nudge file + context-overrides as fallback and persistent record
           try {
             if (currentPacketId) {
               writeNudgeFile(repoRoot, runId, currentPacketId, msg.message);
@@ -2878,7 +2841,6 @@ function startGlobalNudgePoller(
           } catch (writeErr) {
           }
 
-          // Determine log tag based on delivery mechanism
           let nudgeTag: string;
           if (nudgeOutcome.handled && nudgeOutcome.via === "stream") {
             nudgeTag = "[LIVE]";
@@ -2942,7 +2904,6 @@ function writeNudgeFile(repoRoot: string, runId: string, packetId: string, messa
   const nudgePath = path.join(getRunDir(repoRoot, runId), "packets", packetId, "nudge.md");
   fs.mkdirSync(path.dirname(nudgePath), { recursive: true });
   const ts = new Date().toISOString();
-  // Append (multiple nudges can accumulate before builder checks)
   fs.appendFileSync(nudgePath, `\n---\n**[${ts}]** ${message}\n`);
 }
 

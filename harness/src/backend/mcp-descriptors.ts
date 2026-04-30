@@ -31,17 +31,26 @@ import type { ResearchToolAvailability } from "../research-tools.js";
 export type { LogicalMcpServerDescriptor } from "./codex-cli.js";
 
 // ---------------------------------------------------------------------------
+// Shared path constants
+// ---------------------------------------------------------------------------
+
+function resolveRelative(...segments: string[]): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), ...segments);
+}
+
+/**
+ * Absolute path to harness/schemas/ — the directory of generated JSON schemas.
+ * Exported so runners can build `outputSchemaPath` values without duplicating
+ * the import.meta.url resolution.
+ */
+export const SCHEMAS_DIR = resolveRelative("..", "..", "schemas");
+
+// ---------------------------------------------------------------------------
 // Bin path resolution
 // ---------------------------------------------------------------------------
 
 function binPath(name: string): string {
-  return path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "bin",
-    name,
-  );
+  return resolveRelative("..", "..", "bin", name);
 }
 
 const VALIDATE_ENVELOPE_MCP_BIN = binPath("validate-envelope-mcp.mts");
