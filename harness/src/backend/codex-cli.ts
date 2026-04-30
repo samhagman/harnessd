@@ -9,10 +9,8 @@
  * Key properties:
  * - Each runSession() spawns a fresh child process
  * - --sandbox read-only gives OS-level enforcement (superior to hooks)
- * - queueNudge() returns {handled:false} (Phase 1; Phase 3 wires abort+resume)
+ * - queueNudge() sends SIGTERM and returns an abort-resume handle
  * - abortSession() sends SIGTERM to the child process
- *
- * Reference: plan Phase 1, PAL codex parser at inspiration/pal-mcp-server/clink/parsers/codex.py
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -214,7 +212,6 @@ function mapCodexEvent(
             : undefined;
       return {
         type: "assistant",
-        text: undefined,
         numTurns: 1,
         costUsd: costUsd ?? undefined,
         raw: event,
@@ -332,23 +329,19 @@ function extractItemText(item: Record<string, unknown>): string | undefined {
 // ------------------------------------
 
 /**
- * Logical MCP server descriptor — the common intermediate representation that
- * both Claude and Codex backends accept when callers set opts.mcpServers.
+ * Logical MCP server descriptor — the common intermediate representation for
+ * registering MCP servers with Codex via `-c mcp_servers.*` flags.
  *
- * Claude backend (supportsMcpServers: true): callers pass the in-process
- * createSdkMcpServer() form directly (backward compat). LogicalMcpServerDescriptor
- * objects that appear in the same record are passed to Codex via `-c` flags.
+ * buildCodexArgs() translates each entry to:
+ *   -c mcp_servers.<name>.command="<command>"
+ *   -c mcp_servers.<name>.args=[...]
+ *   -c mcp_servers.<name>.env.KEY="v"   (per env var)
  *
- * Codex backend: only accepts this descriptor form. buildCodexArgs() translates
- * each entry to: `-c mcp_servers.<name>.command="<command>"`,
- * `-c mcp_servers.<name>.args=[...]`, and per-env `-c mcp_servers.<name>.env.KEY="v"`.
+ * Re-exported by mcp-descriptors.ts for callers outside the backend layer.
  */
 export interface LogicalMcpServerDescriptor {
-  /** The executable to run (e.g. "npx", "/usr/bin/node"). */
   command: string;
-  /** Arguments to pass to the command (e.g. ["tsx", "/abs/path/to/server.mts"]). */
   args: string[];
-  /** Optional environment variables passed to the MCP server process. */
   env?: Record<string, string>;
 }
 
@@ -370,112 +363,91 @@ export function isLogicalMcpServerDescriptor(
 }
 
 /**
+ * Push -c mcp_servers.* flags for each LogicalMcpServerDescriptor in opts.mcpServers.
+ * MCP servers are process-scoped, so these flags must be re-specified on every
+ * invocation — including `codex exec resume`.
+ *
+ * Claude SDK in-process MCP objects (createSdkMcpServer() form) have no top-level
+ * `command` field and are silently skipped by isLogicalMcpServerDescriptor().
+ */
+function pushMcpServerFlags(args: string[], mcpServers: Record<string, unknown>): void {
+  for (const [name, cfg] of Object.entries(mcpServers)) {
+    if (!isLogicalMcpServerDescriptor(cfg)) continue;
+    args.push("-c", `mcp_servers.${name}.command="${cfg.command}"`);
+    args.push("-c", `mcp_servers.${name}.args=${JSON.stringify(cfg.args)}`);
+    if (cfg.env) {
+      for (const [k, v] of Object.entries(cfg.env)) {
+        args.push("-c", `mcp_servers.${name}.env.${k}="${v}"`);
+      }
+    }
+  }
+}
+
+/**
  * Build the argument list for `codex exec --json`.
  * Exported for testing.
+ *
+ * Resume branch uses `codex exec resume <sessionId>` instead of `codex exec`.
+ * Flags unavailable on resume (--output-schema, --sandbox, --cd) are omitted —
+ * the session carries them in server-side state. Flags that are process-scoped
+ * (-c mcp_servers.*, -c model_reasoning_effort) must be re-specified on every
+ * invocation including resume.
  */
 export function buildCodexArgs(
   opts: AgentSessionOptions,
   config: CodexCliBackendConfig,
 ): string[] {
-  // Branch on resume: use `codex exec resume <sessionId>` when resuming a prior session.
-  //
-  // Flags that DO NOT exist on `codex exec resume` (verified against CLI --help):
-  //   --output-schema, --sandbox, --cd
-  //   The session carries output schema forward in server-side state; the CWD is restored
-  //   from the session record; sandbox is inherited from the original session or global config.
-  //
-  // Flags that MUST be re-specified on each resume (MCP servers are process-scoped, not
-  // session-scoped — Codex spawns fresh MCP child processes on every invocation):
-  //   -c mcp_servers.<name>.*  — re-register each MCP server so tools are available again.
-  //   -c model_reasoning_effort — re-apply since each invocation is a fresh process.
-  //   --model / -m — resume also accepts a model override.
+  // Session model: ignore Claude model names — Codex only accepts GPT models.
+  const sessionModel = opts.model && !opts.model.startsWith("claude-") ? opts.model : undefined;
+  const resolvedModel = sessionModel ?? config.model;
+
   if (opts.resume) {
     const args: string[] = ["exec", "resume", opts.resume, "--json"];
 
-    // Model override (session option > backend config).
-    const sessionModel = opts.model && !opts.model.startsWith("claude-") ? opts.model : undefined;
-    const resumeModel = sessionModel ?? config.model;
-    if (resumeModel) {
-      args.push("--model", resumeModel);
+    if (resolvedModel) {
+      args.push("--model", resolvedModel);
     }
 
-    // Re-apply reasoning effort (process-scoped)
+    // Re-apply process-scoped config on every resume invocation.
     args.push("-c", "model_reasoning_effort=xhigh");
-
-    // Re-register MCP servers so the tools are available in the resumed session.
     if (opts.mcpServers) {
-      for (const [name, cfg] of Object.entries(opts.mcpServers)) {
-        if (!isLogicalMcpServerDescriptor(cfg)) continue;
-        args.push("-c", `mcp_servers.${name}.command="${cfg.command}"`);
-        args.push("-c", `mcp_servers.${name}.args=${JSON.stringify(cfg.args)}`);
-        if (cfg.env) {
-          for (const [k, v] of Object.entries(cfg.env)) {
-            args.push("-c", `mcp_servers.${name}.env.${k}="${v}"`);
-          }
-        }
-      }
+      pushMcpServerFlags(args, opts.mcpServers);
     }
 
-    // Prompt is the last positional argument
+    // Prompt is the last positional argument on resume.
     args.push(opts.prompt);
     return args;
   }
 
   const args: string[] = ["exec", "--json"];
 
-  // Prompt is a positional argument (not --prompt flag)
   args.push(opts.prompt);
 
-  // Working directory
   if (opts.cwd) {
     args.push("--cd", opts.cwd);
   }
 
-  // Sandbox mode
-  // Evaluators/QA use "workspace-write" but Playwright needs access to ~/Library/Caches/
-  // and curl needs to write cookie jars. Use full access for workspace-write roles since
-  // the prompt enforces "don't fix bugs" and hooks enforce read-only for Claude.
-  const sandboxMode = opts.sandboxMode ?? "workspace-write";
-  if (sandboxMode === "read-only") {
+  // Evaluators/QA use "workspace-write" but need access to ~/Library/Caches/ for
+  // Playwright and curl cookie jars — so no --sandbox flag for workspace-write.
+  // Prompt-enforced restrictions + hooks cover read-only enforcement for Claude roles.
+  if ((opts.sandboxMode ?? "workspace-write") === "read-only") {
     args.push("--sandbox", "read-only");
     args.push("-c", "sandbox_read_only.network_access=true");
   }
-  // For workspace-write: don't pass --sandbox flag, inherits global config
-  // (which is "danger-full-access" — prompt-enforced restrictions instead)
 
-  // Model override (session option > backend config).
-  // Ignore session-level Claude model names — the global --model flag is meant for Claude
-  // backends; Codex only accepts GPT models and will error on "claude-*".
-  const sessionModel = opts.model && !opts.model.startsWith("claude-") ? opts.model : undefined;
-  const model = sessionModel ?? config.model;
-  if (model) {
-    args.push("--model", model);
+  if (resolvedModel) {
+    args.push("--model", resolvedModel);
   }
 
-  // Force highest reasoning effort for adversarial roles
   args.push("-c", "model_reasoning_effort=xhigh");
 
-  // MCP server registration via per-invocation -c config overrides.
-  // Only LogicalMcpServerDescriptor entries are processed here — Claude SDK in-process
-  // MCP objects (createSdkMcpServer() form) are silently skipped (they cannot be
-  // serialized into Codex -c flags and are not expected in Codex sessions).
   if (opts.mcpServers) {
-    for (const [name, cfg] of Object.entries(opts.mcpServers)) {
-      if (!isLogicalMcpServerDescriptor(cfg)) continue;
-      args.push("-c", `mcp_servers.${name}.command="${cfg.command}"`);
-      args.push("-c", `mcp_servers.${name}.args=${JSON.stringify(cfg.args)}`);
-      if (cfg.env) {
-        for (const [k, v] of Object.entries(cfg.env)) {
-          args.push("-c", `mcp_servers.${name}.env.${k}="${v}"`);
-        }
-      }
-    }
+    pushMcpServerFlags(args, opts.mcpServers);
   }
 
-  // Structured output schema — sidesteps envelope-sentinel emission errors by
-  // having Codex return a typed final_answer payload instead of free-form text.
-  // The runSession() handler synthesizes this into a standard envelope-wrapped
-  // AgentMessage so downstream callers (worker.ts:extractEnvelope) stay unchanged.
+  // Structured output schema — Codex emits a final_answer payload instead of free-form
+  // text; runSession() synthesizes it into an envelope-wrapped AgentMessage so
+  // downstream callers (worker.ts:extractEnvelope) stay unchanged.
   if (opts.outputSchemaPath) {
     args.push("--output-schema", opts.outputSchemaPath);
   }
@@ -548,7 +520,6 @@ export class CodexCliBackend implements AgentBackend {
         };
       } else if (
         opts.resume &&
-        exitCode !== 0 &&
         (stderr.toLowerCase().includes("session not found") ||
           stderr.toLowerCase().includes("session expired") ||
           stderr.toLowerCase().includes("unknown session") ||
@@ -584,6 +555,7 @@ export class CodexCliBackend implements AgentBackend {
     } finally {
       this.activeChild = null;
       rl.close();
+      child.stderr?.removeAllListeners("data");
     }
   }
 
@@ -591,17 +563,6 @@ export class CodexCliBackend implements AgentBackend {
     return this.lastSessionId;
   }
 
-  /**
-   * Deliver a nudge via abort+resume: kill the active child process so the
-   * orchestrator's next builder invocation can resume the session with the
-   * nudge text prepended to the prompt.
-   *
-   * Returns `{ handled: false }` when no session is active (orchestrator falls
-   * back to file-based nudges). Once the child is killed the caller must:
-   *   1. Emit a `builder.aborted-for-nudge` event.
-   *   2. On the next builder invocation, pass `resume: sessionId` and prepend
-   *      `"OPERATOR NUDGE:\n{nudgeText}\n\n"` to the prompt.
-   */
   queueNudge(text: string): NudgeOutcome {
     if (!this.activeChild || !this.lastSessionId) {
       return { handled: false };
@@ -616,10 +577,6 @@ export class CodexCliBackend implements AgentBackend {
     };
   }
 
-  /**
-   * Abort the running codex exec process via SIGTERM.
-   * Returns the session ID of the killed session, or null.
-   */
   abortSession(): string | null {
     const sid = this.lastSessionId;
     if (this.activeChild && !this.activeChild.killed) {

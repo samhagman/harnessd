@@ -148,13 +148,11 @@ export const RunStateSchema = z.object({
   lastHeartbeatAt: z.string().nullable(),
   rateLimitState: RateLimitStateSchema,
   operatorFlags: OperatorFlagsSchema,
-  // QA and Round 2 tracking
   round: z.number().int().default(1),
   qaReportPath: z.string().nullable().default(null),
   round2PacketOrder: z.array(z.string()).default([]),
   round2CompletedPacketIds: z.array(z.string()).default([]),
   maxRounds: z.number().int().default(10),
-  // Workspace directory (persisted so resume can restore it)
   workspaceDir: z.string().nullable().default(null),
 });
 
@@ -225,7 +223,6 @@ export const AcceptanceCriterionSchema = z.object({
   scenario: ScenarioSchema.optional(),
   rubric: RubricSchema.optional(),
   evidenceRequired: z.array(z.string()),
-  // Evaluator-added criterion metadata (absent on negotiated criteria)
   source: z.enum(["contract", "evaluator"]).optional(),
   severity: CriterionSeveritySchema.optional(),
   rationale: z.string().optional(),
@@ -385,6 +382,13 @@ export const SelfCheckResultSchema = z.object({
   evidence: z.string(),
 });
 
+export const KeyDecisionSchema = z.object({
+  description: z.string(),
+  rationale: z.string(),
+});
+
+export type KeyDecision = z.infer<typeof KeyDecisionSchema>;
+
 export const BuilderReportSchema = z.object({
   packetId: z.string(),
   sessionId: z.string(),
@@ -395,10 +399,7 @@ export const BuilderReportSchema = z.object({
   liveBackgroundJobs: z.array(BackgroundJobStatusSchema),
   microFanoutUsed: z.array(MicroFanoutUsedSchema),
   selfCheckResults: z.array(SelfCheckResultSchema),
-  keyDecisions: z.array(z.object({
-    description: z.string(),
-    rationale: z.string(),
-  })).default([]),
+  keyDecisions: z.array(KeyDecisionSchema).default([]),
   remainingConcerns: z.array(z.string()),
   claimsDone: z.boolean(),
   commitShas: z.array(z.string()).nullable().default(null),
@@ -485,10 +486,7 @@ export const PacketCompletionContextSchema = z.object({
 
   // Execution layer (from builder report)
   changedFiles: z.array(z.string()),
-  keyDecisions: z.array(z.object({
-    description: z.string(),
-    rationale: z.string(),
-  })).default([]),
+  keyDecisions: z.array(KeyDecisionSchema).default([]),
   inScope: z.array(z.string()),
   outOfScope: z.array(z.string()),
   commitMessages: z.array(z.string()),
@@ -794,7 +792,6 @@ export const ProjectConfigSchema = z.object({
   model: z.string().optional(),
   /** Effort level for Claude Code sessions. Controls reasoning depth. Defaults to "high". */
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
-  // QA and Round 2 settings
   maxRounds: z.number().int().default(10),
   qaPassThreshold: QAPassThresholdSchema.default({ maxCritical: 0, maxMajor: 0, maxMinor: 5 }),
   skipQA: z.boolean().default(false),
@@ -1122,7 +1119,6 @@ export function defaultRunState(runId: string, objective: string): RunState {
       pauseAfterCurrentPacket: false,
       stopRequested: false,
     },
-    // QA and Round 2 defaults
     round: 1,
     qaReportPath: null,
     round2PacketOrder: [],

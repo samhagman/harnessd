@@ -142,9 +142,6 @@ export class FakeBackend implements AgentBackend {
 
   queueNudge(text: string): NudgeOutcome {
     this.nudgeMessages.push(text);
-    // FakeBackend has no active session concept — return handled:false so callers
-    // exercise the file-based fallback path in tests. If a test needs to simulate
-    // a live nudge receipt, use FakeBackend.fromScript() with a scripted nudge message.
     return { handled: false };
   }
 

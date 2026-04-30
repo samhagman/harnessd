@@ -2,10 +2,9 @@
 /**
  * MCP stdio server exposing the `gate_check` tool.
  *
- * This is the stdio-process counterpart to `createGateCheckMcpServer()` in
- * harness/src/gate-check-tool.ts. Codex agents that support MCP server
- * registration use this so they can run quality gates (typecheck + test)
- * from within their session and fix failures before emitting their result.
+ * Codex agents that support MCP server registration use this to run quality
+ * gates (typecheck + test) from within their session and fix failures before
+ * emitting their result.
  *
  * Usage (launched by Codex via -c mcp_servers.<name>.command):
  *   tsx /abs/path/to/harness/bin/gate-check-mcp.mts
@@ -15,24 +14,14 @@
  *   HARNESSD_PACKET_TYPE     The packet type being built (bugfix, ui_feature, etc.).
  *   HARNESSD_GATE_CONFIG     JSON blob matching the ProjectConfig shape (or subset thereof).
  *                            Parsed by ProjectConfigSchema.parse() — unknown keys are ignored.
- *                            Example:
- *                              HARNESSD_GATE_CONFIG='{"enableDefaultGates":true,"toolGates":[]}'
+ *                            Example: HARNESSD_GATE_CONFIG='{"enableDefaultGates":true,"toolGates":[]}'
  *
- * Config design choice: JSON blob in an env var was chosen over a file path because:
- *   - The caller (codex-cli.ts) already has the ProjectConfig object in memory.
- *   - Serializing it inline avoids creating a temp file that must be cleaned up.
- *   - Codex -c mcp_servers.<name>.env.KEY=VALUE supports arbitrary values.
+ * Config design choice: JSON blob in an env var was chosen over a file path because the caller
+ * (codex-cli.ts) already has the ProjectConfig object in memory, avoiding a temp file.
  *
- * Hard requirement: each tool invocation is bounded to 30 seconds.
- * This ensures that a SIGTERM arriving during an in-flight MCP call is
- * not delayed more than 30 s (Phase 3 nudge latency bound).
- *
- * Note: gate commands themselves (tsc, vitest) have their own timeouts
- * (120 s and 300 s respectively) which supersede the 30 s MCP timeout.
- * The 30 s MCP timeout only fires if the gate infrastructure itself hangs
- * before starting to run (e.g., a broken workspaceDir or a corrupted config).
- * In practice, gates that take longer than 30 s are protected by their own
- * timeoutMs and will return a structured failure rather than hanging forever.
+ * Each tool invocation is bounded to 30 seconds (Phase 3 nudge latency bound).
+ * Gate commands themselves (tsc: 120 s, vitest: 300 s) have their own timeouts that
+ * supersede this; the 30 s limit only fires if the gate infrastructure hangs before starting.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -40,21 +29,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ProjectConfigSchema } from "../src/schemas.js";
 import { runToolGates } from "../src/tool-gates.js";
 import type { PacketType } from "../src/schemas.js";
-
-// ---------------------------------------------------------------------------
-// Config from environment
-// ---------------------------------------------------------------------------
+import { TOOL_TIMEOUT_MS, withTimeout } from "../src/mcp-server-helpers.js";
 
 function loadConfig() {
   const workspaceDir = process.env.HARNESSD_WORKSPACE_DIR;
-  if (!workspaceDir) {
-    throw new Error("HARNESSD_WORKSPACE_DIR is required but not set.");
-  }
+  if (!workspaceDir) throw new Error("HARNESSD_WORKSPACE_DIR is required but not set.");
 
   const packetTypeRaw = process.env.HARNESSD_PACKET_TYPE;
-  if (!packetTypeRaw) {
-    throw new Error("HARNESSD_PACKET_TYPE is required but not set.");
-  }
+  if (!packetTypeRaw) throw new Error("HARNESSD_PACKET_TYPE is required but not set.");
 
   const configRaw = process.env.HARNESSD_GATE_CONFIG ?? "{}";
   let configJson: unknown;
@@ -64,35 +46,14 @@ function loadConfig() {
     throw new Error(`HARNESSD_GATE_CONFIG is not valid JSON: ${err}`);
   }
 
-  const config = ProjectConfigSchema.parse(configJson);
-
   return {
     workspaceDir,
     packetType: packetTypeRaw as PacketType,
-    config,
+    config: ProjectConfigSchema.parse(configJson),
   };
 }
 
 const { workspaceDir, packetType, config } = loadConfig();
-
-// ---------------------------------------------------------------------------
-// Timeout helper
-// ---------------------------------------------------------------------------
-
-const TOOL_TIMEOUT_MS = 30_000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Tool call timed out after ${ms}ms`)), ms).unref(),
-    ),
-  ]);
-}
-
-// ---------------------------------------------------------------------------
-// MCP server
-// ---------------------------------------------------------------------------
 
 const server = new McpServer({
   name: "harnessd-gate-check",
@@ -120,12 +81,7 @@ server.registerTool(
         durationMs: r.durationMs,
       }));
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ passed, results: summary }, null, 2),
-          },
-        ],
+        content: [{ type: "text" as const, text: JSON.stringify({ passed, results: summary }, null, 2) }],
       };
     };
 
@@ -134,20 +90,11 @@ server.registerTool(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ passed: false, error: `Gate check error: ${msg}` }),
-          },
-        ],
+        content: [{ type: "text" as const, text: JSON.stringify({ passed: false, error: `Gate check error: ${msg}` }) }],
       };
     }
   },
 );
-
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

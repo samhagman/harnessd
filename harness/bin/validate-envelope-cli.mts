@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
- * CLI envelope validator — shell-script equivalent of the validate_envelope MCP tool.
- * Used by Codex agents (which can't use MCP tools) to validate their output before emitting.
+ * CLI envelope validator — no-MCP fallback for Codex agents that cannot use
+ * MCP tools. Shell-script equivalent of the validate_envelope MCP tool.
  *
  * Usage:
  *   npx tsx harness/bin/validate-envelope-cli.mts --schema EvaluatorReport --json '{"overall":"pass",...}'
@@ -11,62 +11,14 @@
  * Exits 0 with {"valid":true} or exits 1 with {"valid":false,"errors":[...]}.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { z } from "zod";
 import {
-  PacketContractSchema,
-  ContractReviewSchema,
-  BuilderReportSchema,
-  EvaluatorReportSchema,
-  QAReportSchema,
-} from "../src/schemas.js";
-
-const SCHEMA_SOURCE_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../src/schemas.ts",
-);
-let SCHEMA_SOURCE_CONTENTS = "";
-try {
-  SCHEMA_SOURCE_CONTENTS = readFileSync(SCHEMA_SOURCE_PATH, "utf-8");
-} catch {
-  SCHEMA_SOURCE_CONTENTS = "(schemas.ts source unavailable — read failed)";
-}
-
-const SCHEMA_HINT = "The full Zod schema source is included above. Read it as the authoritative spec for every field. If a field's value is empty/unknown, pass [] for arrays or omit optional fields — do not invent placeholder content.";
-
-const SCHEMAS: Record<string, z.ZodType<unknown>> = {
-  PacketContract: PacketContractSchema as z.ZodType<unknown>,
-  ContractReview: ContractReviewSchema as z.ZodType<unknown>,
-  BuilderReport: BuilderReportSchema as z.ZodType<unknown>,
-  EvaluatorReport: EvaluatorReportSchema as z.ZodType<unknown>,
-  QAReport: QAReportSchema as z.ZodType<unknown>,
-};
-
-/**
- * Persist a successfully-validated envelope body to disk so the orchestrator
- * can recover it even when the model omits the `===HARNESSD_RESULT_*===`
- * delimiters in its final output. Path is from env var; silently skipped
- * if unset (so this CLI remains usable for ad-hoc validation).
- */
-function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void {
-  const stagedPath = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
-  if (!stagedPath) return;
-  try {
-    mkdirSync(dirname(stagedPath), { recursive: true });
-    const tmp = stagedPath + ".tmp";
-    writeFileSync(tmp, JSON.stringify({
-      validatedAt: new Date().toISOString(),
-      schemaName,
-      validatedBody,
-    }, null, 2));
-    renameSync(tmp, stagedPath);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[validate-envelope-cli] failed to persist staged envelope to ${stagedPath}: ${msg}\n`);
-  }
-}
+  SCHEMAS,
+  SCHEMA_SOURCE_PATH,
+  SCHEMA_SOURCE_CONTENTS,
+  SCHEMA_HINT,
+  persistStagedEnvelope,
+  validateEnvelopeBody,
+} from "../src/mcp-server-helpers.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -103,8 +55,7 @@ async function main() {
     process.exit(1);
   }
 
-  const schema = SCHEMAS[schemaName];
-  if (!schema) {
+  if (!SCHEMAS[schemaName]) {
     console.log(JSON.stringify({ valid: false, errors: [`Unknown schema: ${schemaName}. Available: ${Object.keys(SCHEMAS).join(", ")}`] }));
     process.exit(1);
   }
@@ -116,23 +67,12 @@ async function main() {
 
   try {
     const parsed = JSON.parse(input);
-    const result = (schema as z.ZodType).safeParse(parsed);
+    const errors = validateEnvelopeBody(schemaName, parsed, criterionIds);
 
-    if (!result.success) {
-      const errors = result.error.issues.map((issue: z.ZodIssue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-        code: issue.code,
-      }));
+    if (errors) {
       console.log(
         JSON.stringify(
-          {
-            valid: false,
-            errors,
-            schemaSourcePath: SCHEMA_SOURCE_PATH,
-            schemaSource: SCHEMA_SOURCE_CONTENTS,
-            hint: SCHEMA_HINT,
-          },
+          { valid: false, errors, schemaSourcePath: SCHEMA_SOURCE_PATH, schemaSource: SCHEMA_SOURCE_CONTENTS, hint: SCHEMA_HINT },
           null,
           2,
         ),
@@ -140,37 +80,6 @@ async function main() {
       process.exit(1);
     }
 
-    // Extra validation for EvaluatorReport: check criterion IDs
-    if (schemaName === "EvaluatorReport" && criterionIds.length > 0) {
-      const validIds = new Set(criterionIds);
-      const verdicts = (parsed as any).criterionVerdicts ?? [];
-      const badIds = verdicts
-        .map((v: any) => v.criterionId)
-        .filter((id: string) => !validIds.has(id));
-      const missingIds = criterionIds.filter(
-        (id) => !verdicts.some((v: any) => v.criterionId === id),
-      );
-
-      const warnings: string[] = [];
-      if (badIds.length > 0) {
-        warnings.push(
-          `criterionVerdicts contains IDs not in the contract: ${badIds.join(", ")}. ` +
-          `Valid IDs are: ${criterionIds.join(", ")}. Use the EXACT criterion IDs from the contract.`,
-        );
-      }
-      if (missingIds.length > 0) {
-        warnings.push(
-          `Missing verdicts for: ${missingIds.join(", ")}. You must provide a verdict for every acceptance criterion.`,
-        );
-      }
-      if (warnings.length > 0) {
-        console.log(JSON.stringify({ valid: false, errors: warnings }, null, 2));
-        process.exit(1);
-      }
-    }
-
-    // Persist validated body so the orchestrator can recover it from
-    // staged-envelope.json regardless of the model's final-text format.
     persistStagedEnvelope(schemaName, parsed);
 
     console.log(JSON.stringify({ valid: true }));

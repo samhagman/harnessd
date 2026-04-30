@@ -208,20 +208,14 @@ export class ClaudeSdkBackend implements AgentBackend {
       abortController,
       model,
       effort,
-      // Destructure harness-specific fields that are not SDK Options fields.
-      // mcpServers is typed as Record<string, unknown> in AgentSessionOptions to
-      // accommodate both Claude in-process MCP form and Codex LogicalMcpServerDescriptor.
-      // The Claude SDK requires Record<string, McpServerConfig> — cast is safe because
-      // Claude runners always pass in-process MCP objects (createSdkMcpServer() return values).
       mcpServers,
-      // outputSchemaPath is a Codex-only flag; Claude ignores it entirely.
+      // outputSchemaPath is Codex-only; destructure to prevent it leaking into SDK options.
       outputSchemaPath: _outputSchemaPath,
       ...rest
     } = opts;
 
     const options: Options = {
       cwd,
-      // Effort level from session options (set via config.effort → call-site spread); defaults to "high".
       effort: (effort as Options["effort"]) ?? "high",
       ...(permissionMode != null ? { permissionMode } : {}),
       ...(allowedTools != null ? { allowedTools } : {}),
@@ -233,9 +227,9 @@ export class ClaudeSdkBackend implements AgentBackend {
       ...(maxBudgetUsd != null ? { maxBudgetUsd } : {}),
       ...(abortController != null ? { abortController } : {}),
       ...(model != null ? { model } : {}),
-      // Pass mcpServers through with a cast: callers of ClaudeSdkBackend always pass
-      // in-process McpServerConfig objects (createSdkMcpServer return values), so this
-      // is safe even though AgentSessionOptions types it as Record<string, unknown>.
+      // mcpServers: AgentSessionOptions types this as Record<string, unknown> to accommodate
+      // both Claude in-process MCP objects and LogicalMcpServerDescriptors. Claude runners
+      // always pass in-process McpServerConfig objects here, so this cast is safe.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ...(mcpServers != null ? { mcpServers: mcpServers as any } : {}),
       ...rest,

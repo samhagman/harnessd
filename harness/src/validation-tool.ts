@@ -56,18 +56,9 @@ function invalidValidationResponse(payload: Record<string, unknown>) {
 }
 
 /**
- * Persist a successfully-validated envelope body to disk so the orchestrator
- * can recover it even if the model fails to wrap its final assistant text
- * in `===HARNESSD_RESULT_*===` delimiters (the recurring markdown-fence
- * regression).
- *
- * Path is read from `HARNESSD_STAGED_ENVELOPE_PATH` env var, set by the
- * harness at session launch. If unset (e.g. unit tests, ad-hoc runs), the
- * persistence step is silently skipped — validation behavior is unchanged.
- *
- * Last-write-wins: the model can call validate_envelope multiple times in
- * one session iterating on shape; the final pre-emission call is what the
- * orchestrator reads.
+ * Persists validated body to HARNESSD_STAGED_ENVELOPE_PATH so the orchestrator
+ * can recover it if delimiters are missing in the model's final output.
+ * Last-write-wins; silently skipped if env var is unset.
  */
 function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void {
   const stagedPath = process.env.HARNESSD_STAGED_ENVELOPE_PATH;
@@ -75,17 +66,9 @@ function persistStagedEnvelope(schemaName: string, validatedBody: unknown): void
   try {
     fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
     const tmp = stagedPath + ".tmp";
-    const payload = JSON.stringify({
-      validatedAt: new Date().toISOString(),
-      schemaName,
-      validatedBody,
-    }, null, 2);
-    fs.writeFileSync(tmp, payload);
+    fs.writeFileSync(tmp, JSON.stringify({ validatedAt: new Date().toISOString(), schemaName, validatedBody }, null, 2));
     fs.renameSync(tmp, stagedPath);
   } catch (err) {
-    // Persistence is best-effort: if the staged file can't be written,
-    // the orchestrator falls back to delimiter parsing. Log via stderr
-    // (visible in harness logs) but never throw inside the MCP tool.
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[validate_envelope] failed to persist staged envelope to ${stagedPath}: ${msg}\n`);
   }
@@ -110,7 +93,7 @@ export function createValidationMcpServer(expectedCriterionIds?: string[]) {
         "Validate a JSON object against a harnessd schema before emitting it as your result envelope. " +
         "Call this with your proposed result JSON and the schema name. " +
         "Returns either {valid: true} or {valid: false, errors: [...]} so you can fix issues before emitting. " +
-        "Available schemas: PacketContract, ContractReview, BuilderReport, EvaluatorReport",
+        "Available schemas: PacketContract, ContractReview, BuilderReport, EvaluatorReport, QAReport",
         {
           schema_name: z.enum(["PacketContract", "ContractReview", "BuilderReport", "EvaluatorReport", "QAReport"])
             .describe("Which schema to validate against"),
@@ -140,7 +123,6 @@ export function createValidationMcpServer(expectedCriterionIds?: string[]) {
               return invalidValidationResponse({ valid: false, errors });
             }
 
-            // Extra validation for EvaluatorReport: check criterion IDs match the contract
             if (args.schema_name === "EvaluatorReport" && expectedCriterionIds && expectedCriterionIds.length > 0) {
               const validIds = new Set(expectedCriterionIds);
               const verdicts = (parsed as any).criterionVerdicts ?? [];
@@ -170,9 +152,6 @@ export function createValidationMcpServer(expectedCriterionIds?: string[]) {
               }
             }
 
-            // Persist the validated body so the orchestrator can recover it
-            // from staged-envelope.json regardless of how the model formats
-            // its final assistant text (delimiters, markdown fences, plain).
             persistStagedEnvelope(args.schema_name, parsed);
 
             return {

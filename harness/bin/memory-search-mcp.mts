@@ -2,10 +2,9 @@
 /**
  * MCP stdio server exposing the `memory_search` tool.
  *
- * This is the stdio-process counterpart to `createMemorySearchMcpServer()` in
- * harness/src/memory-tool.ts. Codex agents that support MCP server registration
- * use this to search the run's semantic memory (.mv2 file) for context from
- * prior packets, evaluator findings, decisions, and agent sessions.
+ * Codex agents that support MCP server registration use this to search the
+ * run's semantic memory (.mv2 file) for context from prior packets, evaluator
+ * findings, decisions, and agent sessions.
  *
  * Usage (launched by Codex via -c mcp_servers.<name>.command):
  *   tsx /abs/path/to/harness/bin/memory-search-mcp.mts
@@ -14,23 +13,17 @@
  *   HARNESSD_MEMVID_PATH     Absolute path to the run's .mv2 memory file.
  *                            e.g. /repo/.harnessd/runs/my-run/memory.mv2
  *
- * When the memory file does not exist (e.g., early in a run) or @memvid/sdk
- * is not installed, search_memory returns an empty result set rather than
- * failing — consistent with RunMemory.search() behavior.
+ * When the memory file does not exist or @memvid/sdk is not installed,
+ * memory_search returns an empty result set rather than failing.
  *
- * Hard requirement: each tool invocation is bounded to 30 seconds.
- * This ensures that a SIGTERM arriving during an in-flight MCP call is
- * not delayed more than 30 s (Phase 3 nudge latency bound).
+ * Each tool invocation is bounded to 30 seconds (Phase 3 nudge latency bound).
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { openRunMemory } from "../src/memvid.js";
-
-// ---------------------------------------------------------------------------
-// Config from environment
-// ---------------------------------------------------------------------------
+import { TOOL_TIMEOUT_MS, withTimeout } from "../src/mcp-server-helpers.js";
 
 const memvidPath = process.env.HARNESSD_MEMVID_PATH;
 if (!memvidPath) {
@@ -38,44 +31,16 @@ if (!memvidPath) {
   process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// Memory initialization (lazy — we open once, reuse across tool calls)
-// ---------------------------------------------------------------------------
-
-// We derive a synthetic repoRoot and runId from the path rather than requiring
-// two more env vars. The RunMemory class uses these only for event-log appends,
-// which are best-effort and silently ignored on failure. If we can't derive a
-// sensible runId, we fall back to "unknown" — it only affects memory.encoded
-// event labels, which are decorative in this context.
-const memvidPathStr = memvidPath;
+// Derive repoRoot and runId from the path rather than requiring two more env vars.
+// RunMemory uses these only for event-log appends (best-effort, silently ignored on failure).
 const runsMarker = "/.harnessd/runs/";
-const runsIdx = memvidPathStr.indexOf(runsMarker);
-const repoRoot = runsIdx !== -1 ? memvidPathStr.slice(0, runsIdx) : "/";
+const runsIdx = memvidPath.indexOf(runsMarker);
+const repoRoot = runsIdx !== -1 ? memvidPath.slice(0, runsIdx) : "/";
 const runId = runsIdx !== -1
-  ? memvidPathStr.slice(runsIdx + runsMarker.length).split("/")[0] ?? "unknown"
+  ? memvidPath.slice(runsIdx + runsMarker.length).split("/")[0] ?? "unknown"
   : "unknown";
 
-// openRunMemory returns null if file doesn't exist or @memvid/sdk is absent
-const memoryPromise = openRunMemory(memvidPathStr, repoRoot, runId);
-
-// ---------------------------------------------------------------------------
-// Timeout helper
-// ---------------------------------------------------------------------------
-
-const TOOL_TIMEOUT_MS = 30_000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Tool call timed out after ${ms}ms`)), ms).unref(),
-    ),
-  ]);
-}
-
-// ---------------------------------------------------------------------------
-// MCP server
-// ---------------------------------------------------------------------------
+const memoryPromise = openRunMemory(memvidPath, repoRoot, runId);
 
 const server = new McpServer({
   name: "harnessd-memory",
@@ -118,17 +83,14 @@ server.registerTool(
               type: "text" as const,
               text: JSON.stringify({
                 results: [],
-                message:
-                  "Memory is not available. Either @memvid/sdk is not installed or the memory file has not been created yet.",
+                message: "Memory is not available. Either @memvid/sdk is not installed or the memory file has not been created yet.",
               }),
             },
           ],
         };
       }
 
-      // Build augmented query: prepend role/packetId for bias (same as MCP in-process tool)
-      const parts = [role, packetId, query].filter(Boolean);
-      const augmentedQuery = parts.join(" ");
+      const augmentedQuery = [role, packetId, query].filter(Boolean).join(" ");
 
       const hits = await memory.search(augmentedQuery, {
         k: k ?? 5,
@@ -143,8 +105,7 @@ server.registerTool(
               type: "text" as const,
               text: JSON.stringify({
                 results: [],
-                message:
-                  "No results found. Try different keywords, a broader query, or remove role/packetId filters.",
+                message: "No results found. Try different keywords, a broader query, or remove role/packetId filters.",
               }),
             },
           ],
@@ -168,20 +129,11 @@ server.registerTool(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ error: `Memory search failed: ${msg}` }),
-          },
-        ],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Memory search failed: ${msg}` }) }],
       };
     }
   },
 );
-
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

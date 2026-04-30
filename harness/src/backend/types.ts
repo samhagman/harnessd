@@ -117,22 +117,18 @@ export interface AgentSessionOptions {
   /**
    * Session ID to resume. Loads full conversation history from a prior session.
    * - Claude SDK backend: native resume via `resume: sessionId`.
-   * - Codex backend: honored via `codex exec resume <sessionId>` (Phase 1).
+   * - Codex backend: `codex exec resume <sessionId>`.
    */
   resume?: string;
 
   /**
    * MCP servers to register with the agent session.
    *
-   * Shape depends on the backend:
-   * - Claude SDK (supportsMcpServers: true, kind: "claude"): accepts both the
-   *   in-process createSdkMcpServer() form and the LogicalMcpServerDescriptor form.
-   * - Codex CLI (supportsMcpServers: true, kind: "codex"): only accepts the
-   *   LogicalMcpServerDescriptor form `{ command, args, env? }`, which is translated
-   *   to `-c mcp_servers.<name>.* ` flags in buildCodexArgs().
+   * - Claude SDK: in-process createSdkMcpServer() objects passed to SDK options.
+   * - Codex CLI: LogicalMcpServerDescriptor objects `{ command, args, env? }`
+   *   translated to `-c mcp_servers.<name>.*` flags in buildCodexArgs().
    *
-   * Use LogicalMcpServerDescriptors (from mcp-descriptors.ts) as the common
-   * intermediate representation that both backends accept.
+   * Use buildRoleMcpServers() (mcp-descriptors.ts) to build the correct form.
    */
   mcpServers?: Record<string, unknown>;
 
@@ -180,12 +176,10 @@ export interface AgentBackend {
   /**
    * Queue a user message to be injected into the currently running session.
    *
-   * - Claude SDK backend: delivered via streamInput() from within the for-await loop.
-   * - Codex backend (Phase 3): aborts the child process and returns an abort-resume handle;
-   *   the caller is responsible for resuming with the nudge text prepended to the prompt.
-   * - FakeBackend / no active session: returns `{ handled: false }` so callers use file fallback.
-   *
-   * Returns a NudgeOutcome describing how the nudge was handled.
+   * - Claude SDK: delivered via streamInput() from within the for-await loop.
+   * - Codex: aborts the child process (SIGTERM) and returns an abort-resume handle;
+   *   the caller resumes with the nudge text prepended to the next prompt.
+   * - FakeBackend / no active session: returns `{ handled: false }` (file-based fallback).
    */
   queueNudge(text: string): NudgeOutcome;
 
@@ -205,9 +199,9 @@ export interface AgentBackend {
   supportsResume(): boolean;
 
   /**
-   * Whether this backend supports in-process MCP server registration.
-   * - Claude SDK: true (mcpServers passed to SDK options).
-   * - Codex CLI: true (Phase 2: translated to -c mcp_servers.* flags).
+   * Whether this backend supports MCP server registration via opts.mcpServers.
+   * - Claude SDK: true (passed to SDK options as in-process McpServerConfig objects).
+   * - Codex CLI: true (translated to `-c mcp_servers.*` flags in buildCodexArgs()).
    * - FakeBackend: false (MCP registration is a no-op in tests).
    */
   supportsMcpServers(): boolean;

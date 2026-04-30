@@ -1,17 +1,8 @@
 #!/usr/bin/env node
 /**
- * generate-schemas.mts
- *
- * Generates JSON Schema files from Zod schemas in harness/src/schemas.ts.
- * Uses Zod v4's native `.toJSONSchema()` method.
- *
- * Output: harness/schemas/*.json
- *
- * Usage:
- *   npx tsx scripts/generate-schemas.mts
- *
- * Called automatically from main.ts at startup when schemas are missing
- * or stale (older than schemas.ts).
+ * Generates harness/schemas/*.json from Zod schemas in harness/src/schemas.ts.
+ * Called automatically by main.ts when schemas are missing or stale.
+ * Usage: npx tsx scripts/generate-schemas.mts
  */
 
 import fs from "node:fs";
@@ -33,12 +24,7 @@ import {
   DevServerConfigSchema,
 } from "../src/schemas.js";
 
-// ------------------------------------
-// Derived schema (planner output)
-// ------------------------------------
-
-// PlannerOutputSchema is defined locally in planner.ts and not exported
-// from schemas.ts. Reconstruct it here from its exported components.
+// PlannerOutputSchema is defined locally in planner.ts — reconstruct here from exported components.
 const PlannerOutputSchema = z.object({
   spec: z.string(),
   packets: z.array(PacketSchema),
@@ -49,8 +35,7 @@ const PlannerOutputSchema = z.object({
   devServer: DevServerConfigSchema.nullish(),
 });
 
-// Round-2 planner output: narrower than R1 — no integrationScenarios / devServer.
-// Must match the local Round2PlannerOutputSchema in round2-planner.ts.
+// Narrower than R1 — no integrationScenarios/devServer. Must match Round2PlannerOutputSchema in round2-planner.ts.
 const Round2PlannerOutputSchema = z.object({
   spec: z.string(),
   packets: z.array(PacketSchema),
@@ -58,10 +43,6 @@ const Round2PlannerOutputSchema = z.object({
   evaluatorGuide: EvaluatorGuideSchema,
   planSummary: z.string(),
 });
-
-// ------------------------------------
-// Schema registry
-// ------------------------------------
 
 const SCHEMAS: Array<{ name: string; schema: z.ZodType; sourceSchema: string }> = [
   {
@@ -105,10 +86,6 @@ const SCHEMAS: Array<{ name: string; schema: z.ZodType; sourceSchema: string }> 
     sourceSchema: "Round2PlannerOutputSchema (reconstructed; no integrationScenarios / devServer — R2 reuses R1's plan-level decisions)",
   },
 ];
-
-// ------------------------------------
-// Generator
-// ------------------------------------
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const schemasDir = path.join(__dirname, "..", "schemas");
@@ -184,7 +161,6 @@ export function generateSchemas(outputDir: string = schemasDir): void {
   for (const { name, schema, sourceSchema } of SCHEMAS) {
     const outPath = path.join(outputDir, `${name}.json`);
 
-    // Zod v4 native toJSONSchema
     const raw = (schema as z.ZodType & { toJSONSchema: () => unknown }).toJSONSchema();
     const jsonSchema = openaiStrictify(raw);
 
@@ -193,10 +169,6 @@ export function generateSchemas(outputDir: string = schemasDir): void {
     console.log(`[schema] Generated ${name}.json  ←  ${sourceSchema}`);
   }
 }
-
-// ------------------------------------
-// CLI entry point
-// ------------------------------------
 
 generateSchemas();
 console.log(`[schema] All schemas written to ${schemasDir}`);

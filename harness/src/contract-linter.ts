@@ -1,16 +1,5 @@
 /**
- * Contract linter — validates a contract proposal before spending model calls.
- *
- * Enforces structural rules from TAD section 11.5:
- * - Schema validates
- * - Required criterion counts per packet type
- * - outOfScope not empty
- * - acceptance not empty
- * - likelyFiles reasonable for packet size
- * - long_running_job has observability criteria
- * - User-visible packets have behavior/scenario criteria
- * - Risky packets have negative/invariant criteria
- *
+ * Contract linter — validates a contract proposal before spending model calls on evaluator review.
  * Reference: TAD section 11.5
  */
 
@@ -24,19 +13,6 @@ export interface LintResult {
 }
 
 const USER_VISIBLE_TYPES: readonly PacketType[] = ["ui_feature", "backend_feature", "integration"];
-
-// Runtime evidence keyword regex REMOVED — was causing multi-round contract
-// negotiation failures by rejecting perfectly valid evidence text that didn't
-// happen to contain magic keywords. Same anti-pattern as parseTscErrors/parseTestErrors.
-// The contract evaluator (adversarial agent) reviews evidence quality — that's its job.
-// Structural checks below use schema fields (command, scenario) instead of prose regex.
-
-
-// likelyFiles cap REMOVED — the evaluator's scope-bounded criterion catches
-// real scope violations at verification time. The cap only caused wasted
-// negotiation rounds when the contract builder listed all violation files
-// (legitimately) but forgot to bump the size field. More info, fewer
-// constraints is the better approach for builders.
 
 /**
  * Lint a contract proposal. Returns errors if any rules are violated.
@@ -81,13 +57,9 @@ export function lintContract(
     }
   }
 
-  // 5. (removed: estimatedSize check — it's a planning signal, not a contract requirement)
-
-  // 6. long_running_job must have observability criteria
+  // 5. long_running_job must have observability criteria
   if (packetType === "long_running_job") {
-    const hasObservability = contract.acceptance.some(
-      (c) => c.kind === "observability",
-    );
+    const hasObservability = contract.acceptance.some((c) => c.kind === "observability");
     if (!hasObservability) {
       errors.push(
         'Packet type "long_running_job" requires at least one "observability" criterion (heartbeat, logs, completion signal).',
@@ -95,11 +67,9 @@ export function lintContract(
     }
   }
 
-  // 7. User-visible packets need behavior/scenario criteria
+  // 6. User-visible packets need behavior/scenario criteria
   if (USER_VISIBLE_TYPES.includes(packetType)) {
-    const hasBehavior = contract.acceptance.some(
-      (c) => c.kind === "scenario" || c.kind === "api",
-    );
+    const hasBehavior = contract.acceptance.some((c) => c.kind === "scenario" || c.kind === "api");
     if (!hasBehavior) {
       errors.push(
         `User-visible packet type "${packetType}" requires at least one "scenario" or "api" criterion.`,
@@ -107,11 +77,9 @@ export function lintContract(
     }
   }
 
-  // 8. Risky packets need negative/invariant criteria
+  // 7. Risky packets need negative/invariant criteria
   if (RISKY_PACKET_TYPES.includes(packetType)) {
-    const hasNegative = contract.acceptance.some(
-      (c) => c.kind === "negative" || c.kind === "invariant",
-    );
+    const hasNegative = contract.acceptance.some((c) => c.kind === "negative" || c.kind === "invariant");
     if (!hasNegative) {
       errors.push(
         `Risky packet type "${packetType}" requires at least one "negative" or "invariant" criterion.`,
@@ -119,7 +87,7 @@ export function lintContract(
     }
   }
 
-  // 9. Blocking criteria must have evidence requirements
+  // 8. Blocking criteria must have evidence requirements
   for (const criterion of contract.acceptance) {
     if (criterion.blocking && criterion.evidenceRequired.length === 0) {
       errors.push(
@@ -128,10 +96,9 @@ export function lintContract(
     }
   }
 
-  // 10. Rubric criteria must have thresholds — auto-fix if possible
+  // 9. Rubric criteria must have a rubric object — auto-fix with defaults if missing
   for (const criterion of contract.acceptance) {
     if (criterion.kind === "rubric" && !criterion.rubric) {
-      // Auto-fix: inject a default rubric object instead of failing the lint
       (criterion as any).rubric = {
         scale: "1-5" as const,
         threshold: 3,
@@ -140,53 +107,45 @@ export function lintContract(
     }
   }
 
-  // 11. (removed: UX criteria ID check — the contract evaluator reviews quality coverage)
-
-  // 12. New-style contract goal/constraint validation (only when goals array is non-empty)
-  if (contract.goals !== undefined && contract.goals.length > 0) {
-    // Each blocking AC should map to at least one goal
-    const allMappedAcIds = new Set(contract.goals.flatMap((g: { acceptanceCriteriaIds: string[] }) => g.acceptanceCriteriaIds));
-    const blockingAcIds = contract.acceptance.filter((ac: { blocking: boolean }) => ac.blocking).map((ac: { id: string }) => ac.id);
-    const unmappedBlocking = blockingAcIds.filter((id: string) => !allMappedAcIds.has(id));
+  // 10. Goals: each blocking AC must map to a goal; goal AC references must exist
+  if (contract.goals.length > 0) {
+    const allMappedAcIds = new Set(contract.goals.flatMap((g) => g.acceptanceCriteriaIds));
+    const blockingAcIds = contract.acceptance.filter((ac) => ac.blocking).map((ac) => ac.id);
+    const unmappedBlocking = blockingAcIds.filter((id) => !allMappedAcIds.has(id));
     if (unmappedBlocking.length > 0) {
       errors.push(
-        `Blocking acceptance criteria not mapped to any goal: ${unmappedBlocking.join(", ")}. Each blocking AC should verify at least one goal.`
+        `Blocking acceptance criteria not mapped to any goal: ${unmappedBlocking.join(", ")}. Each blocking AC should verify at least one goal.`,
       );
     }
 
-    // Check that goal references point to existing AC IDs
-    const actualAcIds = new Set(contract.acceptance.map((ac: { id: string }) => ac.id));
+    const actualAcIds = new Set(contract.acceptance.map((ac) => ac.id));
     for (const goal of contract.goals) {
-      const dangling = goal.acceptanceCriteriaIds.filter((id: string) => !actualAcIds.has(id));
+      const dangling = goal.acceptanceCriteriaIds.filter((id) => !actualAcIds.has(id));
       if (dangling.length > 0) {
         errors.push(
-          `Goal "${goal.id}" references non-existent acceptance criteria: ${dangling.join(", ")}`
+          `Goal "${goal.id}" references non-existent acceptance criteria: ${dangling.join(", ")}`,
         );
       }
     }
   }
 
-  // 13. Constraints should have rationales
-  if (contract.constraints && contract.constraints.length > 0) {
-    const noRationale = contract.constraints.filter((c: { rationale?: string }) => !c.rationale);
+  // 11. Constraints must have rationales
+  if (contract.constraints.length > 0) {
+    const noRationale = contract.constraints.filter((c) => !c.rationale);
     if (noRationale.length > 0) {
       errors.push(
-        `Constraints without rationale: ${noRationale.map((c: { id: string }) => c.id).join(", ")}. Add rationale explaining WHY each constraint exists.`
+        `Constraints without rationale: ${noRationale.map((c) => c.id).join(", ")}. Add rationale explaining WHY each constraint exists.`,
       );
     }
   }
 
-  // 14. Structural runtime verification check for scenario/api criteria.
-  //     Instead of regex-matching prose in evidenceRequired (brittle — agents write
-  //     valid evidence that doesn't contain magic keywords), check that the criterion
-  //     has a structured verification mechanism: a command to run or a scenario with steps.
-  //     The contract evaluator (adversarial agent) handles evidence quality review.
+  // 12. Scenario/API criteria must have a structured verification mechanism.
+  //     Checks schema fields (command, scenario) rather than prose keywords in
+  //     evidenceRequired — the contract evaluator handles evidence quality review.
   if (USER_VISIBLE_TYPES.includes(packetType)) {
     for (const criterion of contract.acceptance) {
       if (criterion.kind === "scenario" || criterion.kind === "api") {
-        const hasStructuredVerification =
-          !!criterion.command || !!criterion.scenario;
-
+        const hasStructuredVerification = !!criterion.command || !!criterion.scenario;
         if (!hasStructuredVerification && criterion.evidenceRequired.length === 0) {
           errors.push(
             `Scenario/API criterion '${criterion.id}' has no verification mechanism. ` +
@@ -196,7 +155,6 @@ export function lintContract(
       }
     }
   }
-
 
   return {
     valid: errors.length === 0,
