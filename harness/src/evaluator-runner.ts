@@ -161,6 +161,7 @@ export async function runEvaluator(
     completedPacketIds: ctx.completedPacketIds,
     researchTools: ctx.config.researchTools,
     enableMemory: ctx.config.enableMemory,
+    memoryContext: ctx.memoryContext,
     expectedFiles: ctx.expectedFiles,
     builderCommitCount: ctx.builderCommitCount,
     useClaudeBackend: ctx.useClaudeBackend,

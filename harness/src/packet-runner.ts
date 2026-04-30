@@ -123,6 +123,7 @@ export async function runBuilder(
     completedPacketIds: ctx.completedPacketIds,
     researchTools: ctx.config.researchTools,
     enableMemory: ctx.config.enableMemory,
+    memoryContext: ctx.memoryContext,
     allPackets: ctx.allPackets,
     runTimeline: ctx.runTimeline,
     packetNotes: ctx.packetNotes,

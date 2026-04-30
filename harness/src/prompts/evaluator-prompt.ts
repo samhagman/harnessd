@@ -52,6 +52,13 @@ export interface EvaluatorPromptOptions {
   researchTools?: ResearchToolAvailability;
   /** When false, suppresses search_memory guidance and memory sections. */
   enableMemory?: boolean;
+  /**
+   * Pre-injected memory context — markdown produced by queryMemoryContext()
+   * starting with `## Relevant Prior Context (from run memory)`. Populated
+   * by the orchestrator from a hybrid (vec + FTS5) search against the run's
+   * memory.db before the evaluator is launched.
+   */
+  memoryContext?: string;
   /** Expected files from the planner — used for completeness smoke-test. */
   expectedFiles?: string[];
   /** Number of builder commits (for git diff range). */
@@ -115,6 +122,7 @@ export function buildEvaluatorPrompt(
     completedPacketIds,
     researchTools,
     enableMemory,
+    memoryContext,
     expectedFiles,
     builderCommitCount,
     useClaudeBackend,
@@ -301,6 +309,12 @@ Quick check: run ${commitRange} to see what actually changed.
 Missing files from this list may indicate incomplete implementation.
 Files changed that are NOT on this list are fine — builders often need to touch
 additional files. But files that SHOULD have been changed and weren't are a red flag.`);
+  }
+
+  if (memoryContext && memoryContext.trim().length > 0) {
+    // Already a markdown-formatted block (queryMemoryContext emits its own
+    // "## Relevant Prior Context (from run memory)" header) — push verbatim.
+    sections.push(memoryContext);
   }
 
   if (completionContexts && completionContexts.length > 0) {

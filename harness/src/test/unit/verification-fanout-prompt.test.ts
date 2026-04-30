@@ -5,6 +5,7 @@ import {
   type VerificationRole,
 } from "../../prompts/shared.js";
 
+import { buildBuilderPrompt } from "../../prompts/builder-prompt.js";
 import { buildEvaluatorPrompt } from "../../prompts/evaluator-prompt.js";
 import { buildQAPrompt } from "../../prompts/qa-prompt.js";
 import { buildPlanReviewPrompt } from "../../prompts/plan-review-prompt.js";
@@ -158,6 +159,53 @@ describe("buildEvaluatorPrompt — fanout integration", () => {
       useClaudeBackend: false,
     });
     expect(prompt).not.toContain("Parallel Verification Fanout");
+  });
+});
+
+describe("memoryContext pre-injection — wiring regression", () => {
+  // Regression test for the v6.0.2 wiring fix: the orchestrator computes a
+  // memoryContext markdown block via queryMemoryContext() and stores it on
+  // BuilderContext / EvaluatorContext, but the prompt builders previously
+  // didn't accept or render it, so 0 "Relevant Prior Context" headers ever
+  // reached the agent. Smoke v5-2pkt confirmed the bug. These tests guard
+  // against the wiring drifting again.
+  const sampleMemoryContext = [
+    "## Relevant Prior Context (from run memory)",
+    "",
+    '### Related to: "version.json schema" (score: 0.04)',
+    "[Builder report — PKT-001] Self-check passed: version.json contains {version: 1.0.0}",
+    "",
+  ].join("\n");
+
+  it("buildBuilderPrompt embeds memoryContext when provided", () => {
+    const prompt = buildBuilderPrompt(makeContract(), { memoryContext: sampleMemoryContext });
+    expect(prompt).toContain("Relevant Prior Context (from run memory)");
+    expect(prompt).toContain("version.json schema");
+  });
+
+  it("buildBuilderPrompt omits the memory section when memoryContext is empty/undefined", () => {
+    const promptUndef = buildBuilderPrompt(makeContract(), {});
+    const promptEmpty = buildBuilderPrompt(makeContract(), { memoryContext: "" });
+    const promptWhite = buildBuilderPrompt(makeContract(), { memoryContext: "   \n   " });
+    for (const p of [promptUndef, promptEmpty, promptWhite]) {
+      expect(p).not.toContain("Relevant Prior Context (from run memory)");
+    }
+  });
+
+  it("buildEvaluatorPrompt embeds memoryContext when provided", () => {
+    const prompt = buildEvaluatorPrompt(makeContract(), makeBuilderReport(), {
+      memoryContext: sampleMemoryContext,
+    });
+    expect(prompt).toContain("Relevant Prior Context (from run memory)");
+    expect(prompt).toContain("version.json schema");
+  });
+
+  it("buildEvaluatorPrompt omits the memory section when memoryContext is empty/undefined", () => {
+    const promptUndef = buildEvaluatorPrompt(makeContract(), makeBuilderReport(), {});
+    const promptEmpty = buildEvaluatorPrompt(makeContract(), makeBuilderReport(), { memoryContext: "" });
+    for (const p of [promptUndef, promptEmpty]) {
+      expect(p).not.toContain("Relevant Prior Context (from run memory)");
+    }
   });
 });
 

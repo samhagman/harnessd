@@ -51,6 +51,13 @@ export interface BuilderPromptOptions {
   researchTools?: ResearchToolAvailability;
   /** When false, suppresses search_memory guidance and memory sections. */
   enableMemory?: boolean;
+  /**
+   * Pre-injected memory context — markdown produced by queryMemoryContext()
+   * starting with `## Relevant Prior Context (from run memory)`. Populated
+   * by the orchestrator from a hybrid (vec + FTS5) search against the run's
+   * memory.db before the builder is launched.
+   */
+  memoryContext?: string;
   /** All packets from the plan (R1 + R2+), for full plan context. */
   allPackets?: PacketSummary[];
   /** Run timeline — what happened in this run up to now. Built from events.jsonl. */
@@ -128,6 +135,7 @@ export function buildBuilderPrompt(
     completedPacketIds,
     researchTools,
     enableMemory,
+    memoryContext,
     allPackets,
     runTimeline,
     packetNotes,
@@ -405,6 +413,12 @@ ${evaluatorCriteria
     sections.push(`## Specification Context
 
 ${spec}`);
+  }
+
+  if (memoryContext && memoryContext.trim().length > 0) {
+    // Already a markdown-formatted block (queryMemoryContext emits its own
+    // "## Relevant Prior Context (from run memory)" header) — push verbatim.
+    sections.push(memoryContext);
   }
 
   if (completionContexts && completionContexts.length > 0) {
