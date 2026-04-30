@@ -219,6 +219,32 @@ interface RawRow {
   score?: number;
 }
 
+/**
+ * Sanitize a free-form query string for FTS5 MATCH.
+ *
+ * FTS5 treats `- + * : " ( ) ^ ~` as syntax (NOT, OR, prefix, column, phrase,
+ * group, near). Real callers (queryMemoryContext, the search_memory MCP tool)
+ * pass strings like `PKT-001 evaluator failure` or `changes to src/memvid.ts`
+ * — the hyphens, slashes, and bare numeric tokens make FTS5's parser raise
+ * "no such column" / "syntax error near '/'", which the search() catch then
+ * silently degrades into lex-only-on-empty. Rather than degrade, we strip
+ * every meta-character, tokenize on whitespace, and rejoin as OR-of-phrases
+ * so the query stays permissive without parsing errors.
+ *
+ * Returns an empty string for queries that contain no usable tokens (the
+ * caller should treat that as "no FTS hits possible" and skip the lexical
+ * leg).
+ */
+function sanitizeFtsMatch(query: string): string | null {
+  const tokens = query
+    .replace(/["():*^+~/\\\-]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
+}
+
 // ============================================================
 // 3. RunMemory class — the ACL implementation
 // ============================================================
@@ -389,16 +415,37 @@ export class RunMemory {
     const snippetChars = opts?.snippetChars ?? 300;
     const preferSem = opts?.mode !== 'lex';
 
+    const ftsQuery = sanitizeFtsMatch(query);
+
     if (preferSem) {
       try {
         const [qVec] = await this.stack.embed([query]);
         const candidate = Math.max(50, k * 5);
+
+        if (ftsQuery === null) {
+          // No FTS-able tokens (e.g. query was all metacharacters).
+          // Vec-only — score is 1/(1+distance) so higher = better, matching
+          // the hybrid RRF score direction callers expect.
+          const rows = this.db
+            .prepare(
+              `SELECT d.id, d.title, d.label, d.text, d.tags, d.ts, d.metadata,
+                      1.0 / (1.0 + v.distance) AS score
+               FROM documents_vec v
+               JOIN documents d ON d.id = v.rowid
+               WHERE v.embedding MATCH ? AND v.k = ?
+               ORDER BY v.distance ASC
+               LIMIT ?`,
+            )
+            .all(Buffer.from(qVec.buffer), k, k) as RawRow[];
+          return rows.map((r) => this.toSearchHit(r, snippetChars));
+        }
+
         const rows = this.db
           .prepare(RunMemory.HYBRID_SQL)
           .all(
             Buffer.from(qVec.buffer),
             candidate,
-            query,
+            ftsQuery,
             candidate,
             k,
           ) as RawRow[];
@@ -420,6 +467,7 @@ export class RunMemory {
     // FTS5 bm25() returns NEGATIVE values (lower = better). Callers
     // (queryMemoryContext line ~970) sort with `b.score - a.score`, which
     // assumes higher = better. Negate so SearchHit.score is "higher = better".
+    if (ftsQuery === null) return [];
     try {
       const rows = this.db
         .prepare(
@@ -431,7 +479,7 @@ export class RunMemory {
            ORDER BY score DESC
            LIMIT ?`,
         )
-        .all(query, k) as RawRow[];
+        .all(ftsQuery, k) as RawRow[];
       return rows.map((r) => this.toSearchHit(r, snippetChars));
     } catch {
       return [];

@@ -1522,6 +1522,47 @@ describe("RunMemory — sqlite backend", () => {
     memory.close();
   });
 
+  it("FTS5 query sanitization — packet IDs and file paths don't trigger syntax errors", async () => {
+    // Guards against the FTS5 metacharacter footgun: callers (queryMemoryContext,
+    // search_memory MCP tool) pass strings like `PKT-001 evaluator` (the `-` is
+    // FTS5 NOT) and `changes to src/memvid.ts` (the `/` is invalid syntax).
+    // Without sanitization both raised "no such column: 001" / "syntax error near '/'".
+    const ctx = await makeMemory("fts-sanitize");
+    if (!ctx) { expect(ctx).toBeNull(); return; }
+    const { memory } = ctx;
+
+    await memory.encode([
+      makeSimpleDoc("Builder report PKT-001", "Implemented login form"),
+      makeSimpleDoc("memvid src module", "src/memvid.ts handles run memory"),
+      makeSimpleDoc("PKT-002 evaluator", "Evaluator findings on session"),
+    ]);
+
+    const captured: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { captured.push(args.map(String).join(" ")); };
+    try {
+      // Hyphenated packet ID — historically tripped FTS5 NOT-syntax
+      const r1 = await memory.search("PKT-001 evaluator", { k: 5, mode: "auto" });
+      // Slashed path — historically tripped FTS5 syntax-error-near-/
+      const r2 = await memory.search("changes to src/memvid.ts", { k: 5, mode: "auto" });
+      // Empty/all-meta query — must not throw, must return []
+      const r3 = await memory.search("---", { k: 5, mode: "auto" });
+
+      expect(Array.isArray(r1)).toBe(true);
+      expect(Array.isArray(r2)).toBe(true);
+      expect(Array.isArray(r3)).toBe(true);
+    } finally {
+      console.log = origLog;
+    }
+
+    const joined = captured.join("\n");
+    expect(joined).not.toContain("no such column");
+    expect(joined).not.toContain("syntax error near");
+    expect(joined).not.toContain("falling back to lex");
+
+    memory.close();
+  }, 30_000);
+
   it("optional-dep null path — createRunMemory returns null without throwing when loadStack() fails", async () => {
     // We verify the graceful-null contract: if the sqlite stack is absent,
     // createRunMemory returns null and does not throw.
