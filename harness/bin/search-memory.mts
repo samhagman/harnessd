@@ -93,7 +93,7 @@ async function main(): Promise<void> {
 
   const memory = await openRunMemory(memoryPath, repoRoot, runId);
   if (!memory) {
-    console.log(JSON.stringify({ error: "@memvid/sdk is not installed. Run: npm install @memvid/sdk" }));
+    console.log(JSON.stringify({ error: "memory backend not installed. Run: npm install (better-sqlite3, sqlite-vec, @huggingface/transformers are optional deps)" }));
     process.exit(1);
   }
 

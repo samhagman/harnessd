@@ -387,6 +387,8 @@ export async function runOrchestrator(
       }
       // non-fatal either way
     }
+    // Checkpoint WAL and release the file handle regardless of flush outcome.
+    memory.close();
   }
 
   // Final status write

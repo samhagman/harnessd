@@ -139,10 +139,11 @@ function ensureSchemasAreUpToDate(): void {
 // ------------------------------------
 
 /**
- * Wait for pending memvid writes to flush (max 10s). Non-fatal: logs a warning on timeout.
+ * Wait for pending memvid writes to flush (max 10s) then close the DB handle.
+ * Non-fatal: logs a warning on timeout but still closes to release the file handle.
  * Called before process exit in plan-only mode so memory writes aren't truncated.
  */
-async function flushMemory(memory: { waitForPendingWrites: () => Promise<void> }): Promise<void> {
+async function flushMemory(memory: { waitForPendingWrites: () => Promise<void>; close: () => void }): Promise<void> {
   try {
     await Promise.race([
       memory.waitForPendingWrites(),
@@ -156,6 +157,8 @@ async function flushMemory(memory: { waitForPendingWrites: () => Promise<void> }
       console.log("[memvid] Warning: pending writes did not flush in 10s — some memory may be lost");
     }
   }
+  // Checkpoint WAL and release the file handle regardless of flush outcome.
+  memory.close();
 }
 
 // ------------------------------------
@@ -336,7 +339,7 @@ async function main(): Promise<void> {
   // --perplexity: enable Perplexity research tools (requires PERPLEXITY_API_KEY)
   const enablePerplexity = args.includes("--perplexity");
 
-  // --no-memory: disable run memory (no .mv2 file, no search_memory tool)
+  // --no-memory: disable run memory (no .db file, no search_memory tool)
   const disableMemory = args.includes("--no-memory");
 
   // --no-context7: disable Context7 research tool

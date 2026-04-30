@@ -1,8 +1,8 @@
 /**
- * Test that the orchestrator's memvid encoding hooks actually work.
+ * Test that the orchestrator's memory encoding hooks actually work.
  *
  * Runs the happy-path scenario with FakeBackend, then checks:
- * 1. memory.mv2 file exists in the run directory
+ * 1. memory.db file exists in the run directory
  * 2. It has searchable content from each phase (planning, contract, build, eval)
  * 3. The content matches what was produced by the agents
  *
@@ -216,13 +216,13 @@ async function main() {
     assert(encodedEvents.length > 0, "Should have at least one memory.encoded event");
     console.log(`PASS: ${encodedEvents.length} memory.encoded events`);
 
-    // Check .mv2 file exists
+    // Check .db file exists
     const memoryPath = getMemoryPath(tmpDir, runId!);
-    assert(fs.existsSync(memoryPath), `memory.mv2 should exist at ${memoryPath}`);
+    assert(fs.existsSync(memoryPath), `memory.db should exist at ${memoryPath}`);
     const fileSize = fs.statSync(memoryPath).size;
-    console.log(`\nmemory.mv2 size: ${(fileSize / 1024).toFixed(1)} KB`);
-    assert(fileSize > 10000, `memory.mv2 should be >10KB, got ${fileSize}`);
-    console.log("PASS: memory.mv2 exists and has substantial data");
+    console.log(`\nmemory.db size: ${(fileSize / 1024).toFixed(1)} KB`);
+    assert(fileSize > 4096, `memory.db should be >4KB (SQLite page size), got ${fileSize}`);
+    console.log("PASS: memory.db exists and has substantial data");
 
     // Open and search
     const memory = await openRunMemory(memoryPath, tmpDir, runId!);

@@ -1,16 +1,21 @@
 /**
- * Anti-corruption layer (ACL) over @memvid/sdk.
+ * Anti-corruption layer (ACL) over the sqlite-based run-memory backend.
  *
- * This is the ONLY file in the harness that imports from @memvid/sdk.
- * All other modules import our domain types: MemvidDocument, SearchHit, etc.
+ * This is the ONLY file in the harness that imports from the storage stack:
+ *   - better-sqlite3   — synchronous SQLite driver
+ *   - sqlite-vec       — vec0 virtual table extension for KNN vector search
+ *   - @huggingface/transformers — in-process ONNX embedding pipeline
+ *
+ * All other modules import only our domain types: MemvidDocument, SearchHit, etc.
+ * The class/function/type names (RunMemory, MemvidBuffer, MemvidDocument, …) are
+ * intentionally left unchanged from the memvid era to avoid cascading renames.
  *
  * Responsibilities:
- *   - Translate MemvidDocument ↔ SDK PutManyInput/FindHit/TimelineEntry
+ *   - Embed documents with Xenova/bge-small-en-v1.5 (384-dim) and store in SQLite
+ *   - Hybrid search via RRF over sqlite-vec KNN + FTS5 BM25
  *   - Manage background write serialization via a single writeQueue
- *   - Gracefully degrade when @memvid/sdk is not installed (returns null)
+ *   - Gracefully degrade when any optional dep is absent (returns null)
  *   - Emit memory.encoded / memory.error events into the event log
- *
- * Reference: plans/iterative-waddling-pumpkin.md — Phase 1 & Phase 2
  */
 
 import fs from 'node:fs';
@@ -31,15 +36,59 @@ import { appendEvent } from './event-log.js';
 
 // ------------------------------------
 // Table of contents
+//   0. Schema DDL (SQLite tables, indexes, triggers, virtual tables)
 //   1. Domain types (our ACL boundary)
-//   2. SDK loader (dynamic import, graceful null on missing)
-//   3. ACL translation helpers
-//   4. RunMemory class
-//   5. MemvidBuffer class (micro-batch buffer for real-time encoding)
-//   6. Factory functions
-//   7. Document preparation functions
-//   8. Real-time encoding helpers (agentMessageToDocuments, promptToDocuments, etc.)
+//   2. Stack loader (dynamic import, graceful null on missing)
+//   3. RunMemory class
+//   4. MemvidBuffer class (micro-batch buffer for real-time encoding)
+//   5. Factory functions
+//   6. Document preparation functions
+//   7. Real-time encoding helpers (agentMessageToDocuments, promptToDocuments, etc.)
 // ------------------------------------
+
+// ============================================================
+// 0. Schema DDL — executed idempotently on DB open
+// ============================================================
+
+const SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS documents (
+    id        INTEGER PRIMARY KEY,
+    title     TEXT NOT NULL,
+    label     TEXT NOT NULL,
+    text      TEXT NOT NULL,
+    tags      TEXT NOT NULL,
+    ts        TEXT NOT NULL,
+    packet_id TEXT,
+    role      TEXT,
+    phase     TEXT,
+    category  TEXT NOT NULL,
+    metadata  TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_documents_ts        ON documents(ts);
+  CREATE INDEX IF NOT EXISTS idx_documents_packet_id ON documents(packet_id);
+  CREATE INDEX IF NOT EXISTS idx_documents_category  ON documents(category);
+
+  CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+    title, text,
+    content='documents',
+    content_rowid='id',
+    tokenize='porter unicode61'
+  );
+
+  CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+    INSERT INTO documents_fts(rowid, title, text)
+    VALUES (new.id, new.title, new.text);
+  END;
+  CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, text)
+    VALUES ('delete', old.id, old.title, old.text);
+  END;
+
+  CREATE VIRTUAL TABLE IF NOT EXISTS documents_vec USING vec0(
+    embedding float[384]
+  );
+`;
 
 // ============================================================
 // 1. Domain types — exported, used by orchestrator and callers
@@ -67,7 +116,7 @@ export type DocumentCategory =
 
 /**
  * Our domain representation of a document to store in run memory.
- * Never contains @memvid/sdk types.
+ * Backend-agnostic; never contains storage-layer types.
  */
 export interface MemvidDocument {
   title: string;
@@ -86,7 +135,7 @@ export interface MemvidDocument {
 
 /**
  * Our domain representation of a search result.
- * Never contains @memvid/sdk types.
+ * Backend-agnostic; never contains storage-layer types.
  */
 export interface SearchHit {
   score: number;
@@ -107,116 +156,148 @@ export interface SearchOptions {
 }
 
 // ============================================================
-// 2. SDK loader — dynamic import with graceful null
+// 2. Stack loader — dynamic import with graceful null
 // ============================================================
 
-interface SdkModule {
-  create(filename: string, kind?: string, options?: { readOnly?: boolean }): Promise<import('@memvid/sdk').Memvid>;
-  open(filename: string, kind?: string, options?: { readOnly?: boolean }): Promise<import('@memvid/sdk').Memvid>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type BetterSqlite3Database = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type BetterSqlite3Statement = any;
+
+interface SqliteStack {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Database: new (path: string) => BetterSqlite3Database;
+  loadVecExtension: (db: BetterSqlite3Database) => void;
+  embed: (texts: string[]) => Promise<Float32Array[]>;
 }
 
-let _sdkPromise: Promise<SdkModule | null> | null = null;
+let _stackPromise: Promise<SqliteStack | null> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _embedder: any = null; // pipeline instance, lazy-loaded on first embed call
 
-async function loadSdk(): Promise<SdkModule | null> {
-  if (!_sdkPromise) {
-    _sdkPromise = import('@memvid/sdk')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((mod: any) => ({
-        create: mod.create ?? mod.default?.create,
-        open: mod.open ?? mod.default?.open,
-      }) as SdkModule)
-      .catch(() => null);
+async function loadStack(): Promise<SqliteStack | null> {
+  if (!_stackPromise) {
+    _stackPromise = (async () => {
+      try {
+        const Database = (await import('better-sqlite3')).default;
+        const sqliteVec = await import('sqlite-vec');
+        const { pipeline, env } = await import('@huggingface/transformers');
+        // Allow first-run model download; cached in ~/.cache/huggingface/ after first use
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (env as any).allowRemoteModels = true;
+        return {
+          Database,
+          loadVecExtension: (db: BetterSqlite3Database) => (sqliteVec as { load: (db: unknown) => void }).load(db),
+          embed: async (texts: string[]) => {
+            if (!_embedder) {
+              _embedder = await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5');
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const out = await (_embedder as any)(texts, { pooling: 'mean', normalize: true });
+            // out.data is a flat Float32Array of length texts.length * 384
+            const dims = 384;
+            return texts.map((_, i) => (out.data as Float32Array).slice(i * dims, (i + 1) * dims));
+          },
+        };
+      } catch {
+        return null;
+      }
+    })();
   }
-  return _sdkPromise;
+  return _stackPromise;
 }
 
-// ============================================================
-// 3. ACL translation helpers (our types ↔ vendor types)
-// ============================================================
-
-/** Translate our MemvidDocument to the SDK's PutManyInput format. */
-function toPutManyInput(doc: MemvidDocument): { title: string; text: string; labels?: string[]; tags?: string[]; metadata?: Record<string, unknown> } {
-  return {
-    title: doc.title,
-    text: doc.text,
-    labels: [doc.label],
-    tags: doc.tags,
-    metadata: doc.metadata,
-  };
-}
-
-/** Translate an SDK FindHit to our SearchHit domain type. */
-function fromFindHit(h: {
-  frame_id: number;
-  uri: string;
+// Internal shape of rows returned by SQL queries
+interface RawRow {
+  id: number;
   title: string;
-  snippet: string;
-  score: number;
-  rank: number;
-  tags: string[];
-  labels: string[];
-  created_at: string;
-}): SearchHit {
-  return {
-    score: h.score,
-    title: h.title,
-    label: h.labels?.[0] ?? '',
-    text: '', // find() does not return full text; caller uses snippet
-    snippet: h.snippet,
-    metadata: {
-      frame_id: h.frame_id,
-      created_at: h.created_at,
-      tags: h.tags,
-    },
-  };
-}
-
-/** Translate an SDK TimelineEntry to our SearchHit domain type. */
-function fromTimelineEntry(e: {
-  frame_id: number;
-  uri: string;
-  timestamp: number;
-  preview: string;
-}): SearchHit {
-  return {
-    score: 0,
-    title: e.uri ?? `frame-${e.frame_id}`,
-    label: 'timeline',
-    text: e.preview,
-    snippet: e.preview,
-    metadata: {
-      frame_id: e.frame_id,
-      timestamp: e.timestamp,
-      uri: e.uri,
-    },
-  };
+  label: string;
+  text: string;
+  tags: string;
+  ts: string;
+  metadata: string;
+  score?: number;
 }
 
 // ============================================================
-// 4. RunMemory class — the ACL implementation
+// 3. RunMemory class — the ACL implementation
 // ============================================================
 
 /**
- * RunMemory manages the run's searchable memory (.mv2 file).
+ * RunMemory manages the run's searchable memory (memory.db SQLite file).
  *
  * Write operations are serialized via writeQueue — multiple rapid
  * encodeInBackground() calls queue up and execute one after another.
- * This prevents concurrent write conflicts on the .mv2 file.
+ * This prevents concurrent write conflicts on the SQLite file.
+ *
+ * The DB handle is long-lived (opened in factory, closed via close()).
+ * SQLite WAL mode allows concurrent MCP readers (memory-search-mcp.mts).
  */
 export class RunMemory {
   private writeQueue: Promise<void> = Promise.resolve();
+  private readonly db: BetterSqlite3Database;
+  private readonly stack: SqliteStack;
+  private readonly insertStmt: BetterSqlite3Statement;
+  private readonly insertVecStmt: BetterSqlite3Statement;
   private readonly memoryPath: string;
   private readonly repoRoot: string;
   private readonly runId: string;
 
-  constructor(memoryPath: string, repoRoot: string, runId: string) {
+  // Hybrid search CTE (RRF k=60). Bind order: queryVecBlob, candidate, queryString, candidate, finalK
+  private static readonly HYBRID_SQL = `
+    WITH vec_hits AS (
+      SELECT rowid, distance,
+             ROW_NUMBER() OVER (ORDER BY distance ASC) AS rank
+      FROM documents_vec
+      WHERE embedding MATCH ? AND k = ?
+    ),
+    fts_inner AS (
+      SELECT rowid, bm25(documents_fts) AS bm25_score
+      FROM documents_fts
+      WHERE documents_fts MATCH ?
+      LIMIT ?
+    ),
+    fts_hits AS (
+      SELECT rowid, bm25_score AS score,
+             ROW_NUMBER() OVER (ORDER BY bm25_score ASC) AS rank
+      FROM fts_inner
+    ),
+    fused AS (
+      SELECT rowid, SUM(1.0 / (60 + rank)) AS rrf_score
+      FROM (SELECT rowid, rank FROM vec_hits UNION ALL SELECT rowid, rank FROM fts_hits)
+      GROUP BY rowid
+    )
+    SELECT d.id, d.title, d.label, d.text, d.tags, d.ts, d.metadata,
+           f.rrf_score AS score
+    FROM fused f
+    JOIN documents d ON d.id = f.rowid
+    ORDER BY f.rrf_score DESC
+    LIMIT ?
+  `;
+
+  constructor(
+    db: BetterSqlite3Database,
+    stack: SqliteStack,
+    memoryPath: string,
+    repoRoot: string,
+    runId: string,
+  ) {
+    this.db = db;
+    this.stack = stack;
     this.memoryPath = memoryPath;
     this.repoRoot = repoRoot;
     this.runId = runId;
+    this.insertStmt = db.prepare(`
+      INSERT INTO documents (title, label, text, tags, ts, packet_id, role, phase, category, metadata)
+      VALUES (@title, @label, @text, @tags, @ts, @packetId, @role, @phase, @category, @metadata)
+    `);
+    this.insertVecStmt = db.prepare(
+      'INSERT INTO documents_vec (rowid, embedding) VALUES (?, ?)',
+    );
   }
 
   /**
-   * Encode documents into the memory file in the background (fire-and-forget).
+   * Encode documents into the memory DB in the background (fire-and-forget).
    * Errors are caught, logged, and emitted as memory.error events.
    * The run is never affected by encoding failures.
    */
@@ -225,7 +306,7 @@ export class RunMemory {
       .then(() => this.encode(docs))
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.log(`[memvid] Warning: background encoding failed: ${msg}`);
+        console.log(`[memory] Warning: background encoding failed: ${msg}`);
         try {
           appendEvent(this.repoRoot, this.runId, {
             event: 'memory.error',
@@ -238,35 +319,57 @@ export class RunMemory {
   }
 
   /**
-   * Encode documents into the memory file (awaitable).
-   * Opens the .mv2 file, appends documents, and seals.
+   * Encode documents into the memory DB (awaitable).
+   * Embeds each doc's text via the in-process ONNX pipeline, then inserts
+   * into the documents table (with FTS5 trigger) and documents_vec table.
+   * Falls back to FTS-only if the embedder is unavailable.
    */
   async encode(docs: MemvidDocument[]): Promise<void> {
     if (docs.length === 0) return;
 
-    const sdk = await loadSdk();
-    if (!sdk) return;
-
-    const requests = docs.map(toPutManyInput);
-    const options = {
-      enableEmbedding: true,
-      embeddingModel: 'bge-small',
-    };
-
-    const mem = await sdk.open(this.memoryPath, 'basic', { readOnly: false });
+    let vectors: Float32Array[] | null = null;
     try {
-      await mem.putMany(requests, options);
-      await mem.seal();
+      vectors = await this.stack.embed(docs.map((d) => d.text));
     } catch (err) {
-      // Attempt seal on error so the file is not left in an inconsistent state
-      try { await mem.seal(); } catch { /* ignore seal error */ }
-      throw err;
+      console.log(
+        `[memory] embed failed (FTS-only fallback): ${(err as Error).message}`,
+      );
+      vectors = null;
     }
+
+    // Use a transaction so all inserts (documents + vec) are atomic.
+    const insertAll = this.db.transaction(
+      (rows: MemvidDocument[], vecs: Float32Array[] | null) => {
+        rows.forEach((doc, i) => {
+          const r = this.insertStmt.run({
+            title:    doc.title,
+            label:    doc.label,
+            text:     doc.text,
+            tags:     doc.tags.join(','),
+            ts:       String(doc.metadata.ts),
+            packetId: (doc.metadata.packetId ?? null) as string | null,
+            role:     (doc.metadata.role ?? null) as string | null,
+            phase:    (doc.metadata.phase ?? null) as string | null,
+            category: doc.metadata.category,
+            metadata: JSON.stringify(doc.metadata),
+          });
+          if (vecs) {
+            // sqlite-vec vec0 requires BigInt rowid values
+            this.insertVecStmt.run(
+              BigInt(r.lastInsertRowid),
+              Buffer.from(vecs[i].buffer),
+            );
+          }
+        });
+      },
+    );
+
+    await Promise.resolve(insertAll(docs, vectors));
 
     try {
       appendEvent(this.repoRoot, this.runId, {
         event: 'memory.encoded',
-        detail: `${docs.length} document(s) encoded into memory`,
+        detail: `${docs.length} document(s) encoded`,
       });
     } catch {
       // Event log failure should not abort encoding
@@ -275,43 +378,62 @@ export class RunMemory {
 
   /**
    * Search the memory for documents matching a query.
-   * Returns empty array if the .mv2 file does not exist or search fails.
+   * Uses hybrid (semantic + lexical RRF) when mode is 'auto' or 'sem'.
+   * Falls back to lexical-only (FTS5 BM25) when semantic is unavailable or mode is 'lex'.
+   * Returns empty array if the DB does not exist or search fails.
    */
   async search(query: string, opts?: SearchOptions): Promise<SearchHit[]> {
     if (!fs.existsSync(this.memoryPath)) return [];
 
-    const sdk = await loadSdk();
-    if (!sdk) return [];
-
-    const mem = await sdk.open(this.memoryPath, 'basic', { readOnly: true });
-
-    // SDK mode mapping: our 'auto' and 'sem' both use SDK's 'sem' mode which
-    // gives hybrid search (lexical + semantic reranking) when queryEmbeddingModel
-    // is provided. SDK's 'auto' mode only does lexical search despite the name.
+    const k = opts?.k ?? 5;
+    const snippetChars = opts?.snippetChars ?? 300;
     const preferSem = opts?.mode !== 'lex';
-    try {
-      const result = await mem.find(query, {
-        mode: preferSem ? 'sem' : 'lex',
-        k: opts?.k ?? 5,
-        snippetChars: opts?.snippetChars ?? 300,
-        queryEmbeddingModel: preferSem ? 'bge-small' : undefined,
-      });
-      return result.hits.map(fromFindHit);
-    } catch (err) {
-      // Vec index may not exist yet (empty memory or only lex-indexed data).
-      // Fall back to lexical search before giving up.
-      if (preferSem && String(err).includes('index')) {
-        try {
-          const lexResult = await mem.find(query, {
-            mode: 'lex',
-            k: opts?.k ?? 5,
-            snippetChars: opts?.snippetChars ?? 300,
-          });
-          return lexResult.hits.map(fromFindHit);
-        } catch {
-          return [];
+
+    if (preferSem) {
+      try {
+        const [qVec] = await this.stack.embed([query]);
+        const candidate = Math.max(50, k * 5);
+        const rows = this.db
+          .prepare(RunMemory.HYBRID_SQL)
+          .all(
+            Buffer.from(qVec.buffer),
+            candidate,
+            query,
+            candidate,
+            k,
+          ) as RawRow[];
+        return rows.map((r) => this.toSearchHit(r, snippetChars));
+      } catch (err) {
+        // Graceful degrade: fall through to lexical path
+        if (
+          !String(err).includes('no rows') &&
+          !String(err).includes('embed')
+        ) {
+          console.log(
+            `[memory] semantic search error, falling back to lex: ${(err as Error).message}`,
+          );
         }
       }
+    }
+
+    // Lexical-only path (also reached on semantic failure or mode='lex').
+    // FTS5 bm25() returns NEGATIVE values (lower = better). Callers
+    // (queryMemoryContext line ~970) sort with `b.score - a.score`, which
+    // assumes higher = better. Negate so SearchHit.score is "higher = better".
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT d.id, d.title, d.label, d.text, d.tags, d.ts, d.metadata,
+                  -bm25(documents_fts) AS score
+           FROM documents_fts
+           JOIN documents d ON d.id = documents_fts.rowid
+           WHERE documents_fts MATCH ?
+           ORDER BY score DESC
+           LIMIT ?`,
+        )
+        .all(query, k) as RawRow[];
+      return rows.map((r) => this.toSearchHit(r, snippetChars));
+    } catch {
       return [];
     }
   }
@@ -327,17 +449,26 @@ export class RunMemory {
   }): Promise<SearchHit[]> {
     if (!fs.existsSync(this.memoryPath)) return [];
 
-    const sdk = await loadSdk();
-    if (!sdk) return [];
+    const limit = opts?.limit ?? 50;
+    const since = opts?.since != null ? new Date(opts.since).toISOString() : null;
+    const until = opts?.until != null ? new Date(opts.until).toISOString() : null;
 
-    const mem = await sdk.open(this.memoryPath, 'basic', { readOnly: true });
-    const entries = await mem.timeline({
-      since: opts?.since,
-      until: opts?.until,
-      limit: opts?.limit ?? 50,
-    });
+    const whereParts: string[] = [];
+    const params: unknown[] = [];
+    if (since) { whereParts.push('ts >= ?'); params.push(since); }
+    if (until) { whereParts.push('ts <= ?'); params.push(until); }
+    const whereClause = whereParts.length > 0 ? 'WHERE ' + whereParts.join(' AND ') : '';
 
-    return entries.map(fromTimelineEntry);
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, label, text, tags, ts, metadata
+         FROM documents
+         ${whereClause}
+         ORDER BY ts ASC
+         LIMIT ?`,
+      )
+      .all(...params, limit) as RawRow[];
+    return rows.map((r) => this.toSearchHit(r, 200));
   }
 
   /**
@@ -347,10 +478,31 @@ export class RunMemory {
   async waitForPendingWrites(): Promise<void> {
     await this.writeQueue;
   }
+
+  /**
+   * Flush WAL and close the DB handle.
+   * NEW method — call from orchestrator at run end (after waitForPendingWrites).
+   * Safe to call from SIGINT/SIGTERM signal handlers (synchronous).
+   */
+  close(): void {
+    try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }
+    try { this.db.close(); } catch { /* ignore */ }
+  }
+
+  private toSearchHit(r: RawRow, snippetChars: number): SearchHit {
+    return {
+      score: r.score ?? 0,
+      title: r.title,
+      label: r.label,
+      text: '',
+      snippet: r.text.slice(0, snippetChars),
+      metadata: { ...JSON.parse(r.metadata), tags: r.tags.split(',') },
+    };
+  }
 }
 
 // ============================================================
-// 5. MemvidBuffer class — micro-batch buffer for real-time encoding
+// 4. MemvidBuffer class — micro-batch buffer for real-time encoding
 // ============================================================
 
 /**
@@ -431,76 +583,86 @@ export class MemvidBuffer {
 }
 
 // ============================================================
-// 6. Factory functions
+// 5. Factory functions
 // ============================================================
 
 /**
- * Derive the canonical .mv2 path for a run.
+ * Derive the canonical memory DB path for a run.
  *
  * @example
  * getMemoryPath('/repo', 'my-run')
- * // → /repo/.harnessd/runs/my-run/memory.mv2
+ * // → /repo/.harnessd/runs/my-run/memory.db
  */
 export function getMemoryPath(repoRoot: string, runId: string): string {
-  return path.join(repoRoot, '.harnessd', 'runs', runId, 'memory.mv2');
+  return path.join(repoRoot, '.harnessd', 'runs', runId, 'memory.db');
 }
 
 /**
- * Create a new memory file for a run.
+ * Create a new memory DB for a run.
  * Overwrites any existing file at the path.
- * Returns null if @memvid/sdk is not installed.
+ * Returns null if any required optional dependency is not installed.
  */
 export async function createRunMemory(
   memoryPath: string,
   repoRoot: string,
   runId: string,
 ): Promise<RunMemory | null> {
-  const sdk = await loadSdk();
-  if (!sdk) {
-    console.log('[memvid] @memvid/sdk not installed, memory features disabled');
+  const stack = await loadStack();
+  if (!stack) {
+    console.log('[memory] sqlite stack not installed, memory features disabled');
     return null;
   }
 
-  // create() initializes a fresh .mv2 file (overwrites if exists)
-  const mem = await sdk.create(memoryPath, 'basic');
-  await mem.enableLex();
-  await mem.seal();
+  try {
+    // Ensure parent directory exists
+    fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
+    // Fresh start — delete any existing DB (no migration; memory is augmentation)
+    if (fs.existsSync(memoryPath)) fs.unlinkSync(memoryPath);
 
-  return new RunMemory(memoryPath, repoRoot, runId);
+    const db = new stack.Database(memoryPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
+    stack.loadVecExtension(db);
+    db.exec(SCHEMA_DDL);
+
+    return new RunMemory(db, stack, memoryPath, repoRoot, runId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[memory] could not create memory DB: ${msg}`);
+    return null;
+  }
 }
 
 /**
- * Open an existing memory file for a run (e.g., on resume).
- * Returns null if the file doesn't exist or @memvid/sdk is not installed.
+ * Open an existing memory DB for a run (e.g., on resume).
+ * Returns null if the file doesn't exist or any required dep is not installed.
  */
 export async function openRunMemory(
   memoryPath: string,
   repoRoot: string,
   runId: string,
 ): Promise<RunMemory | null> {
-  const sdk = await loadSdk();
-  if (!sdk) {
-    console.log('[memvid] @memvid/sdk not installed, memory features disabled');
-    return null;
-  }
-
-  if (!fs.existsSync(memoryPath)) {
-    return null;
-  }
+  const stack = await loadStack();
+  if (!stack) return null;
+  if (!fs.existsSync(memoryPath)) return null;
 
   try {
-    // Verify the file is openable before returning the RunMemory instance
-    await sdk.open(memoryPath, 'basic', { readOnly: true });
-    return new RunMemory(memoryPath, repoRoot, runId);
+    const db = new stack.Database(memoryPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
+    stack.loadVecExtension(db);
+    // Idempotent: ensures schema is current even if file was created by an older build
+    db.exec(SCHEMA_DDL);
+    return new RunMemory(db, stack, memoryPath, repoRoot, runId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(`[memvid] Warning: could not open existing memory file: ${msg}`);
+    console.log(`[memory] could not open existing memory DB: ${msg}`);
     return null;
   }
 }
 
 // ============================================================
-// 7. Document preparation functions
+// 6. Document preparation functions
 //    One per artifact type. Each returns MemvidDocument(s) with
 //    rich titles, tags, and metadata for retrieval quality.
 // ============================================================
@@ -1112,7 +1274,7 @@ export function completionContextToDocument(
 }
 
 // ============================================================
-// 8. Real-time encoding helpers
+// 7. Real-time encoding helpers
 //    Convert live agent messages and operator inputs into
 //    MemvidDocuments for per-turn exhaustive encoding.
 // ============================================================

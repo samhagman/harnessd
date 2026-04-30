@@ -1,6 +1,6 @@
 /**
- * Live integration test for memvid — exercises the full pipeline.
- * Requires @memvid/sdk to be installed.
+ * Live integration test for memvid — exercises the full sqlite-vec + FTS5 pipeline.
+ * Requires better-sqlite3, sqlite-vec, and @huggingface/transformers to be installed.
  *
  * Run: cd harness && npx tsx src/test/live/memvid-live.ts
  */
@@ -38,7 +38,7 @@ async function setup(): Promise<{ memoryPath: string; repoRoot: string; runId: s
   fs.mkdirSync(path.join(runDir, "spec"), { recursive: true });
   // Create events.jsonl so appendEvent doesn't fail
   fs.writeFileSync(path.join(runDir, "events.jsonl"), "");
-  const memoryPath = path.join(runDir, "memory.mv2");
+  const memoryPath = path.join(runDir, "memory.db");
   return { memoryPath, repoRoot: tmpDir, runId };
 }
 
@@ -48,8 +48,8 @@ async function main() {
   // ──────────────────────────────────────────────────────
   console.log("=== Test 1: Create RunMemory ===");
   const memory = await createRunMemory(memoryPath, repoRoot, runId);
-  assert(memory !== null, "createRunMemory returned null — is @memvid/sdk installed?");
-  assert(fs.existsSync(memoryPath), ".mv2 file should exist on disk");
+  assert(memory !== null, "createRunMemory returned null — is better-sqlite3/sqlite-vec installed?");
+  assert(fs.existsSync(memoryPath), ".db file should exist on disk");
   console.log("PASS: RunMemory created");
 
   // ──────────────────────────────────────────────────────

@@ -3,17 +3,17 @@
  * MCP stdio server exposing the `memory_search` tool.
  *
  * Codex agents that support MCP server registration use this to search the
- * run's semantic memory (.mv2 file) for context from prior packets, evaluator
- * findings, decisions, and agent sessions.
+ * run's semantic memory (.db SQLite file) for context from prior packets,
+ * evaluator findings, decisions, and agent sessions.
  *
  * Usage (launched by Codex via -c mcp_servers.<name>.command):
  *   tsx /abs/path/to/harness/bin/memory-search-mcp.mts
  *
  * Environment variables (required):
- *   HARNESSD_MEMVID_PATH     Absolute path to the run's .mv2 memory file.
- *                            e.g. /repo/.harnessd/runs/my-run/memory.mv2
+ *   HARNESSD_MEMVID_PATH     Absolute path to the run's .db memory file.
+ *                            e.g. /repo/.harnessd/runs/my-run/memory.db
  *
- * When the memory file does not exist or @memvid/sdk is not installed,
+ * When the memory file does not exist or the sqlite stack is not installed,
  * memory_search returns an empty result set rather than failing.
  *
  * Each tool invocation is bounded to 30 seconds (Phase 3 nudge latency bound).
@@ -83,7 +83,7 @@ server.registerTool(
               type: "text" as const,
               text: JSON.stringify({
                 results: [],
-                message: "Memory is not available. Either @memvid/sdk is not installed or the memory file has not been created yet.",
+                message: "Memory is not available. Either the sqlite memory backend is not installed or the memory file has not been created yet.",
               }),
             },
           ],

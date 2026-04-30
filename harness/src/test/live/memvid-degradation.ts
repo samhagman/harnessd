@@ -63,13 +63,13 @@ async function main() {
     assert(context === undefined, "queryMemoryContext(null, ...) should return undefined");
     console.log("PASS: queryMemoryContext returns undefined when memory is null");
 
-    console.log("\n=== Test 2: Non-existent .mv2 file ===");
+    console.log("\n=== Test 2: Non-existent .db file ===");
     const runDir = path.join(tmpDir, ".harnessd", "runs", "fake-run");
     fs.mkdirSync(runDir, { recursive: true });
     fs.writeFileSync(path.join(runDir, "events.jsonl"), "");
 
     const memPath = getMemoryPath(tmpDir, "fake-run");
-    assert(!fs.existsSync(memPath), ".mv2 should not exist yet");
+    assert(!fs.existsSync(memPath), ".db should not exist yet");
 
     // createRunMemory should create it (SDK is installed)
     const memory = await createRunMemory(memPath, tmpDir, "fake-run");

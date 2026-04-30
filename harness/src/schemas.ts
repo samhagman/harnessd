@@ -813,7 +813,7 @@ export const ProjectConfigSchema = z.object({
     context7: z.boolean().default(true),
     perplexity: z.boolean().default(false),
   }).default({ context7: true, perplexity: false }),
-  /** Enable run memory (memvid). When false, no .mv2 file is created, search_memory is not available, and memory sections are omitted from prompts. */
+  /** Enable run memory (sqlite-vec + FTS5). When false, no .db file is created, search_memory is not available, and memory sections are omitted from prompts. */
   enableMemory: z.boolean().default(false),
 });
 
