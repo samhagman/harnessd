@@ -1,7 +1,3 @@
-/**
- * Unit tests for worker.ts — envelope extraction and parsing.
- */
-
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -15,14 +11,7 @@ import {
   runWorker,
 } from "../../worker.js";
 import { FakeBackend } from "../../backend/fake-backend.js";
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../../schemas.js";
-
-// ------------------------------------
-// extractEnvelope
-// ------------------------------------
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../../schemas.js";
 
 describe("extractEnvelope", () => {
   it("extracts JSON from between valid sentinel markers", () => {
@@ -131,10 +120,6 @@ describe("extractEnvelope", () => {
   });
 });
 
-// ------------------------------------
-// parseEnvelopePayload
-// ------------------------------------
-
 describe("parseEnvelopePayload", () => {
   it("parses valid JSON matching schema", () => {
     const schema = z.object({
@@ -188,10 +173,6 @@ describe("parseEnvelopePayload", () => {
   });
 });
 
-// ------------------------------------
-// runWorker — resumeFailed propagation
-// ------------------------------------
-
 describe("runWorker — resumeFailed flag", () => {
   it("surfaces the resumeFailed flag when the backend emits error_resume_failed", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "harnessd-worker-"));
@@ -243,10 +224,6 @@ describe("runWorker — resumeFailed flag", () => {
     expect(result.hadError).toBe(false);
   });
 });
-
-// ------------------------------------
-// runWorker — api_retry_storm event
-// ------------------------------------
 
 describe("runWorker — api_retry_storm", () => {
   it("emits worker.api_retry_storm on the 3rd consecutive api_retry event", async () => {
@@ -372,10 +349,6 @@ describe("runWorker — api_retry_storm", () => {
     expect(stormEvents).toHaveLength(1);
   });
 });
-
-// ------------------------------------
-// resolveEnvelope — layered discovery (staged > delimiters > fence_fallback)
-// ------------------------------------
 
 describe("resolveEnvelope", () => {
   function makeStaged(dir: string, body: unknown, validatedAt?: string): string {
@@ -503,10 +476,6 @@ describe("resolveEnvelope", () => {
     expect(result!.source).toBe("delimiters");
   });
 });
-
-// ------------------------------------
-// runWorker — staged-envelope.json integration + drift telemetry
-// ------------------------------------
 
 describe("runWorker — envelope source telemetry", () => {
   it("sets envelopeSource='delimiters' on a normal delimited envelope", async () => {

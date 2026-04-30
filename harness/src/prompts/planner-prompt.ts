@@ -7,20 +7,17 @@
  * Reference: TAD sections 9, 18
  */
 
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import type { PlanningContext } from "../schemas.js";
+import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
 import {
+  type BackendCapabilities,
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
   buildResearchToolsSection,
 } from "./shared.js";
-import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
-import type { BackendCapabilities } from "./builder-prompt.js";
 
 export function buildPlannerPrompt(
   objective: string,
@@ -35,15 +32,12 @@ export function buildPlannerPrompt(
   const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
   const sections: string[] = [];
 
-  // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0b. Harness pipeline context + memory search guidance
   // (round 1 only — round 2+ uses buildRound2PlannerPrompt which handles its own context)
   sections.push(buildHarnessContextSection("planner", { round: 1, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("planner", enableMemory));
 
-  // 1. Role
   const researchRule = researchTools?.perplexity
     ? `3. You HAVE web search tools (Perplexity + Context7). USE THEM to research before planning.`
     : researchTools?.context7
@@ -66,7 +60,6 @@ ${researchRule}
 5. Do NOT try to create plan files, write markdown files, or spawn subagents.
 6. Think through the design, then emit the envelope. That's it.`);
 
-  // 1b. Research phase section (dynamic based on tool availability)
   const researchPhase = buildResearchToolsSection(
     researchTools ?? DEFAULT_RESEARCH_TOOLS,
     "planner",
@@ -75,12 +68,10 @@ ${researchRule}
     sections.push(`## Research Phase (DO THIS FIRST)\n\nBefore planning, use your research tools to investigate:\n- **Domain context**: Look up the subject matter of the objective. If building for a museum, research that museum. If building an API, research best practices for that API domain.\n- **Design inspiration**: For UI work, search for best-in-class examples in the domain. What do the best websites in this category look like? What patterns do they use?\n- **Technical best practices**: Search for current best practices, recommended libraries, and common patterns for the tech stack involved.\n\n${researchPhase}`);
   }
 
-  // 1b. Mandatory validate_envelope gate (only when MCP is available)
   if (supportsMcp) {
     sections.push(buildValidateEnvelopeSection("PlannerOutput"));
   }
 
-  // 2. Planning constraints
   sections.push(`## Planning Constraints
 
 - Stay at product + high-level technical design level
@@ -97,7 +88,6 @@ ${researchRule}
 - Explicitly separate product outcomes from implementation guesses
 - Identify risks early`);
 
-  // 2b. Vertical slicing discipline — the single most important planning rule
   sections.push(`## Slice Vertically, Not Horizontally
 
 The #1 planner failure mode is horizontal slicing: packets like "install library" → "scaffold all files" → "migrate layer A" → "migrate layer B" → "wire everything up and verify at the end". This looks organized but is dangerous: nothing is proven end-to-end until the final packet, integration bugs accumulate silently, and the architecture gets validated only after it's been committed to across the whole codebase. Builders downstream also lose the signal that "the pipeline works" — every packet feels like building in the dark.
@@ -156,14 +146,12 @@ Do:
 
 Each packet has a browser-verifiable outcome. Each packet is independently shippable. Risks surface at packet 1, not packet 7.`);
 
-  // 3. Repo context
   if (repoContext) {
     sections.push(`## Repository Context
 
 ${repoContext}`);
   }
 
-  // 4. Prior run context
   if (priorRunContext) {
     sections.push(`## Prior Run Context
 
@@ -172,7 +160,6 @@ This is a re-planning triggered by issues in a prior run:
 ${priorRunContext}`);
   }
 
-  // 4b. Planning context from operator interview
   if (planningContext) {
     const parts: string[] = [];
     if (planningContext.vision) parts.push(`**Vision:** ${planningContext.vision}`);
@@ -197,7 +184,6 @@ ${parts.join("\n\n")}`);
     }
   }
 
-  // 4c. requiresHumanReview guidance
   sections.push(`## Packet Gates (requiresHumanReview)
 
 Each packet has a \`requiresHumanReview\` boolean field (default: false).
@@ -209,7 +195,6 @@ Set this to \`true\` for packets that:
 
 The operator can toggle this during plan review.`);
 
-  // 4d. Dev server discovery
   sections.push(`## Dev Server Discovery
 
 Examine the project's package.json scripts to identify how to start the development server.
@@ -238,7 +223,6 @@ If the test fails, adjust the command/ports and try again.
 
 Include the verified devServer config in your output envelope.`);
 
-  // 5. Required outputs
   sections.push(`## Required Outputs
 
 You must produce ALL of the following in your structured output:
@@ -345,7 +329,6 @@ Example:
 Generate at least one integration scenario for every multi-view or multi-step feature.
 If the project is simple with no cross-packet flows, return \`{ "scenarios": [] }\`.`);
 
-  // 6. Packet type guidance
   sections.push(`## Packet Type Reference
 
 Choose the most appropriate type for each packet:
@@ -358,7 +341,6 @@ Choose the most appropriate type for each packet:
 - **integration** — connect multiple components (requires end-to-end scenario)
 - **tooling** — dev tools, scripts, CI (requires usage proof). ⚠ Horizontal by nature. Should be <10% of the plan. Fold into the first vertical packet that consumes it whenever possible; only stand alone if it's a time-boxed spike answering a specific question.`);
 
-  // 7. Output format — conditional on whether the backend supports structured output schema
   const EXAMPLE_JSON = `{
   "spec": "(your full SPEC.md content as a string)",
   "packets": [

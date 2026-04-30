@@ -11,18 +11,9 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-# Harness uses its own dir as repoRoot (cwd), so check both locations
-if [[ -d "$HARNESS_DIR/.harnessd/runs" ]]; then
-  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
-elif [[ -d "$REPO_ROOT/.harnessd/runs" ]]; then
-  RUNS_DIR="$REPO_ROOT/.harnessd/runs"
-else
-  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
-fi
 
-# ------------------------------------
-# Parse arguments
-# ------------------------------------
+# shellcheck source=./_lib.sh
+source "$HARNESS_DIR/_lib.sh"
 
 FORMAT="md"
 WATCH=false
@@ -43,57 +34,25 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "Unknown option: $1"
-      echo "Usage: ./status.sh [--json] [--watch] [--run-id ID]"
+      echo "Unknown option: $1" >&2
+      echo "Usage: ./status.sh [--json] [--watch] [--run-id ID]" >&2
       exit 1
       ;;
   esac
 done
 
-# ------------------------------------
-# Find run directory
-# ------------------------------------
-
-find_latest_run() {
-  if [[ ! -d "$RUNS_DIR" ]]; then
-    echo ""
-    return
-  fi
-  # Find the most recently modified run directory (any name, must have run.json)
-  local best=""
-  local best_time=0
-  for dir in "$RUNS_DIR"/*/; do
-    if [[ -f "${dir}run.json" ]]; then
-      local mtime
-      mtime=$(stat -f %m "${dir}run.json" 2>/dev/null || stat -c %Y "${dir}run.json" 2>/dev/null || echo 0)
-      if (( mtime > best_time )); then
-        best_time=$mtime
-        best="$(basename "${dir%/}")"
-      fi
-    fi
-  done
-  echo "$best"
-}
-
-if [[ -z "$RUN_ID" ]]; then
-  RUN_ID="$(find_latest_run)"
+if [[ -n "$RUN_ID" ]]; then
+  RUN_DIR="$(resolve_run_dir "$HARNESS_DIR" "$REPO_ROOT" "$RUN_ID")" || {
+    echo "Run not found: $RUN_ID" >&2
+    exit 1
+  }
+else
+  RUN_DIR="$(find_latest_run_dir "$HARNESS_DIR" "$REPO_ROOT")" || {
+    echo "No runs found" >&2
+    exit 1
+  }
+  RUN_ID="$(basename "$RUN_DIR")"
 fi
-
-if [[ -z "$RUN_ID" ]]; then
-  echo "No runs found in $RUNS_DIR"
-  exit 1
-fi
-
-RUN_DIR="$RUNS_DIR/$RUN_ID"
-
-if [[ ! -d "$RUN_DIR" ]]; then
-  echo "Run not found: $RUN_DIR"
-  exit 1
-fi
-
-# ------------------------------------
-# Status file path
-# ------------------------------------
 
 if [[ "$FORMAT" == "json" ]]; then
   STATUS_FILE="$RUN_DIR/status.json"
@@ -102,17 +61,13 @@ else
 fi
 
 if [[ ! -f "$STATUS_FILE" ]]; then
-  echo "Status file not found: $STATUS_FILE"
+  echo "Status file not found: $STATUS_FILE" >&2
   exit 1
 fi
 
-# ------------------------------------
-# Display
-# ------------------------------------
-
 print_status() {
   if [[ "$FORMAT" == "json" ]]; then
-    cat "$STATUS_FILE" | python3 -m json.tool 2>/dev/null || cat "$STATUS_FILE"
+    python3 -m json.tool "$STATUS_FILE" 2>/dev/null || cat "$STATUS_FILE"
   else
     cat "$STATUS_FILE"
   fi

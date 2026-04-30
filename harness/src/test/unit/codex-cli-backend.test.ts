@@ -1,21 +1,9 @@
-/**
- * Unit tests for CodexCliBackend, BackendFactory, and JSONL parsing.
- */
-
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import {
-  parseCodexLine,
-  buildCodexArgs,
-  CodexCliBackend,
-} from "../../backend/codex-cli.js";
+import { parseCodexLine, buildCodexArgs, CodexCliBackend } from "../../backend/codex-cli.js";
 import { BackendFactory } from "../../backend/backend-factory.js";
 import { FakeBackend } from "../../backend/fake-backend.js";
 import type { AgentSessionOptions } from "../../backend/types.js";
-
-// ------------------------------------
-// parseCodexLine
-// ------------------------------------
 
 describe("parseCodexLine", () => {
   it("parses a session.created event into system init message", () => {
@@ -168,8 +156,7 @@ describe("parseCodexLine", () => {
   });
 
   it("returns null for events without a type field", () => {
-    const line = JSON.stringify({ data: "no type field" });
-    expect(parseCodexLine(line)).toBeNull();
+    expect(parseCodexLine(JSON.stringify({ data: "no type field" }))).toBeNull();
   });
 
   it("skips non-assistant role messages", () => {
@@ -204,10 +191,6 @@ describe("parseCodexLine", () => {
     expect(msg!.text).toBe("Part one Part two");
   });
 });
-
-// ------------------------------------
-// buildCodexArgs
-// ------------------------------------
 
 describe("buildCodexArgs", () => {
   const baseOpts: AgentSessionOptions = {
@@ -290,10 +273,6 @@ describe("buildCodexArgs", () => {
   });
 });
 
-// ------------------------------------
-// CodexCliBackend — queueNudge / abortSession / getLastSessionId
-// ------------------------------------
-
 describe("CodexCliBackend", () => {
   it("queueNudge returns { handled: false } when no active session", () => {
     const backend = new CodexCliBackend();
@@ -327,44 +306,24 @@ describe("CodexCliBackend", () => {
   });
 });
 
-// ------------------------------------
-// CodexCliBackend — runSession with mocked child process
-// ------------------------------------
-
 describe("CodexCliBackend.runSession (mocked spawn)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("parses JSONL stream and yields AgentMessages", async () => {
-    // This test validates the JSONL → AgentMessage pipeline end-to-end
-    // using parseCodexLine (the core logic) rather than spawning a real process.
     const lines = [
       JSON.stringify({ type: "session.created", session_id: "test-sess-001" }),
-      JSON.stringify({
-        type: "item.completed",
-        item: { type: "agent_message", role: "assistant", text: "I analyzed the code." },
-      }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", role: "assistant", text: "I analyzed the code." } }),
       JSON.stringify({ type: "turn.completed", usage: { total_cost: 0.01 } }),
-      // Non-JSON line (should be skipped)
-      "some debug output",
+      "some debug output", // non-JSON line, should be skipped
       JSON.stringify({
         type: "item.completed",
-        item: {
-          type: "agent_message",
-          role: "assistant",
-          text: "===HARNESSD_RESULT_START===\n{\"role\":\"evaluator\"}\n===HARNESSD_RESULT_END===",
-        },
+        item: { type: "agent_message", role: "assistant", text: "===HARNESSD_RESULT_START===\n{\"role\":\"evaluator\"}\n===HARNESSD_RESULT_END===" },
       }),
     ];
 
-    const messages: (import("../../backend/types.js").AgentMessage | null)[] = [];
-    for (const line of lines) {
-      messages.push(parseCodexLine(line));
-    }
-
-    // Filter nulls
-    const parsed = messages.filter((m) => m !== null);
+    const parsed = lines.map((l) => parseCodexLine(l)).filter((m) => m !== null);
     expect(parsed).toHaveLength(4);
 
     expect(parsed[0].type).toBe("system");
@@ -382,15 +341,10 @@ describe("CodexCliBackend.runSession (mocked spawn)", () => {
   });
 });
 
-// ------------------------------------
-// CodexCliBackend — abort sends SIGTERM
-// ------------------------------------
-
 describe("CodexCliBackend.abortSession (with mock child)", () => {
   it("sends SIGTERM to active child process", () => {
     const backend = new CodexCliBackend();
 
-    // Simulate an active child process
     const fakeChild = {
       killed: false,
       kill: vi.fn(() => {
@@ -425,10 +379,6 @@ describe("CodexCliBackend.abortSession (with mock child)", () => {
     expect(fakeChild.kill).not.toHaveBeenCalled();
   });
 });
-
-// ------------------------------------
-// CodexCliBackend — queueNudge abort+resume (Phase 3)
-// ------------------------------------
 
 describe("CodexCliBackend.queueNudge (abort+resume)", () => {
   it("sends SIGTERM and returns abort-resume outcome when session is active", () => {
@@ -503,10 +453,6 @@ describe("CodexCliBackend.queueNudge (abort+resume)", () => {
   });
 });
 
-// ------------------------------------
-// BackendFactory
-// ------------------------------------
-
 describe("BackendFactory", () => {
   it("returns claude backend for roles not in roleBackends map", () => {
     const claude = FakeBackend.success("claude response");
@@ -576,10 +522,6 @@ describe("BackendFactory", () => {
     expect(factory.forRole("some_future_role")).toBe(claude);
   });
 });
-
-// ------------------------------------
-// buildCodexArgs — MCP flag generation (Phase 2 part 2)
-// ------------------------------------
 
 describe("buildCodexArgs — MCP server flag generation", () => {
   const baseOpts: AgentSessionOptions = {
@@ -655,10 +597,6 @@ describe("buildCodexArgs — MCP server flag generation", () => {
   });
 });
 
-// ------------------------------------
-// buildCodexArgs — output schema flag (Phase 4 part 2)
-// ------------------------------------
-
 describe("buildCodexArgs — output schema flag", () => {
   const baseOpts: AgentSessionOptions = {
     prompt: "test",
@@ -687,10 +625,6 @@ describe("buildCodexArgs — output schema flag", () => {
     expect(args).not.toContain("--output-schema");
   });
 });
-
-// ------------------------------------
-// parseCodexLine — final_answer envelope synthesis (Phase 4 part 2)
-// ------------------------------------
 
 describe("parseCodexLine — final_answer item synthesis", () => {
   it("synthesizes envelope sentinels from item.completed with final_answer type", () => {
@@ -774,10 +708,6 @@ describe("parseCodexLine — final_answer item synthesis", () => {
     expect(msg!.text).not.toContain("===HARNESSD_RESULT_START===");
   });
 });
-
-// ------------------------------------
-// CodexCliBackend.supportsOutputSchema
-// ------------------------------------
 
 describe("CodexCliBackend.supportsOutputSchema", () => {
   it("returns true", () => {

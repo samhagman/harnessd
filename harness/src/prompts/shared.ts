@@ -5,18 +5,46 @@
  * and ensure behaviorally-identical text is never accidentally diverged.
  *
  * Table of contents:
- * 1. AUTONOMOUS_PREAMBLE
- * 2. CONTINUATION_PROMPT
- * 3. buildValidateEnvelopeSection
- * 4. buildDevServerSetupSection
- * 5. buildHarnessContextSection  — where the agent sits in the pipeline
- * 6. buildMemorySearchSection    — how to use search_memory effectively
- * 7. buildResearchToolsSection   — dynamic research tool instructions
- * 8. buildVerificationFanoutSection — parallel sub-agent guidance for verifier roles
+ * 1. BackendCapabilities
+ * 2. AUTONOMOUS_PREAMBLE
+ * 3. CONTINUATION_PROMPT
+ * 4. buildValidateEnvelopeSection
+ * 5. buildPrimaryFilingNote        — validate_envelope is the primary filing mechanism
+ * 6. buildDevServerSetupSection
+ * 7. buildHarnessContextSection    — where the agent sits in the pipeline
+ * 8. buildMemorySearchSection      — how to use search_memory effectively
+ * 9. buildResearchToolsSection     — dynamic research tool instructions
+ * 10. buildVerificationFanoutSection — parallel sub-agent guidance for verifier roles
  */
 
 import type { DevServerConfig } from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import type { ResearchToolAvailability } from "../research-tools.js";
+
+// ---------------------------------------------------------------------------
+// BackendCapabilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Backend capability hints for prompt adaptation.
+ *
+ * When absent, prompts default to Claude-flavored behavior (envelope sentinels,
+ * validate_envelope MCP section, Task tool sub-agent guidance). Pass this when
+ * the backend differs from Claude so the prompt guides the agent correctly.
+ *
+ * - `supportsMcpServers`: when true, include the validate_envelope MCP tool
+ *   section and gate_check MCP tool guidance. Used as the proxy for
+ *   "Claude-flavored" — only Claude has both in-process MCP and the Task tool.
+ * - `nudgeStrategy`: when "abort-resume", add a paragraph warning that nudges
+ *   will interrupt the current turn and the agent should write progress to disk.
+ * - `supportsOutputSchema`: when true, replace envelope sentinel instructions
+ *   with "emit as structured JSON matching the output schema."
+ */
+export interface BackendCapabilities {
+  supportsMcpServers: boolean;
+  nudgeStrategy: "stream" | "abort-resume" | "none";
+  supportsOutputSchema?: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // AUTONOMOUS_PREAMBLE
@@ -92,6 +120,23 @@ ${criterionIdsNote}
 If validation returns {valid: false}, FIX the errors and validate again.
 ONLY after getting {valid: true} should you emit the envelope.
 Do NOT skip this step. Do NOT emit first and hope it works.`;
+}
+
+// ---------------------------------------------------------------------------
+// buildPrimaryFilingNote
+// ---------------------------------------------------------------------------
+
+/**
+ * The "validate_envelope is the primary filing mechanism" paragraph appended
+ * to result-envelope instructions for roles that use envelope sentinels.
+ *
+ * validate_envelope persists the report to disk so the harness can read it;
+ * the sentinel delimiters are a belt-and-suspenders backup. This note tells
+ * the agent not to wrap the delimiters in markdown fences, and confirms that
+ * a successful validate_envelope call alone is sufficient for the harness.
+ */
+export function buildPrimaryFilingNote(): string {
+  return `**A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` / \`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as your final assistant message, but do NOT wrap them in markdown \`\`\`json fences. If you only call \`validate_envelope\` successfully and never emit the delimiters, the harness still gets your report.**`;
 }
 
 // ---------------------------------------------------------------------------

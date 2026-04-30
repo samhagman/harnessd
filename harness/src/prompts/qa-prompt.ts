@@ -17,13 +17,11 @@ import type {
   DevServerConfig,
   PacketCompletionContext,
 } from "../schemas.js";
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
+  buildPrimaryFilingNote,
   buildDevServerSetupSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
@@ -104,7 +102,6 @@ actual functional problems.`;
 export function buildQAPrompt(ctx: QAPromptContext): string {
   const sections: string[] = [];
 
-  // 0. Workspace guidance
   if (ctx.workspaceDir) {
     sections.push(`## WORKSPACE
 
@@ -112,13 +109,10 @@ All files are located in: ${ctx.workspaceDir}
 Use this path for all file operations.`);
   }
 
-  // 0b. Environment setup
   sections.push(buildDevServerSetupSection(ctx.devServer, "qa"));
 
-  // 0c. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 1. Role
   sections.push(`## Your Role
 
 You are the QA AGENT for round ${ctx.round} of this harnessd run.
@@ -137,7 +131,6 @@ INTEGRATED system as a real user would. You are looking for:
 **Be SKEPTICAL.** Assume things are broken until proven working. A feature that
 "looks complete" in code review often has critical UX issues in the browser.`);
 
-  // 2. Read-only rule
   sections.push(`## CRITICAL: Read-Only Rule
 
 You are STRICTLY READ-ONLY. You must NOT modify any repository files.
@@ -153,18 +146,14 @@ You are STRICTLY READ-ONLY. You must NOT modify any repository files.
 Your job is to FIND and REPORT issues, not to fix them. Report everything you find
 and the round 2 planner will create fix packets.`);
 
-  // 2b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("QAReport"));
 
-  // 3. Spec summary
   if (ctx.spec) {
-    const specExcerpt = ctx.spec;
     sections.push(`## Feature Specification
 
-${specExcerpt}`);
+${ctx.spec}`);
   }
 
-  // 4. What was built (contracts + builder reports)
   if (ctx.contracts.length > 0) {
     const summaries = ctx.contracts.map((c) => {
       const report = ctx.builderReports.find((r) => r.packetId === c.packetId);
@@ -182,12 +171,10 @@ ${specExcerpt}`);
 ${summaries.join("\n\n")}`);
   }
 
-  // 4b. Completion contexts — design decisions and intent for QA
   if (ctx.completionContexts && ctx.completionContexts.length > 0) {
     sections.push(renderCompletionContextsForQA(ctx.completionContexts));
   }
 
-  // 4c. Harness pipeline context + memory search guidance
   {
     const completedPacketIds = ctx.contracts.map((c) => c.packetId);
     sections.push(buildHarnessContextSection("qa_agent", {
@@ -200,7 +187,6 @@ ${summaries.join("\n\n")}`);
     if (fanoutSection) sections.push(fanoutSection);
   }
 
-  // 5. Integration scenarios
   if (ctx.integrationScenarios.length > 0) {
     const scenarioLines = ctx.integrationScenarios.map((s) => {
       const steps = s.steps.map((step, i) =>
@@ -219,7 +205,6 @@ walk through each one in the browser.
 ${scenarioLines.join("\n\n")}`);
   }
 
-  // 6. Evaluator guide quality criteria
   if (ctx.evaluatorGuide) {
     if (ctx.evaluatorGuide.qualityCriteria.length > 0) {
       const criteria = ctx.evaluatorGuide.qualityCriteria
@@ -237,7 +222,6 @@ ${ctx.evaluatorGuide.edgeCases.map((e) => `- ${e}`).join("\n")}`);
     }
   }
 
-  // 7. Browser QA protocol
   sections.push(`## Browser QA Protocol
 
 ### Phase 1: App Startup
@@ -288,7 +272,6 @@ When reporting issues, use these severity levels:
 - **minor**: Polish issues: rough edges, inconsistent spacing, minor visual
   glitches that don't block functionality.`);
 
-  // 7b. Root cause tracing (mandatory)
   sections.push(`## Root Cause Tracing (MANDATORY for every issue)
 
 For each issue you report, you MUST trace from symptom to code:
@@ -305,7 +288,6 @@ Your diagnosticHypothesis field must name specific files and functions.
 Your filesInvolved field must list the actual file paths you found.
 An issue with empty filesInvolved or a vague diagnosticHypothesis will be rejected.`);
 
-  // 8. Output envelope
   sections.push(`## Output Format
 
 After completing your QA evaluation, emit your report as a structured JSON envelope.
@@ -351,11 +333,7 @@ ${RESULT_END_SENTINEL}
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.
 
-**A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it
-persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` /
-\`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as your final assistant message,
-but do NOT wrap them in markdown \`\`\`json fences. If you only call \`validate_envelope\`
-successfully and never emit the delimiters, the harness still gets your report.**`);
+${buildPrimaryFilingNote()}`);
 
   return sections.join("\n\n");
 }

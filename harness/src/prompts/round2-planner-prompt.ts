@@ -12,10 +12,7 @@ import type {
   Packet,
   EvaluatorGuide,
 } from "../schemas.js";
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
@@ -40,7 +37,6 @@ export function buildRound2PlannerPrompt(ctx: Round2PlannerPromptContext): strin
   const idPrefix = `PKT-R${round}`;
   const sections: string[] = [];
 
-  // 0. Workspace guidance
   if (ctx.workspaceDir) {
     sections.push(`## WORKSPACE
 
@@ -48,14 +44,11 @@ All files are located in: ${ctx.workspaceDir}
 Use this path for all file operations.`);
   }
 
-  // 0b. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0c. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("round2_planner", { round, memoryEnabled: ctx.enableMemory }));
   sections.push(buildMemorySearchSection("round2_planner", ctx.enableMemory));
 
-  // 1. Role
   sections.push(`## Your Role
 
 You are the ROUND ${round} PLANNER for a harnessd run.
@@ -73,17 +66,14 @@ these specific QA findings.
 5. Do NOT re-plan work that is already done and passing.
 6. Create FOCUSED fix packets — each one targets specific QA issues.`);
 
-  // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));
 
-  // 2. Original spec
   if (ctx.originalSpec) {
     sections.push(`## Original Specification
 
 ${ctx.originalSpec}`);
   }
 
-  // 3. What was built in round 1
   if (ctx.originalPackets.length > 0) {
     const packetList = ctx.originalPackets.map((p) =>
       `- **${p.id}**: ${p.title} (${p.type}, status: ${p.status})`
@@ -96,7 +86,6 @@ These packets are DONE. Do NOT create fix packets that duplicate their work.
 Your fix packets should make targeted changes to the code already written.`);
   }
 
-  // 4. QA report (the core input)
   sections.push(`## QA Report — Issues to Fix
 
 **Overall Verdict:** ${ctx.qaReport.overallVerdict}
@@ -128,7 +117,6 @@ ${ctx.qaReport.consoleErrors.length > 0
 ### QA Summary
 ${ctx.qaReport.summary}`);
 
-  // 5. Evaluator guide (inherited from R1)
   if (ctx.evaluatorGuide) {
     sections.push(`## Quality Standards (from Round 1)
 
@@ -138,7 +126,6 @@ ${ctx.qaReport.summary}`);
 These quality standards still apply. Your fix packets must not regress quality.`);
   }
 
-  // 6. Planning instructions
   sections.push(`## Fix Packet Planning Instructions
 
 1. **Group related issues** by root cause. If two QA issues stem from the same
@@ -160,7 +147,6 @@ These quality standards still apply. Your fix packets must not regress quality.`
    - Focused implementation plan (what to change, not how)
    - Testable acceptance criteria referencing the QA reproduction steps`);
 
-  // 6b. Root cause verification (mandatory before creating packets)
   sections.push(`## Root Cause Verification (MANDATORY before creating packets)
 
 Before creating fix packets, you MUST verify the QA's root cause analysis:
@@ -177,7 +163,6 @@ For each packet, the notes[] array must include:
 - "Root cause: {file}:{function} — {what's wrong and why}"
 - "Fix: {specific change to make}"`);
 
-  // 7. Output envelope
   sections.push(`## Output Format
 
 After analyzing the QA report and planning fix packets, emit your plan as a structured JSON envelope.

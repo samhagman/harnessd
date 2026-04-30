@@ -16,7 +16,18 @@ import type {
   DevServerConfig,
   PacketCompletionContext,
 } from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
+import {
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+  buildPrimaryFilingNote,
+  buildDevServerSetupSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
+  buildResearchToolsSection,
+  buildVerificationFanoutSection,
+} from "./shared.js";
 
 /**
  * Options bag for `buildEvaluatorPrompt`.
@@ -48,19 +59,6 @@ export interface EvaluatorPromptOptions {
   /** When false, verification fanout section is suppressed (Codex backend). */
   useClaudeBackend?: boolean;
 }
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
-import {
-  AUTONOMOUS_PREAMBLE,
-  buildValidateEnvelopeSection,
-  buildDevServerSetupSection,
-  buildHarnessContextSection,
-  buildMemorySearchSection,
-  buildResearchToolsSection,
-  buildVerificationFanoutSection,
-} from "./shared.js";
 
 function renderCompletionContextsForEvaluator(contexts: PacketCompletionContext[]): string {
   return contexts.map((ctx) => {
@@ -124,7 +122,6 @@ export function buildEvaluatorPrompt(
 
   const sections: string[] = [];
 
-  // 0a. Builder transcript access (for investigating builder's reasoning)
   if (builderTranscriptPath) {
     sections.push(`## Builder Transcript Access
 
@@ -158,7 +155,6 @@ builder got it wrong — what did the builder misunderstand or miss in its inves
 helps the next fix attempt avoid the same reasoning error.`);
   }
 
-  // 0b. Prior session recovery context (if retrying after crash)
   if (recoveryContext) {
     sections.push(`## Prior Session Recovery
 
@@ -169,7 +165,6 @@ ${recoveryContext}
 Skip work that was already verified. Focus on what remains.`);
   }
 
-  // 0. Workspace file verification guidance (if using a separate workspace)
   if (workspaceDir) {
     sections.push(`## FILE VERIFICATION
 
@@ -180,13 +175,10 @@ If the builder reports changed files, verify each file exists under ${workspaceD
 If the dev server returns 404 for new modules, this is a HARD FAILURE — the builder likely wrote files to the wrong location.`);
   }
 
-  // 0b. Environment setup
   sections.push(buildDevServerSetupSection(devServer, "evaluator"));
 
-  // 0c. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 1. Role
   sections.push(`## Your Role
 
 You are the EVALUATOR for packet ${contract.packetId}: "${contract.title}".
@@ -195,7 +187,6 @@ Your job is to **disconfirm completion**. Assume nothing works until you prove i
 Be skeptical, thorough, and ruthless. The builder claims the work is done — your job
 is to find evidence that it isn't, or to confirm that it truly is.`);
 
-  // 2. Skepticism stance
   sections.push(`## Evaluation Stance
 
 - Start with the assumption the packet is NOT done
@@ -216,7 +207,6 @@ is to find evidence that it isn't, or to confirm that it truly is.`);
   A builder who achieves every goal, honors every constraint, but deviates from
   guidance has PASSED.`);
 
-  // 3. Read-only rule (with operational exceptions)
   sections.push(`## Evaluation Permissions
 
 Your primary job is VERIFICATION, not fixing. You must NOT fix substantive bugs — report
@@ -243,11 +233,9 @@ If a fix takes more than ~5 lines and touches application logic, it's a bug — 
 If it's plumbing to get your test environment working (start a server, seed a DB, set an
 env var), that's fine — do it and move on to verifying.`);
 
-  // 3b. Mandatory validate_envelope gate
   const criterionIds = contract.acceptance.map((c) => c.id).join(",");
   sections.push(buildValidateEnvelopeSection("EvaluatorReport", criterionIds));
 
-  // 4. Contract
   sections.push(`## Packet Contract
 
 **Packet ID:** ${contract.packetId}
@@ -286,7 +274,6 @@ ${contract.guidance.map((g) => `- **${g.id}**: ${g.description}`).join("\n")}
 Guidance deviations are NOT failures. Note them in nextActions if significant.`);
   }
 
-  // 5. Builder report
   sections.push(`## Builder's Report
 
 **Claims done:** ${builderReport.claimsDone}
@@ -300,7 +287,6 @@ ${builderReport.selfCheckResults
 ### Remaining Concerns from Builder
 ${builderReport.remainingConcerns.length > 0 ? builderReport.remainingConcerns.map((c) => `- ${c}`).join("\n") : "(none)"}`);
 
-  // 5c. Expected file changes smoke-test
   if (expectedFiles && expectedFiles.length > 0) {
     const commitRange = builderCommitCount && builderCommitCount > 0
       ? `\`git diff --name-only HEAD~${builderCommitCount}\``
@@ -317,7 +303,6 @@ Files changed that are NOT on this list are fine — builders often need to touc
 additional files. But files that SHOULD have been changed and weren't are a red flag.`);
   }
 
-  // 5b. Prior context from completed packets (structured completion contexts)
   if (completionContexts && completionContexts.length > 0) {
     sections.push(`## Prior Context from Completed Packets
 
@@ -328,7 +313,6 @@ If the builder deviated from established patterns without justification, flag it
 ${renderCompletionContextsForEvaluator(completionContexts)}`);
   }
 
-  // 5b2. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("evaluator", {
     packetId: contract.packetId,
     completedPacketIds,
@@ -338,7 +322,6 @@ ${renderCompletionContextsForEvaluator(completionContexts)}`);
   const fanoutSection = buildVerificationFanoutSection("evaluator", { useClaudeBackend });
   if (fanoutSection) sections.push(fanoutSection);
 
-  // 5c. Automated gate results
   if (gateResultsSummary) {
     sections.push(`## Automated Gate Results
 
@@ -349,7 +332,6 @@ that automated tools cannot catch.
 ${gateResultsSummary}`);
   }
 
-  // 5d. Future packets context (deferred work awareness)
   if (futurePacketsSummary) {
     sections.push(`## Deferred Work (Future Packets in This Run)
 
@@ -371,7 +353,6 @@ covered by any future packet are also fair game.
 ${futurePacketsSummary}`);
   }
 
-  // 6. Risk register (if available)
   if (riskRegister && riskRegister.risks.length > 0) {
     sections.push(`## Risk Register
 
@@ -379,7 +360,6 @@ Pay special attention to these identified risks:
 ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}\n  Mitigation: ${r.mitigation}`).join("\n")}`);
   }
 
-  // 7. Evaluator guide (if provided)
   if (evaluatorGuide) {
     // 7a. Domain-specific quality criteria
     if (evaluatorGuide.qualityCriteria.length > 0) {
@@ -492,7 +472,6 @@ Key tools:
 Do NOT skip browser verification. Static code review alone is insufficient.`);
   }
 
-  // 7h. E2E state verification protocol
   sections.push(`## E2E State Verification Protocol (MANDATORY)
 
 You are the LAST LINE OF DEFENSE before this packet is approved. You must trace every
@@ -570,7 +549,6 @@ If you are inferring, the evidence is INVALID. You must go observe it for real.
 If you cannot observe it (tool limitation, server not running, etc.), the verdict
 is "skip" with a skipReason, NOT "pass".`);
 
-  // 7h-anti. Anti-rationalization rule
   sections.push(`## Anti-Rationalization Rule
 
 If you observe application state that does not match the expected outcome
@@ -586,7 +564,6 @@ NEVER classify unexpected state as "pre-existing" without FIRST:
 "It was probably already like that" is NOT a valid evaluation finding.
 Treat every state anomaly as a potential bug until proven otherwise.`);
 
-  // 7h2. Root-cause analysis for hard failures
   sections.push(`## Root-Cause Analysis (MANDATORY for hard failures)
 
 When you find a hard failure, do not just report the symptom — diagnose WHY it fails.
@@ -619,7 +596,6 @@ When a failure spans multiple system layers (client → API → middleware → s
 If you don't have time for a full diagnosis, at minimum state which LAYER you think
 is failing (client redirect? middleware auth? handler logic? database query?).`);
 
-  // 7i. Browser verification tools (always available)
   sections.push(`## Browser Verification
 
 You have access to Playwright MCP tools for browser verification. Use them to verify the builder's
@@ -644,14 +620,12 @@ When verifying, use Playwright MCP to actually test in the browser:
 Do NOT just read code — actually test in the browser. Static code review alone is
 insufficient.`);
 
-  // 7j. Research tools (dynamic based on availability)
   const researchSection = buildResearchToolsSection(
     researchTools ?? DEFAULT_RESEARCH_TOOLS,
     "evaluator",
   );
   if (researchSection) sections.push(researchSection);
 
-  // 8. Mandatory criterion verdicts
   sections.push(`## Mandatory Criterion Verdicts
 
 You MUST produce a verdict for EVERY acceptance criterion listed below. No exceptions.
@@ -722,7 +696,6 @@ Include a \`criterionVerdicts\` array in your report with one entry per criterio
 - "skip" requires a skipReason explaining why verification was impossible
 - If ANY blocking criterion has verdict "fail" or "skip", overall MUST be "fail"`);
 
-  // 9. Handling discovered issues (severity-based routing)
   sections.push(`## Handling Discovered Issues
 
 During evaluation you may find real problems NOT covered by the existing acceptance criteria.
@@ -771,7 +744,6 @@ Do not propose criteria for:
 - Cosmetic observations (use nextActions for low-severity items)
 - Broad bug families ("all edge cases should be handled") — be specific`);
 
-  // 10. Output envelope
   sections.push(`## Output Format
 
 After completing your evaluation, emit your report as a structured JSON envelope.
@@ -871,11 +843,7 @@ future packets should NOT be escalated.
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.
 
-**A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it
-persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` /
-\`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as your final assistant message,
-but do NOT wrap them in markdown \`\`\`json fences. If you only call \`validate_envelope\`
-successfully and never emit the delimiters, the harness still gets your report.**`);
+${buildPrimaryFilingNote()}`);
 
   return sections.join("\n\n");
 }

@@ -15,29 +15,18 @@ import type {
   PacketSummary,
   PacketCompletionContext,
 } from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import type { BaselineGateFailure } from "../tool-gates.js";
 import { type ResearchToolAvailability, DEFAULT_RESEARCH_TOOLS } from "../research-tools.js";
-
-/**
- * Backend capability hints for prompt adaptation.
- *
- * When absent, the prompt defaults to Claude-flavored behavior (envelope sentinels,
- * validate_envelope MCP section, Task tool sub-agent guidance). Pass this when the
- * backend differs from Claude so the prompt guides the agent correctly.
- *
- * - `supportsMcpServers`: when true, include the validate_envelope MCP tool section
- *   and gate_check MCP tool guidance. Use as the proxy for "Claude-flavored" in prompts —
- *   only Claude has both in-process MCP and the Claude Task tool.
- * - `nudgeStrategy`: when "abort-resume", add a paragraph warning that nudges will
- *   interrupt the current turn and the agent should write progress to disk frequently.
- * - `supportsOutputSchema`: when true, replace envelope sentinel instructions with
- *   "emit as structured JSON matching the output schema — do not use envelope sentinels."
- */
-export interface BackendCapabilities {
-  supportsMcpServers: boolean;
-  nudgeStrategy: "stream" | "abort-resume" | "none";
-  supportsOutputSchema?: boolean;
-}
+import {
+  type BackendCapabilities,
+  AUTONOMOUS_PREAMBLE,
+  buildValidateEnvelopeSection,
+  buildDevServerSetupSection,
+  buildHarnessContextSection,
+  buildMemorySearchSection,
+  buildResearchToolsSection,
+} from "./shared.js";
 
 /**
  * Options bag for `buildBuilderPrompt`.
@@ -81,18 +70,6 @@ export interface BuilderPromptOptions {
    */
   backendCapabilities?: BackendCapabilities;
 }
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
-import {
-  AUTONOMOUS_PREAMBLE,
-  buildValidateEnvelopeSection,
-  buildDevServerSetupSection,
-  buildHarnessContextSection,
-  buildMemorySearchSection,
-  buildResearchToolsSection,
-} from "./shared.js";
 
 function renderCompletionContextsForBuilder(contexts: PacketCompletionContext[]): string {
   return contexts.map((ctx) => {
@@ -171,7 +148,6 @@ export function buildBuilderPrompt(
 
   const sections: string[] = [];
 
-  // 0. Workspace directory guidance (if using a separate workspace)
   if (workspaceDir) {
     sections.push(`## WORKSPACE DIRECTORY
 
@@ -183,13 +159,9 @@ When you Read a file and get back an absolute path, verify it starts with ${work
 If a config file, import, or error message references a path outside ${workspaceDir}, translate it to the equivalent path inside this workspace before acting on it.`);
   }
 
-  // 0b. Environment setup
   sections.push(buildDevServerSetupSection(devServer, "builder"));
-
-  // 0c. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 1. Role
   sections.push(`## Your Role
 
 You are a STAFF-LEVEL ENGINEER implementing **${contract.packetId}: ${contract.title}**.
@@ -211,7 +183,6 @@ alternatives. If we wanted those, they would be in the plan. If something isn't 
 be persistent — take a step back, understand why, and get the packet to work as intended.
 Do not paper over failures with fallbacks.`);
 
-  // 1a. Delegation policy override (overrides global user CLAUDE.md subagent guidance)
   sections.push(`## Delegation Policy
 
 Your global user instructions may tell Claude Code sessions to proactively decompose work into 2-3 parallel sonnet agents with an opus integration pass. **IGNORE THAT INSTRUCTION here.**
@@ -220,12 +191,10 @@ Use whatever delegation pattern works best for you (fan-out, sequential, hybrid)
 
 If you cannot finish every AC in this session, do NOT loop retrying. Stop at a coherent checkpoint, self-check what's done, emit claimsDone:true with the partial result + an accurate list of what's incomplete. The evaluator will drive the remainder through the fix loop.`);
 
-  // 1b. Mandatory validate_envelope gate (only included when MCP tools are available)
   if (supportsMcp) {
     sections.push(buildValidateEnvelopeSection("BuilderReport"));
   }
 
-  // 1b2. Baseline gate failures (pre-existing issues)
   if (baselineGateFailures && baselineGateFailures.length > 0) {
     sections.push(`## ⚠ PRE-EXISTING GATE FAILURES (Not Your Fault)
 
@@ -238,7 +207,6 @@ test failures in unrelated packages, environment issues. You may need to fix the
 (e.g. rebuild a package's dist/) to get gate_check() to pass.`);
   }
 
-  // 1c. Full plan context — all packets with current packet marked
   if (allPackets && allPackets.length > 0) {
     const planLines = allPackets.map((p) => {
       const isCurrent = p.id === contract.packetId;
@@ -269,7 +237,6 @@ Here is the complete plan with all packets. You are implementing the one marked 
 ${planLines}`);
   }
 
-  // 1d. Run timeline — what happened in this run up to now
   if (runTimeline) {
     sections.push(`## Run Timeline
 
@@ -281,7 +248,6 @@ ${runTimeline}
 **You are next.** Use this history to understand the context of your work.`);
   }
 
-  // 2. Packet contract
   sections.push(`## Packet Contract for ${contract.packetId}: ${contract.title}
 
 Your contract for **${contract.packetId}** has ${contract.acceptance.length} acceptance criteria.
@@ -341,7 +307,6 @@ The contract tells you what to deliver and what not to break. How you get
 there is up to you.`);
   }
 
-  // 2b. Critical constraints from planner
   if (criticalConstraints && criticalConstraints.length > 0) {
     sections.push(`## ⚠ Critical Constraints (from planner)
 
@@ -351,21 +316,17 @@ Violating any of these will likely cause evaluation failure:
 ${criticalConstraints.map((c) => `- ⚠ ${c}`).join("\n")}`);
   }
 
-  // 2b2. Expected files from planner
   if (expectedFiles && expectedFiles.length > 0) {
     sections.push(`## Expected Files (from planner)\n\nThe planner identified these files as likely to be created or modified:\n\n${expectedFiles.map((f) => `- \`${f}\``).join("\n")}`);
   }
 
-  // 2b3. Planner notes for this packet
   if (packetNotes && packetNotes.length > 0) {
     sections.push(`## Planner Notes\n\n${packetNotes.map((n) => `- ${n}`).join("\n")}`);
   }
 
-  // 2c. Mandatory pre-implementation exploration
-  // The sub-agent guidance is Claude-specific (Task tool). For Codex (no Task tool),
-  // we use the same exploration mandate but with sequential-subtask language.
+  // Sub-agent guidance differs by backend: Claude backend uses the Task tool for
+  // a parallel Explore sub-agent; Codex uses sequential in-session file reading.
   if (supportsMcp) {
-    // Claude-flavored: recommends launching a sonnet Explore agent via Task tool
     sections.push(`## Before You Start Implementing
 
 MANDATORY: Before writing any code, you MUST:
@@ -388,7 +349,6 @@ integration point that's already wired up.
 
 Remember: you are implementing **${contract.packetId}: ${contract.title}**. Stay focused on this packet's scope.`);
   } else {
-    // Codex-flavored: sequential exploration within the same session
     sections.push(`## Before You Start Implementing
 
 MANDATORY: Before writing any code, you MUST:
@@ -426,7 +386,6 @@ ${contract.acceptance
   })
   .join("\n")}`);
 
-  // 3b. Evaluator-added criteria callout
   const evaluatorCriteria = contract.acceptance.filter((c) => c.source === "evaluator");
   if (evaluatorCriteria.length > 0) {
     sections.push(`## Evaluator-Added Requirements (Binding)
@@ -442,22 +401,18 @@ ${evaluatorCriteria
   .join("\n")}`);
   }
 
-  // 4. Spec excerpt
   if (spec) {
-    const specExcerpt = spec;
     sections.push(`## Specification Context
 
-${specExcerpt}`);
+${spec}`);
   }
 
-  // 4b. Prior context from completed packets (structured completion contexts)
   if (completionContexts && completionContexts.length > 0) {
     sections.push(`## Prior Context from Completed Packets
 
 ${renderCompletionContextsForBuilder(completionContexts)}`);
   }
 
-  // 4c. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("builder", {
     packetId: contract.packetId,
     completedPacketIds,
@@ -465,21 +420,18 @@ ${renderCompletionContextsForBuilder(completionContexts)}`);
   }));
   sections.push(buildMemorySearchSection("builder", enableMemory));
 
-  // 5. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
     sections.push(`## Risks to Watch
 
 ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}\n  Mitigation: ${r.mitigation}`).join("\n")}`);
   }
 
-  // 6. Research tools (dynamic based on availability)
   const researchSection = buildResearchToolsSection(
     researchTools ?? DEFAULT_RESEARCH_TOOLS,
     "builder",
   );
   if (researchSection) sections.push(researchSection);
 
-  // 6a. Browser self-testing (all packets)
   sections.push(`## Browser Self-Testing
 
 Before claiming done, verify your changes in the browser — even for backend
@@ -515,7 +467,6 @@ If you cannot perform runtime verification (e.g., missing credentials, external
 service unavailable), report the criterion as \`status: "untested"\` with the
 reason — NEVER report \`status: "pass"\` for criteria you did not actually execute.`);
 
-  // 6b. Repo writer rule
   sections.push(`## Repo Writer Rule
 
 You are the ONLY canonical repo writer for this packet:
@@ -525,7 +476,6 @@ You are the ONLY canonical repo writer for this packet:
 - You may NOT use git push, git pull, or git fetch
 - Helper subagents you spawn must be READ-ONLY or write only to .harnessd/ artifact dirs`);
 
-  // 7. Micro-fanout policy
   if (contract.microFanoutPlan.length > 0) {
     sections.push(`## Micro-Fanout Plan
 
@@ -540,7 +490,6 @@ ${contract.microFanoutPlan
 Remember: you remain the canonical writer. Integrate helper outputs yourself.`);
   }
 
-  // 8. Background job policy
   if (contract.backgroundJobs.length > 0) {
     sections.push(`## Background Jobs
 
@@ -555,7 +504,6 @@ ${contract.backgroundJobs
 You may continue working while jobs run, but you CANNOT claim done until all jobs complete.`);
   }
 
-  // 9. Prior evaluator report (fix loop)
   if (priorEvalReport) {
     const hardFailureLines = priorEvalReport.hardFailures
       .map((f) => {
@@ -600,7 +548,6 @@ ${priorEvalReport.missingEvidence.map((e) => `- ${e}`).join("\n")}
 ${priorEvalReport.nextActions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`);
   }
 
-  // 9b. Context overrides from operator
   if (contextOverrides) {
     sections.push(`## OPERATOR CONTEXT (INCORPORATE INTO YOUR WORK)
 
@@ -609,9 +556,9 @@ The operator has injected additional context that you must consider:
 ${contextOverrides}`);
   }
 
-  // 9c. Nudge file — operator can steer you mid-session
+  // File-based nudges (Claude and FakeBackend): agent polls a file between steps.
+  // Abort+resume nudges (Codex): the session is interrupted and restarted with the nudge prepended.
   if (nudgeFilePath && nudgeStrategy !== "abort-resume") {
-    // File-based nudges (Claude and FakeBackend): agent polls a file between steps
     sections.push(`## Operator Nudge Channel
 
 The operator may send you steering instructions while you work. **Before each major step** (before starting a new file, before running tests, before emitting your envelope), check this file:
@@ -627,7 +574,6 @@ If the file exists:
 If the file does not exist, continue normally. This check should be quick — just a file existence check.`);
   }
 
-  // 9d. Abort+resume nudge notice (Codex only)
   if (nudgeStrategy === "abort-resume") {
     sections.push(`## Operator Nudge Delivery
 
@@ -646,7 +592,6 @@ with the nudge prepended to the prompt.
 The harness preserves your session ID so you can continue from your last checkpoint.`);
   }
 
-  // 10. Quality gates — gate_check() MCP tool (only when MCP is available)
   if (supportsMcp) {
     sections.push(`## Quality Gates — Use gate_check() Before Emitting
 
@@ -671,7 +616,6 @@ passing in isolation does NOT mean the gate will pass — cross-package regressi
 The harness still verifies gates after you emit (belt + suspenders). If you emit
 without a passing gate_check, you will be sent back to fix — wasting a full session.`);
   } else {
-    // Non-MCP backend: gate_check is unavailable, guide to run commands manually
     sections.push(`## Quality Gates — Run Manually Before Emitting
 
 You do not have a \`gate_check\` MCP tool in this session. Run the equivalent
@@ -685,7 +629,6 @@ The harness verifies gates after you emit. If gates fail, you will be sent back
 to fix — running them yourself first saves a full session.`);
   }
 
-  // 11. Pre-submission quality passes
   sections.push(`## Pre-Submission Quality Review (MANDATORY)
 
 After all acceptance criteria pass but BEFORE emitting the result envelope, run these
@@ -703,7 +646,6 @@ Run \`/code-review\` (but don't post to GitHub — just review locally and fix a
 
 ### Then: Final verification`);
 
-  // 11b. Runtime verification mandate for scenario criteria (keep before git discipline)
   sections.push(`## Runtime Verification Is Mandatory for Scenario Criteria
 
 If a criterion has kind "scenario" or "api", you MUST attempt runtime verification before marking it as "pass":
@@ -723,7 +665,6 @@ Code that typechecks and looks correct can still fail at runtime. You must execu
 If you mark 3 or more scenario criteria as "untested", include a section in your report
 explaining what would be needed to test them (credentials, services, configuration).`);
 
-  // 11a. Git discipline
   sections.push(`## Git Discipline
 
 Before emitting your result envelope, you MUST commit your changes with logical,
@@ -748,7 +689,6 @@ List all commit SHAs in your result envelope under the commitShas field.
 **Your git commit messages will be shown to subsequent builders as context.**
 Write them as if you're briefing the next engineer who will pick up where you left off.`);
 
-  // 11c. Design Decision Log teaching section
   sections.push(`## Design Decision Log
 
 As you implement, record significant design decisions in your \`keyDecisions\` array.
@@ -824,7 +764,6 @@ Don't log routine implementation details:
 
 Log decisions that would make a future builder or QA agent say "why did they do it this way?"`);
 
-  // 12. Self-check + output
   sections.push(`## Self-Check & Output
 
 Before claiming done:

@@ -1,28 +1,9 @@
-/**
- * Unit tests for the buildVerificationFanoutSection helper and its integration
- * into the four verification role prompt builders (evaluator, qa_agent,
- * plan_reviewer, contract_evaluator).
- *
- * Covers:
- * - Helper returns "" when useClaudeBackend === false; non-empty otherwise.
- * - Role-specific "Good fanout shapes" block content is distinct per role.
- * - The maxAgents option surfaces into the rendered prompt (default: 4).
- * - The model="sonnet" rule is load-bearing and must appear in every rendered
- *   fanout block — opus/haiku must NOT appear.
- * - Each of the four prompt builders correctly injects the section when their
- *   `useClaudeBackend` option is true and suppresses it when false.
- */
-
 import { describe, it, expect } from "vitest";
 
 import {
   buildVerificationFanoutSection,
   type VerificationRole,
 } from "../../prompts/shared.js";
-
-// ---------------------------------------------------------------------------
-// Prompt-builder imports — used by the integration-level describe blocks below
-// ---------------------------------------------------------------------------
 
 import { buildEvaluatorPrompt } from "../../prompts/evaluator-prompt.js";
 import { buildQAPrompt } from "../../prompts/qa-prompt.js";
@@ -33,10 +14,6 @@ import type {
   PacketContract,
   BuilderReport,
 } from "../../schemas.js";
-
-// ---------------------------------------------------------------------------
-// Minimal fixtures (following advisory-guard.test.ts pattern)
-// ---------------------------------------------------------------------------
 
 function makeContract(): PacketContract {
   return {
@@ -78,10 +55,6 @@ function makeBuilderReport(): BuilderReport {
     commitShas: null,
   };
 }
-
-// ---------------------------------------------------------------------------
-// buildVerificationFanoutSection — helper-level tests (all run immediately)
-// ---------------------------------------------------------------------------
 
 describe("buildVerificationFanoutSection", () => {
   it("returns empty string when useClaudeBackend is false", () => {
@@ -172,10 +145,6 @@ describe("buildVerificationFanoutSection", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildEvaluatorPrompt — fanout integration
-// ---------------------------------------------------------------------------
-
 describe("buildEvaluatorPrompt — fanout integration", () => {
   it("includes the fanout section when useClaudeBackend is true", () => {
     const prompt = buildEvaluatorPrompt(makeContract(), makeBuilderReport(), {
@@ -191,10 +160,6 @@ describe("buildEvaluatorPrompt — fanout integration", () => {
     expect(prompt).not.toContain("Parallel Verification Fanout");
   });
 });
-
-// ---------------------------------------------------------------------------
-// buildQAPrompt — fanout integration
-// ---------------------------------------------------------------------------
 
 describe("buildQAPrompt — fanout integration", () => {
   it("includes the fanout section when useClaudeBackend is true", () => {
@@ -221,10 +186,6 @@ describe("buildQAPrompt — fanout integration", () => {
     expect(prompt).not.toContain("Parallel Verification Fanout");
   });
 });
-
-// ---------------------------------------------------------------------------
-// buildPlanReviewPrompt — fanout integration
-// ---------------------------------------------------------------------------
 
 describe("buildPlanReviewPrompt — fanout integration", () => {
   it("includes the fanout section when useClaudeBackend is true", () => {
@@ -255,10 +216,6 @@ describe("buildPlanReviewPrompt — fanout integration", () => {
     expect(prompt).not.toContain("Parallel Verification Fanout");
   });
 });
-
-// ---------------------------------------------------------------------------
-// buildContractEvaluatorPrompt — fanout integration
-// ---------------------------------------------------------------------------
 
 describe("buildContractEvaluatorPrompt — fanout integration", () => {
   it("includes the fanout section when useClaudeBackend is true", () => {

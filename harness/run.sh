@@ -8,7 +8,8 @@
 #   ./run.sh --status [run-id]           # Show run status
 #
 # Environment variables:
-#   WIGGUM_REPO_ROOT          Override repo root detection
+#   HARNESSD_REPO_ROOT        Override repo root detection
+#                             (also accepts legacy WIGGUM_REPO_ROOT)
 
 set -euo pipefail
 
@@ -26,6 +27,6 @@ fi
 # Run from repo root so cwd is correct for the builder/verifier agents
 cd "$REPO_ROOT"
 
-export WIGGUM_REPO_ROOT="$REPO_ROOT"
+export HARNESSD_REPO_ROOT="$REPO_ROOT"
 
 exec npx tsx "$HARNESS_DIR/src/main.ts" "$@"

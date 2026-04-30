@@ -1,22 +1,8 @@
-/**
- * Tests for prompt adaptation based on BackendCapabilities.
- *
- * Verifies that:
- * - validate_envelope section is gated on supportsMcpServers
- * - Envelope sentinels are replaced with schema output instructions when supportsOutputSchema is true
- * - Sub-agent guidance is adjusted for non-Claude backends
- * - Nudge interrupt paragraph appears when nudgeStrategy is "abort-resume"
- */
-
 import { describe, it, expect } from "vitest";
 import { buildBuilderPrompt } from "../../prompts/builder-prompt.js";
 import { buildPlannerPrompt } from "../../prompts/planner-prompt.js";
 import { buildContractBuilderPrompt } from "../../prompts/contract-builder-prompt.js";
 import type { PacketContract, Packet, AcceptanceTemplate } from "../../schemas.js";
-
-// ------------------------------------
-// Minimal fixtures
-// ------------------------------------
 
 function makeMinimalContract(): PacketContract {
   return {
@@ -78,10 +64,6 @@ function makeMinimalTemplate(): AcceptanceTemplate {
     defaultCriteria: [],
   };
 }
-
-// ------------------------------------
-// Builder prompt: validate_envelope gating
-// ------------------------------------
 
 describe("buildBuilderPrompt — backendCapabilities", () => {
   it("includes validate_envelope section by default (no capabilities specified)", () => {
@@ -202,10 +184,6 @@ describe("buildBuilderPrompt — backendCapabilities", () => {
   });
 });
 
-// ------------------------------------
-// Planner prompt: validate_envelope and output format gating
-// ------------------------------------
-
 describe("buildPlannerPrompt — backendCapabilities", () => {
   it("includes validate_envelope by default", () => {
     const prompt = buildPlannerPrompt("test objective");
@@ -247,10 +225,6 @@ describe("buildPlannerPrompt — backendCapabilities", () => {
     expect(prompt).toContain("Do NOT use envelope sentinels");
   });
 });
-
-// ------------------------------------
-// Contract builder prompt: validate_envelope and output format gating
-// ------------------------------------
 
 describe("buildContractBuilderPrompt — backendCapabilities", () => {
   it("includes validate_envelope by default", () => {

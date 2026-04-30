@@ -1,13 +1,3 @@
-/**
- * Unit tests for session-summary.ts.
- *
- * Each test writes a synthetic transcript JSONL to a tmpdir, calls
- * summarizeTranscript, and asserts the right slices were extracted.
- * Fixtures mirror the real-world cases observed in run onhq-arch-refactor:
- * markdown-fence regression, api_retry storm, compact_boundary mid-session,
- * normal envelope-emitted success.
- */
-
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -15,10 +5,6 @@ import * as path from "node:path";
 
 import { summarizeTranscript } from "../../session-summary.js";
 import { SessionSummarySchema } from "../../schemas.js";
-
-// ------------------------------------
-// Helpers
-// ------------------------------------
 
 function writeTranscript(dir: string, lines: object[]): string {
   const p = path.join(dir, "transcript.jsonl");
@@ -29,10 +15,6 @@ function writeTranscript(dir: string, lines: object[]): string {
 function tsAt(seconds: number): string {
   return new Date(2026, 0, 1, 0, 0, seconds).toISOString();
 }
-
-// ------------------------------------
-// Tests
-// ------------------------------------
 
 describe("summarizeTranscript — basic counters", () => {
   it("counts assistant turns and tool calls by name", () => {

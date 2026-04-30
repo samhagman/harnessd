@@ -15,18 +15,10 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-# Harness uses its own dir as repoRoot (cwd), so check both locations
-if [[ -d "$HARNESS_DIR/.harnessd/runs" ]]; then
-  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
-elif [[ -d "$REPO_ROOT/.harnessd/runs" ]]; then
-  RUNS_DIR="$REPO_ROOT/.harnessd/runs"
-else
-  RUNS_DIR="$HARNESS_DIR/.harnessd/runs"
-fi
 
-# ------------------------------------
-# Parse --run-id if present
-# ------------------------------------
+# shellcheck source=./_lib.sh
+source "$HARNESS_DIR/_lib.sh"
+
 EXPLICIT_RUN_ID=""
 ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -45,40 +37,17 @@ done
 MODE="${ARGS[0]:---all}"
 EXTRA_ARG="${ARGS[1]:-}"
 
-# ------------------------------------
-# Run directory discovery
-# ------------------------------------
-find_latest_run_dir() {
-  if [[ ! -d "$RUNS_DIR" ]]; then
-    echo ""
-    return
-  fi
-  # Find most recently modified directory containing run.json
-  local best=""
-  local best_time=0
-  for dir in "$RUNS_DIR"/*/; do
-    if [[ -f "${dir}run.json" ]]; then
-      local mtime
-      mtime=$(stat -f %m "${dir}run.json" 2>/dev/null || stat -c %Y "${dir}run.json" 2>/dev/null || echo 0)
-      if (( mtime > best_time )); then
-        best_time=$mtime
-        best="${dir%/}"
-      fi
-    fi
-  done
-  echo "$best"
-}
-
 get_run_dir() {
   if [[ -n "$EXPLICIT_RUN_ID" ]]; then
-    local d="$RUNS_DIR/$EXPLICIT_RUN_ID"
-    if [[ ! -d "$d" ]]; then
-      echo "Run not found: $d" >&2
+    resolve_run_dir "$HARNESS_DIR" "$REPO_ROOT" "$EXPLICIT_RUN_ID" || {
+      echo "Run not found: $EXPLICIT_RUN_ID" >&2
       exit 1
-    fi
-    echo "$d"
+    }
   else
-    find_latest_run_dir
+    find_latest_run_dir "$HARNESS_DIR" "$REPO_ROOT" || {
+      echo "No runs found" >&2
+      exit 1
+    }
   fi
 }
 
@@ -88,7 +57,6 @@ find_latest_transcript() {
   {
     find "$run_dir/transcripts" -name "${role}-*.jsonl" -type f 2>/dev/null
     find "$run_dir/packets" -path "*/$role/transcript.jsonl" -type f 2>/dev/null
-    # Also check spec/ for planner transcript
     if [[ "$role" == "planner" ]]; then
       find "$run_dir/spec" -name "transcript.jsonl" -type f 2>/dev/null
     fi
@@ -97,9 +65,6 @@ find_latest_transcript() {
   done | sort -rn | head -1 | awk '{print $2}'
 }
 
-# ------------------------------------
-# Colors and formatting
-# ------------------------------------
 BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
@@ -111,9 +76,6 @@ MAGENTA='\033[35m'
 RED='\033[31m'
 WHITE='\033[37m'
 
-# ------------------------------------
-# The --all mode: unified live view
-# ------------------------------------
 tail_all() {
   local run_dir="$1"
   local run_id
@@ -125,7 +87,6 @@ tail_all() {
   echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
   echo ""
 
-  # Print current state
   if [[ -f "$run_dir/run.json" ]]; then
     python3 -c "
 import json, sys
@@ -140,11 +101,9 @@ print(f'  Phase: \033[1m{phase}\033[0m  |  Packet: {pkt}  |  Done: {len(done)}/{
     echo ""
   fi
 
-  # Track which transcript we're tailing
   local current_transcript=""
   local transcript_pid=""
 
-  # Function to find the newest transcript file across all locations
   find_active_transcript() {
     {
       find "$run_dir/spec" -name "transcript.jsonl" -type f 2>/dev/null
@@ -155,7 +114,6 @@ print(f'  Phase: \033[1m{phase}\033[0m  |  Packet: {pkt}  |  Done: {len(done)}/{
     done | sort -rn | head -1 | awk '{print $2}'
   }
 
-  # Python script for formatting transcript lines
   FORMAT_SCRIPT=$(cat <<'PYEOF'
 import sys, json
 
@@ -172,7 +130,6 @@ WHITE = "\033[37m"
 
 def format_time(ts):
     if not ts: return ""
-    # Extract HH:MM:SS from ISO timestamp
     try:
         return ts[11:19]
     except:
@@ -188,13 +145,11 @@ for line in sys.stdin:
         print(line)
         continue
 
-    # Is it an event line? (from events.jsonl)
     if "event" in d and "phase" in d:
         ts = format_time(d.get("ts",""))
         event = d.get("event","")
         detail = d.get("detail","")
         pkt = d.get("packetId","")
-        phase = d.get("phase","")
 
         icon = "●"
         color = WHITE
@@ -211,22 +166,17 @@ for line in sys.stdin:
         print("  ".join(parts))
         continue
 
-    # It's a transcript line
     msg = d.get("msg", {})
     ts = format_time(d.get("ts",""))
-    role = d.get("role","")
     msg_type = msg.get("type","")
     raw = msg.get("raw", {})
 
-    # system/init — session started
     if msg_type == "system":
         model = raw.get("model","?")
         print(f"\n{DIM}{ts}{RESET}  {MAGENTA}⚡ session started{RESET}  {DIM}model={model}{RESET}")
         continue
 
-    # result — session ended
     if msg_type == "result":
-        subtype = msg.get("subtype","")
         is_error = msg.get("isError", False)
         cost = msg.get("costUsd", 0)
         turns = msg.get("numTurns", 0)
@@ -236,7 +186,6 @@ for line in sys.stdin:
             print(f"\n{DIM}{ts}{RESET}  {GREEN}✓ session done{RESET}  {DIM}turns={turns} cost=${cost:.2f}{RESET}")
         continue
 
-    # assistant message — extract content blocks from raw.message.content
     if msg_type == "assistant":
         message = raw.get("message", {})
         content = message.get("content", [])
@@ -248,18 +197,15 @@ for line in sys.stdin:
                 continue
             btype = block.get("type","")
 
-            # Thinking
             if btype == "thinking":
                 thinking = block.get("thinking","")
                 if thinking:
-                    # Show first 2 lines of thinking, dimmed
                     lines = thinking.strip().split("\n")
                     preview = lines[0][:120]
                     if len(lines) > 1:
                         preview += f" (+{len(lines)-1} lines)"
                     print(f"  {DIM}{ts}  💭 {preview}{RESET}")
 
-            # Text output
             elif btype == "text":
                 text = block.get("text","")
                 if text:
@@ -267,12 +213,10 @@ for line in sys.stdin:
                         if tline.strip():
                             print(f"  {DIM}{ts}{RESET}  {WHITE}{tline}{RESET}")
 
-            # Tool use
             elif btype == "tool_use":
                 name = block.get("name","?")
                 inp = block.get("input",{})
 
-                # Format tool call compactly
                 detail = ""
                 if name in ("Read", "Glob", "Grep"):
                     detail = inp.get("file_path","") or inp.get("pattern","") or inp.get("path","")
@@ -286,7 +230,6 @@ for line in sys.stdin:
                 elif name == "Skill":
                     detail = inp.get("skill","")
                 else:
-                    # Generic: show first key-value
                     for k, v in list(inp.items())[:1]:
                         detail = f"{k}={str(v)[:60]}"
 
@@ -303,20 +246,16 @@ for line in sys.stdin:
 PYEOF
 )
 
-  # Main loop: tail events + follow transcripts, auto-switch when new ones appear
   {
-    # Tail events
     if [[ -f "$events_file" ]]; then
       tail -f "$events_file" &
     fi
 
-    # Check for transcript changes every 2 seconds
     while true; do
       local latest
       latest=$(find_active_transcript)
 
       if [[ -n "$latest" && "$latest" != "$current_transcript" ]]; then
-        # Kill old tail if running
         if [[ -n "$transcript_pid" ]]; then
           kill "$transcript_pid" 2>/dev/null || true
           wait "$transcript_pid" 2>/dev/null || true
@@ -324,7 +263,6 @@ PYEOF
 
         current_transcript="$latest"
 
-        # Determine role from path
         local role_label=""
         if [[ "$latest" == *"/spec/"* ]]; then
           role_label="planner"
@@ -345,9 +283,6 @@ PYEOF
   } | python3 -u -c "$FORMAT_SCRIPT"
 }
 
-# ------------------------------------
-# Dispatch
-# ------------------------------------
 case "$MODE" in
   --status)
     exec "$HARNESS_DIR/status.sh" --watch
@@ -355,22 +290,14 @@ case "$MODE" in
 
   --all)
     RUN_DIR="$(get_run_dir)"
-    if [[ -z "$RUN_DIR" ]]; then
-      echo "No runs found in $RUNS_DIR"
-      exit 1
-    fi
     tail_all "$RUN_DIR"
     ;;
 
   --events)
     RUN_DIR="$(get_run_dir)"
-    if [[ -z "$RUN_DIR" ]]; then
-      echo "No runs found in $RUNS_DIR"
-      exit 1
-    fi
     EVENTS_FILE="$RUN_DIR/events.jsonl"
     if [[ ! -f "$EVENTS_FILE" ]]; then
-      echo "No events.jsonl found in $RUN_DIR"
+      echo "No events.jsonl found in $RUN_DIR" >&2
       exit 1
     fi
     echo "Tailing events: $EVENTS_FILE"
@@ -382,14 +309,10 @@ case "$MODE" in
   --packet)
     PACKET_ID="${EXTRA_ARG:?Usage: ./tail.sh --packet PKT-001}"
     RUN_DIR="$(get_run_dir)"
-    if [[ -z "$RUN_DIR" ]]; then
-      echo "No runs found in $RUNS_DIR"
-      exit 1
-    fi
     TRANSCRIPT="$RUN_DIR/packets/$PACKET_ID/builder/transcript.jsonl"
     if [[ ! -f "$TRANSCRIPT" ]]; then
-      echo "No builder transcript for packet $PACKET_ID"
-      echo "  Expected: $TRANSCRIPT"
+      echo "No builder transcript for packet $PACKET_ID" >&2
+      echo "  Expected: $TRANSCRIPT" >&2
       exit 1
     fi
     echo "Tailing builder for $PACKET_ID: $TRANSCRIPT"
@@ -398,13 +321,9 @@ case "$MODE" in
 
   --builder)
     RUN_DIR="$(get_run_dir)"
-    if [[ -z "$RUN_DIR" ]]; then
-      echo "No runs found in $RUNS_DIR"
-      exit 1
-    fi
     TRANSCRIPT="$(find_latest_transcript "$RUN_DIR" "builder")"
     if [[ -z "$TRANSCRIPT" ]]; then
-      echo "No builder transcripts found in $RUN_DIR"
+      echo "No builder transcripts found in $RUN_DIR" >&2
       exit 1
     fi
     echo "Tailing: $TRANSCRIPT"
@@ -413,13 +332,9 @@ case "$MODE" in
 
   --evaluator)
     RUN_DIR="$(get_run_dir)"
-    if [[ -z "$RUN_DIR" ]]; then
-      echo "No runs found in $RUNS_DIR"
-      exit 1
-    fi
     TRANSCRIPT="$(find_latest_transcript "$RUN_DIR" "evaluator")"
     if [[ -z "$TRANSCRIPT" ]]; then
-      echo "No evaluator transcripts found in $RUN_DIR"
+      echo "No evaluator transcripts found in $RUN_DIR" >&2
       exit 1
     fi
     echo "Tailing: $TRANSCRIPT"

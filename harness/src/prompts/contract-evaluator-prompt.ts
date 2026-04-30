@@ -9,11 +9,7 @@ import type {
   PacketType,
   RiskRegister,
 } from "../schemas.js";
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-  RISKY_PACKET_TYPES,
-} from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL, RISKY_PACKET_TYPES } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
@@ -32,16 +28,13 @@ export function buildContractEvaluatorPrompt(
 ): string {
   const sections: string[] = [];
 
-  // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0a. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("contract_evaluator", { packetId: proposal.packetId, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("contract_evaluator", enableMemory));
   const fanoutSection = buildVerificationFanoutSection("contract_evaluator", { useClaudeBackend });
   if (fanoutSection) sections.push(fanoutSection);
 
-  // 1. Review stance
   sections.push(`## Your Role
 
 You are the CONTRACT EVALUATOR. Your job is to review this contract proposal and decide
@@ -50,7 +43,6 @@ whether it meets quality standards before the builder starts implementation.
 Be rigorous. A weak contract leads to weak implementation and wasted builder cycles.
 Only accept contracts that are specific, testable, and properly scoped.`);
 
-  // 1a. Over-prescription detection
   sections.push(`## Over-Prescription Detection (CRITICAL)
 
 Your most important job is catching constraints that should be goals or guidance.
@@ -69,10 +61,8 @@ When you find over-prescription, require the contract builder to:
 3. Add a rationale (if it's truly a constraint but missing justification)
 4. Resolve conflicts between goals and constraints`);
 
-  // 1b. Mandatory validate_envelope gate
   sections.push(buildValidateEnvelopeSection("ContractReview"));
 
-  // 2. Packet type expectations
   const isUserVisible = USER_VISIBLE_TYPES.includes(proposal.packetType);
   const isRisky = RISKY_PACKET_TYPES.includes(proposal.packetType);
 
@@ -83,7 +73,6 @@ ${isUserVisible ? "- This is a USER-VISIBLE packet. It MUST have at least one sc
 ${isRisky ? "- This is a RISKY packet type. It MUST have at least one negative/invariant criterion." : ""}
 ${proposal.packetType === "long_running_job" ? "- This is a LONG-RUNNING JOB. It MUST have observability criteria (heartbeat, completion signal)." : ""}`);
 
-  // 3. Proposal to review
   sections.push(`## Contract Proposal (Round ${proposal.round})
 
 **Packet ID:** ${proposal.packetId}
@@ -131,7 +120,6 @@ ${proposal.reviewChecklist.map((item) => `- ${item}`).join("\n")}${
     : ""
 }`);
 
-  // 4. Risk register
   if (riskRegister && riskRegister.risks.length > 0) {
     sections.push(`## Risk Register (verify coverage)
 
@@ -140,7 +128,6 @@ ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}
 Check that the contract addresses relevant risks.`);
   }
 
-  // 5. Acceptance conditions
   sections.push(`## Acceptance Conditions
 
 A contract is acceptable ONLY when ALL of these are true:
@@ -160,7 +147,6 @@ A contract is acceptable ONLY when ALL of these are true:
 14. Constraints have rationales and don't prescribe solutions
 15. No constraint conflicts with a goal`);
 
-  // 6. Output format
   sections.push(`## Output Format
 
 Emit your review as a structured JSON envelope:

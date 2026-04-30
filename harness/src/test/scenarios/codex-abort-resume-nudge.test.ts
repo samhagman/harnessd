@@ -8,7 +8,7 @@
  *   3. On the next builder invocation, passes `resume: sessionId` and prepends
  *      "OPERATOR NUDGE:\n{text}\n\n" to the prompt.
  *
- * Uses a ScriptedNudgeBackend — a backend that simulates the Codex abort+resume
+ * Uses MultiCallNudgeBackend — a backend that simulates the Codex abort+resume
  * behaviour without spawning a real child process.
  */
 
@@ -21,14 +21,14 @@ import type { AgentMessage, AgentBackend, AgentSessionOptions, NudgeOutcome } fr
 import { runOrchestrator } from "../../orchestrator.js";
 import { getRunDir, getLatestRunId } from "../../state-store.js";
 import { readEvents } from "../../event-log.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../../schemas.js";
 import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../../schemas.js";
-
-// ------------------------------------
-// Temp directory management
-// ------------------------------------
+  makeScript,
+  plannerEnvelope,
+  contractBuilderEnvelope,
+  contractEvaluatorAcceptEnvelope,
+  evaluatorPassEnvelope,
+} from "../helpers/scripted-backend.js";
 
 let tmpDir: string;
 
@@ -38,84 +38,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   await new Promise((r) => setTimeout(r, 500));
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
-
-// ------------------------------------
-// Fake response builders
-// ------------------------------------
-
-function plannerEnvelope(): string {
-  const payload = {
-    spec: "# Spec\n\nBuild a simple utility.\n",
-    packets: [
-      {
-        id: "PKT-001",
-        title: "Build utility",
-        type: "tooling",
-        objective: "Create a helper utility",
-        whyNow: "Needed now",
-        dependencies: [],
-        status: "pending",
-        priority: 1,
-        estimatedSize: "S",
-        risks: [],
-        notes: [],
-      },
-    ],
-    riskRegister: { risks: [] },
-    evaluatorGuide: {
-      domain: "tooling",
-      qualityCriteria: [{ name: "correctness", weight: 5, description: "Works" }],
-      antiPatterns: [],
-      referenceStandard: "Clean code",
-      edgeCases: [],
-      calibrationExamples: [{ dimension: "correctness", score: 5, description: "All pass" }],
-      skepticismLevel: "normal",
-    },
-    planSummary: "One packet: utility.\n",
-  };
-  return `${RESULT_START_SENTINEL}\n${JSON.stringify(payload)}\n${RESULT_END_SENTINEL}`;
-}
-
-function contractBuilderEnvelope(packetId: string): string {
-  const payload = {
-    packetId,
-    round: 1,
-    status: "proposed",
-    title: `Implement ${packetId}`,
-    packetType: "tooling",
-    objective: `Implement ${packetId}`,
-    inScope: ["Create utility"],
-    outOfScope: ["Deployment automation", "CI/CD setup"],
-    assumptions: [],
-    risks: [],
-    likelyFiles: ["src/util.ts"],
-    implementationPlan: ["Step 1: Implement"],
-    backgroundJobs: [],
-    microFanoutPlan: [],
-    acceptance: [
-      { id: "AC-001", kind: "command", description: "Runs OK", blocking: true, evidenceRequired: ["output"] },
-    ],
-    reviewChecklist: [],
-    proposedCommitMessage: `feat: implement ${packetId}`,
-  };
-  return `${RESULT_START_SENTINEL}\n${JSON.stringify(payload)}\n${RESULT_END_SENTINEL}`;
-}
-
-function contractEvaluatorAcceptEnvelope(packetId: string): string {
-  const payload = {
-    packetId,
-    round: 1,
-    decision: "accept",
-    scores: { scopeFit: 5, testability: 5, riskCoverage: 4, clarity: 5, specAlignment: 5 },
-    requiredChanges: [],
-    suggestedCriteriaAdditions: [],
-    missingRisks: [],
-    rationale: "Looks good.",
-  };
-  return `${RESULT_START_SENTINEL}\n${JSON.stringify(payload)}\n${RESULT_END_SENTINEL}`;
-}
 
 function builderReportEnvelope(packetId: string): string {
   const payload = {
@@ -132,120 +56,6 @@ function builderReportEnvelope(packetId: string): string {
   return `${RESULT_START_SENTINEL}\n${JSON.stringify(payload)}\n${RESULT_END_SENTINEL}`;
 }
 
-function evaluatorPassEnvelope(packetId: string): string {
-  const payload = {
-    packetId,
-    sessionId: "evaluator-session-001",
-    overall: "pass",
-    hardFailures: [],
-    rubricScores: [],
-    criterionVerdicts: [{ criterionId: "AC-001", verdict: "pass", evidence: "Works" }],
-    missingEvidence: [],
-    nextActions: [],
-    contractGapDetected: false,
-  };
-  return `${RESULT_START_SENTINEL}\n${JSON.stringify(payload)}\n${RESULT_END_SENTINEL}`;
-}
-
-function makeScript(text: string, sessionId: string): AgentMessage[] {
-  return [
-    { type: "system", subtype: "init", sessionId },
-    { type: "assistant", text },
-    { type: "result", subtype: "success", text, isError: false, numTurns: 1, sessionId },
-  ];
-}
-
-// ------------------------------------
-// ScriptedNudgeBackend
-// ------------------------------------
-
-/**
- * A backend that simulates the Codex abort+resume nudge flow:
- *
- * - Call 0 (builder first attempt): yields a slow infinite loop that can be
- *   interrupted by queueNudge(). When killed (queueNudge called), the generator
- *   stops without yielding a result envelope — simulating SIGTERM abort.
- *
- * - Call 1+ (subsequent calls): yield the scripted messages normally.
- *
- * queueNudge() returns { handled: true, via: "abort-resume", sessionId, nudgeText }
- * when a session is active (simulating CodexCliBackend Phase 3 behaviour).
- */
-class ScriptedNudgeBackend implements AgentBackend {
-  private callIndex = 0;
-  private scripts: AgentMessage[][];
-  private lastSessionIdVal: string | null = null;
-  private abortController: AbortController | null = null;
-
-  readonly calls: AgentSessionOptions[] = [];
-
-  // For nudge tracking
-  private activeSessionId: string | null = null;
-  nudgeOutcomes: NudgeOutcome[] = [];
-
-  constructor(scripts: AgentMessage[][]) {
-    this.scripts = scripts;
-  }
-
-  async *runSession(opts: AgentSessionOptions): AsyncGenerator<AgentMessage> {
-    this.calls.push(opts);
-    const idx = this.callIndex++;
-    const script = this.scripts[idx];
-    if (!script) throw new Error(`ScriptedNudgeBackend: no script for call index ${idx}`);
-
-    const ac = new AbortController();
-    this.abortController = ac;
-    this.activeSessionId = `session-${idx}`;
-    this.lastSessionIdVal = this.activeSessionId;
-
-    try {
-      for (const msg of script) {
-        if (ac.signal.aborted) break;
-        if (msg.sessionId) this.lastSessionIdVal = msg.sessionId;
-        yield msg;
-      }
-      // If aborted mid-script, don't yield the result message
-      if (!ac.signal.aborted) {
-        // Already yielded via script — nothing more to do
-      }
-    } finally {
-      this.abortController = null;
-      this.activeSessionId = null;
-    }
-  }
-
-  getLastSessionId(): string | null {
-    return this.lastSessionIdVal;
-  }
-
-  queueNudge(text: string): NudgeOutcome {
-    if (!this.abortController || !this.activeSessionId) {
-      return { handled: false };
-    }
-    const sessionId = this.activeSessionId;
-    this.abortController.abort(); // Simulate SIGTERM abort
-    const outcome: NudgeOutcome = {
-      handled: true,
-      via: "abort-resume",
-      sessionId,
-      nudgeText: text,
-    };
-    this.nudgeOutcomes.push(outcome);
-    return outcome;
-  }
-
-  abortSession(): string | null {
-    const sid = this.activeSessionId;
-    this.abortController?.abort();
-    return sid;
-  }
-
-  supportsResume(): boolean { return true; }
-  supportsMcpServers(): boolean { return false; }
-  nudgeStrategy(): "stream" | "abort-resume" | "none" { return "abort-resume"; }
-  supportsOutputSchema(): boolean { return false; }
-}
-
 /**
  * A multi-call backend that dispatches different scripts per call index.
  *
@@ -260,12 +70,10 @@ class MultiCallNudgeBackend implements AgentBackend {
   private scripts: AgentMessage[][];
   private lastSessionIdVal: string | null = null;
   private activeSession: { ac: AbortController; sessionId: string } | null = null;
+  private blockingCallIndices: Set<number>;
 
   readonly calls: AgentSessionOptions[] = [];
   readonly nudgeOutcomes: NudgeOutcome[] = [];
-
-  // Which call indices should block until aborted (simulating running Codex child)
-  private blockingCallIndices: Set<number>;
 
   constructor(scripts: AgentMessage[][], blockingCallIndices: number[] = []) {
     this.scripts = scripts;
@@ -284,44 +92,29 @@ class MultiCallNudgeBackend implements AgentBackend {
     this.lastSessionIdVal = sessionId;
 
     try {
-      // Yield the initial messages from the script
       for (const msg of script) {
-        if (ac.signal.aborted) return; // Stopped by queueNudge — no result envelope
+        if (ac.signal.aborted) return;
         if (msg.sessionId) this.lastSessionIdVal = msg.sessionId;
         yield msg;
       }
-
-      // If this is a blocking call: wait until aborted (simulates a long-running session)
       if (this.blockingCallIndices.has(idx)) {
         while (!ac.signal.aborted) {
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        // Aborted — return without yielding a result envelope (simulates SIGTERM)
         return;
       }
-
-      // Non-blocking: script finished normally, return (result envelope already in script)
     } finally {
       this.activeSession = null;
     }
   }
 
-  getLastSessionId(): string | null {
-    return this.lastSessionIdVal;
-  }
+  getLastSessionId(): string | null { return this.lastSessionIdVal; }
 
   queueNudge(text: string): NudgeOutcome {
-    if (!this.activeSession) {
-      return { handled: false };
-    }
+    if (!this.activeSession) return { handled: false };
     const { ac, sessionId } = this.activeSession;
-    ac.abort(); // Abort the running session (simulates SIGTERM to child process)
-    const outcome: NudgeOutcome = {
-      handled: true,
-      via: "abort-resume",
-      sessionId,
-      nudgeText: text,
-    };
+    ac.abort();
+    const outcome: NudgeOutcome = { handled: true, via: "abort-resume", sessionId, nudgeText: text };
     this.nudgeOutcomes.push(outcome);
     return outcome;
   }
@@ -339,23 +132,11 @@ class MultiCallNudgeBackend implements AgentBackend {
   supportsOutputSchema(): boolean { return false; }
 }
 
-// ------------------------------------
-// Scenario test
-// ------------------------------------
-
 describe("codex abort+resume nudge scenario", () => {
-  // This test has a 10s RETRY_COOLDOWN after the first builder attempt is aborted,
-  // plus ~3s for the nudge poller to fire (3000ms interval). Allow 45s total.
+  // First builder attempt gets aborted (blocked until SIGTERM). After the nudge,
+  // the orchestrator resumes with the nudge text prepended to the prompt.
+  // Allow 45s: includes the ~10s RETRY_COOLDOWN + ~3s nudge poller interval.
   it("emits builder.aborted-for-nudge and resumes with nudge in prompt", async () => {
-
-    // Script order:
-    // 0: planner
-    // 1: contract builder
-    // 2: contract evaluator (accept)
-    // 3: builder (first attempt — will be interrupted by nudge)
-    // 4: builder (second attempt — resumes with nudge in prompt, claims done)
-    // 5: evaluator (pass)
-
     const NUDGE_TEXT = "also handle the edge case where input is empty";
 
     const scripts: AgentMessage[][] = [
@@ -369,12 +150,10 @@ describe("codex abort+resume nudge scenario", () => {
       makeScript(contractBuilderEnvelope("PKT-001"), "cb-sess"),
       // 2: contract evaluator (accept)
       makeScript(contractEvaluatorAcceptEnvelope("PKT-001"), "ce-sess"),
-      // 3: builder first attempt — only yields the system init, then stops
-      //    (no result envelope — simulates being aborted mid-run)
+      // 3: builder first attempt — yields init then blocks (no result envelope — simulates SIGTERM abort)
       [
         { type: "system", subtype: "init", sessionId: "builder-sess-001" },
         { type: "assistant", text: "I am analyzing the codebase..." },
-        // No result envelope — session will be interrupted
       ],
       // 4: builder second attempt (resumed with nudge)
       makeScript(builderReportEnvelope("PKT-001"), "builder-sess-002"),
@@ -384,7 +163,6 @@ describe("codex abort+resume nudge scenario", () => {
 
     const backend = new MultiCallNudgeBackend(scripts, [3]);
 
-    // Auto-approve plan and inject nudge
     let nudgeSent = false;
     const autoApprove = setInterval(() => {
       try {
@@ -402,20 +180,12 @@ describe("codex abort+resume nudge scenario", () => {
           );
         }
 
-        // Send nudge once builder is active (building_packet phase).
-        // The MultiCallNudgeBackend will block on the first builder call (index 3)
-        // until queueNudge() is called, so writing the inbox file here ensures
-        // the nudge poller picks it up and calls queueNudge() to abort the session.
         if (!nudgeSent && runJson.phase === "building_packet") {
           nudgeSent = true;
           try {
             fs.writeFileSync(
               path.join(inboxDir, "nudge.json"),
-              JSON.stringify({
-                type: "send_to_agent",
-                createdAt: new Date().toISOString(),
-                message: NUDGE_TEXT,
-              }),
+              JSON.stringify({ type: "send_to_agent", createdAt: new Date().toISOString(), message: NUDGE_TEXT }),
             );
           } catch { /* ignore */ }
         }
@@ -433,40 +203,31 @@ describe("codex abort+resume nudge scenario", () => {
     expect(latestRunId).not.toBeNull();
     const runDir = getRunDir(tmpDir, latestRunId!);
 
-    // Verify run completed
     const runJson = JSON.parse(fs.readFileSync(path.join(runDir, "run.json"), "utf-8"));
     expect(runJson.phase).toBe("completed");
 
-    // Verify events.jsonl contains builder.aborted-for-nudge
     const events = readEvents(tmpDir, latestRunId!);
     const eventTypes = events.map((e) => e.event);
-
     expect(eventTypes).toContain("builder.aborted-for-nudge");
     expect(eventTypes).toContain("nudge.sent");
 
-    // Find the aborted-for-nudge event and verify its detail
     const abortEvent = events.find((e) => e.event === "builder.aborted-for-nudge");
     expect(abortEvent).toBeDefined();
     expect(abortEvent?.detail).toContain("aborted for nudge");
 
-    // Verify the nudge was delivered (queueNudge was called and returned abort-resume)
     expect(backend.nudgeOutcomes.length).toBeGreaterThan(0);
-    const nudgeOutcome = backend.nudgeOutcomes[0];
+    const nudgeOutcome = backend.nudgeOutcomes[0]!;
     expect(nudgeOutcome.handled).toBe(true);
     if (nudgeOutcome.handled) {
       expect(nudgeOutcome.via).toBe("abort-resume");
       expect((nudgeOutcome as { via: "abort-resume"; nudgeText: string }).nudgeText).toBe(NUDGE_TEXT);
     }
 
-    // Verify the resumed builder call has the nudge in the prompt
-    // The nudge-resume builder invocation should be call index 4
-    // and its prompt should start with "OPERATOR NUDGE:"
     const builderResumeCall = backend.calls.find(
       (call) => typeof call.prompt === "string" && call.prompt.startsWith("OPERATOR NUDGE:"),
     );
     expect(builderResumeCall).toBeDefined();
     expect(builderResumeCall?.prompt).toContain(NUDGE_TEXT);
-    // The resumed call should have a resume session ID
     expect(builderResumeCall?.resume).toBeDefined();
   }, 45_000);
 });

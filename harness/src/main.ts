@@ -180,7 +180,11 @@ async function main(): Promise<void> {
 
   ensureSchemasAreUpToDate();
 
-  const repoRoot = process.env.WIGGUM_REPO_ROOT ?? process.cwd();
+  // HARNESSD_REPO_ROOT is the canonical name; WIGGUM_REPO_ROOT is preserved
+  // as a back-compat read for any operator scripts/launchers that haven't
+  // been updated yet (legacy name predates the harnessd rename).
+  const repoRoot =
+    process.env.HARNESSD_REPO_ROOT ?? process.env.WIGGUM_REPO_ROOT ?? process.cwd();
 
   // --status
   if (args.includes("--status")) {

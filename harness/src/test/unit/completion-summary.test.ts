@@ -1,23 +1,13 @@
 /**
  * Unit tests for completion-summary.ts — generateCompletionContext().
  *
- * Tests that the function returns a typed PacketCompletionContext (not a string),
- * that all three layers (intent, execution, outcome) flow through correctly,
- * and that backward compatibility defaults work.
+ * Verifies the three context layers (intent, execution, outcome) and backward
+ * compatibility defaults for old builder/evaluator report shapes.
  */
 
 import { describe, it, expect } from "vitest";
 import { generateCompletionContext } from "../../completion-summary.js";
-import type {
-  Packet,
-  PacketContract,
-  BuilderReport,
-  EvaluatorReport,
-} from "../../schemas.js";
-
-// ------------------------------------
-// Test fixtures
-// ------------------------------------
+import type { Packet, PacketContract, BuilderReport, EvaluatorReport } from "../../schemas.js";
 
 function makePacket(overrides: Partial<Packet> = {}): Packet {
   return {
@@ -139,10 +129,6 @@ function makeEvaluatorReport(overrides: Partial<EvaluatorReport> = {}): Evaluato
   };
 }
 
-// ------------------------------------
-// Core tests
-// ------------------------------------
-
 describe("generateCompletionContext", () => {
   it("returns a typed object (not a string)", () => {
     const ctx = generateCompletionContext(
@@ -169,10 +155,6 @@ describe("generateCompletionContext", () => {
     expect(ctx.title).toBe("Configure Redis");
     expect(ctx.objective).toBe("Set up Redis for sessions");
   });
-
-  // ------------------------------------
-  // Intent layer (from contract)
-  // ------------------------------------
 
   it("goals flow through from contract", () => {
     const ctx = generateCompletionContext(
@@ -221,10 +203,6 @@ describe("generateCompletionContext", () => {
     expect(ctx.outOfScope).toContain("Frontend changes");
   });
 
-  // ------------------------------------
-  // Execution layer (from builder report)
-  // ------------------------------------
-
   it("changedFiles flow through from builder report", () => {
     const ctx = generateCompletionContext(
       makePacket(),
@@ -257,10 +235,6 @@ describe("generateCompletionContext", () => {
     );
     expect(ctx.remainingConcerns).toContain("WebSocket upgrade path not tested");
   });
-
-  // ------------------------------------
-  // Outcome layer (from evaluator report)
-  // ------------------------------------
 
   it("acceptanceResults are computed from criterionVerdicts", () => {
     const ctx = generateCompletionContext(
@@ -341,12 +315,7 @@ describe("generateCompletionContext", () => {
     expect(ctx.acceptanceResults.total).toBe(0);
   });
 
-  // ------------------------------------
-  // Backward compatibility
-  // ------------------------------------
-
   it("keyDecisions defaults to [] when not in builder report (old schema)", () => {
-    // Simulate a builder report from before keyDecisions was added
     const oldStyleReport = {
       ...makeBuilderReport(),
       keyDecisions: undefined,
@@ -405,10 +374,6 @@ describe("generateCompletionContext", () => {
     );
     expect(ctx.guidance).toEqual([]);
   });
-
-  // ------------------------------------
-  // commitMessages
-  // ------------------------------------
 
   it("commitMessages is empty when no cwd and no commitShas", () => {
     const ctx = generateCompletionContext(

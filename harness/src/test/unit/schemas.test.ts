@@ -1,8 +1,4 @@
-/**
- * Unit tests for Zod schemas and helper functions.
- */
-
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, test } from "vitest";
 
 import {
   RunStateSchema,
@@ -19,10 +15,6 @@ import {
   defaultProjectConfig,
   ProjectConfigSchema,
 } from "../../schemas.js";
-
-// ------------------------------------
-// RunState
-// ------------------------------------
 
 describe("RunStateSchema", () => {
   it("parses a valid RunState", () => {
@@ -55,10 +47,6 @@ describe("RunStateSchema", () => {
   });
 });
 
-// ------------------------------------
-// defaultRunState
-// ------------------------------------
-
 describe("defaultRunState", () => {
   it("produces a valid state that passes schema validation", () => {
     const state = defaultRunState("run-default-test", "build a thing");
@@ -77,10 +65,6 @@ describe("defaultRunState", () => {
   });
 });
 
-// ------------------------------------
-// defaultProjectConfig
-// ------------------------------------
-
 describe("defaultProjectConfig", () => {
   it("produces a valid config with correct defaults", () => {
     const config = defaultProjectConfig();
@@ -95,14 +79,9 @@ describe("defaultProjectConfig", () => {
     expect(config.allowDirectEditSubagents).toBe(false);
     expect(config.renderStatusOnEveryEvent).toBe(true);
     expect(config.maxConsecutiveResumeFailures).toBe(8);
-    // effort is optional; default config leaves it undefined
     expect(config.effort).toBeUndefined();
   });
 });
-
-// ------------------------------------
-// ProjectConfigSchema — effort field
-// ------------------------------------
 
 describe("ProjectConfigSchema effort field", () => {
   it("accepts all valid effort values", () => {
@@ -123,10 +102,6 @@ describe("ProjectConfigSchema effort field", () => {
     expect(parsed.effort).toBeUndefined();
   });
 });
-
-// ------------------------------------
-// PacketSchema
-// ------------------------------------
 
 describe("PacketSchema", () => {
   const validPacket = {
@@ -168,10 +143,6 @@ describe("PacketSchema", () => {
   });
 });
 
-// ------------------------------------
-// AcceptanceCriterionSchema
-// ------------------------------------
-
 describe("AcceptanceCriterionSchema", () => {
   const validCriterion = {
     id: "AC-001",
@@ -200,21 +171,12 @@ describe("AcceptanceCriterionSchema", () => {
   });
 
   it("allows optional fields (threshold, command, scenario)", () => {
-    const extended = {
-      ...validCriterion,
-      threshold: 0.95,
-      command: "npm test",
-      expected: "0 failures",
-    };
+    const extended = { ...validCriterion, threshold: 0.95, command: "npm test", expected: "0 failures" };
     const parsed = AcceptanceCriterionSchema.parse(extended);
     expect(parsed.threshold).toBe(0.95);
     expect(parsed.command).toBe("npm test");
   });
 });
-
-// ------------------------------------
-// EventEntrySchema
-// ------------------------------------
 
 describe("EventEntrySchema", () => {
   it("parses a valid event entry", () => {
@@ -249,18 +211,11 @@ describe("EventEntrySchema", () => {
   });
 
   it("rejects event without ts", () => {
-    expect(() =>
-      EventEntrySchema.parse({ event: "run.started" }),
-    ).toThrow();
+    expect(() => EventEntrySchema.parse({ event: "run.started" })).toThrow();
   });
 });
 
-// ------------------------------------
-// PacketSchema field defaults
-// ------------------------------------
-
 describe("PacketSchema field defaults", () => {
-  /** Minimal valid packet — required fields only, no defaulted arrays */
   function minimalPacket(overrides: Record<string, unknown> = {}) {
     return {
       id: "PKT-001",
@@ -277,29 +232,15 @@ describe("PacketSchema field defaults", () => {
     };
   }
 
-  it("expectedFiles defaults to [] when omitted", () => {
-    const packet = PacketSchema.parse(minimalPacket());
-    expect(packet.expectedFiles).toEqual([]);
-  });
-
-  it("criticalConstraints defaults to [] when omitted", () => {
-    const packet = PacketSchema.parse(minimalPacket());
-    expect(packet.criticalConstraints).toEqual([]);
-  });
-
-  it("integrationInputs defaults to [] when omitted", () => {
-    const packet = PacketSchema.parse(minimalPacket());
-    expect(packet.integrationInputs).toEqual([]);
-  });
-
-  it("notes defaults to [] when omitted", () => {
-    const packet = PacketSchema.parse(minimalPacket());
-    expect(packet.notes).toEqual([]);
-  });
+  test.each(["expectedFiles", "criticalConstraints", "integrationInputs", "notes"] as const)(
+    "%s defaults to [] when omitted",
+    (field) => {
+      expect(PacketSchema.parse(minimalPacket())[field]).toEqual([]);
+    },
+  );
 
   it("requiresHumanReview defaults to false when omitted", () => {
-    const packet = PacketSchema.parse(minimalPacket());
-    expect(packet.requiresHumanReview).toBe(false);
+    expect(PacketSchema.parse(minimalPacket()).requiresHumanReview).toBe(false);
   });
 
   it("explicitly provided expectedFiles are preserved", () => {
@@ -318,21 +259,14 @@ describe("PacketSchema field defaults", () => {
 
   it("explicitly provided integrationInputs are preserved", () => {
     const packet = PacketSchema.parse(
-      minimalPacket({
-        integrationInputs: [{ fromPacket: "PKT-002", provides: ["UserSchema"] }],
-      }),
+      minimalPacket({ integrationInputs: [{ fromPacket: "PKT-002", provides: ["UserSchema"] }] }),
     );
     expect(packet.integrationInputs).toHaveLength(1);
     expect(packet.integrationInputs[0]!.fromPacket).toBe("PKT-002");
   });
 });
 
-// ------------------------------------
-// BuilderReportSchema field defaults
-// ------------------------------------
-
 describe("BuilderReportSchema field defaults", () => {
-  /** Minimal valid builder report — required fields only */
   function minimalBuilderReport(overrides: Record<string, unknown> = {}) {
     return {
       packetId: "PKT-001",
@@ -398,17 +332,11 @@ describe("BuilderReportSchema field defaults", () => {
   it("keyDecisions rejects entries missing required fields", () => {
     expect(() =>
       BuilderReportSchema.parse(
-        minimalBuilderReport({
-          keyDecisions: [{ description: "No rationale" }], // missing rationale
-        }),
+        minimalBuilderReport({ keyDecisions: [{ description: "No rationale" }] }),
       ),
     ).toThrow();
   });
 });
-
-// ------------------------------------
-// ContractGoalSchema
-// ------------------------------------
 
 describe("ContractGoalSchema", () => {
   it("parses a valid goal", () => {
@@ -432,15 +360,9 @@ describe("ContractGoalSchema", () => {
   });
 
   it("rejects a goal missing description", () => {
-    expect(() =>
-      ContractGoalSchema.parse({ id: "G-001", acceptanceCriteriaIds: [] }),
-    ).toThrow();
+    expect(() => ContractGoalSchema.parse({ id: "G-001", acceptanceCriteriaIds: [] })).toThrow();
   });
 });
-
-// ------------------------------------
-// ContractConstraintSchema
-// ------------------------------------
 
 describe("ContractConstraintSchema", () => {
   const allKinds = ["scope", "tech-stack", "behavior", "safety", "process"] as const;
@@ -468,18 +390,10 @@ describe("ContractConstraintSchema", () => {
 
   it("rejects an invalid kind value", () => {
     expect(() =>
-      ContractConstraintSchema.parse({
-        id: "C-001",
-        description: "Only modify files within src/",
-        kind: "invalid-kind",
-      }),
+      ContractConstraintSchema.parse({ id: "C-001", description: "Only modify files within src/", kind: "invalid-kind" }),
     ).toThrow();
   });
 });
-
-// ------------------------------------
-// ContractGuidanceSchema
-// ------------------------------------
 
 describe("ContractGuidanceSchema", () => {
   const allSources = [
@@ -521,20 +435,11 @@ describe("ContractGuidanceSchema", () => {
 
   it("rejects an invalid source value", () => {
     expect(() =>
-      ContractGuidanceSchema.parse({
-        id: "GD-001",
-        description: "Some guidance",
-        source: "made-up-source",
-      }),
+      ContractGuidanceSchema.parse({ id: "GD-001", description: "Some guidance", source: "made-up-source" }),
     ).toThrow();
   });
 });
 
-// ------------------------------------
-// PacketContractSchema — goals/constraints/guidance
-// ------------------------------------
-
-/** Minimal valid contract for PacketContractSchema tests */
 function minimalContract(overrides: Record<string, unknown> = {}) {
   return {
     packetId: "PKT-001",
@@ -626,28 +531,9 @@ describe("PacketContractSchema — backward compat and new fields", () => {
   it("new contract with all three new fields parses", () => {
     const contract = PacketContractSchema.parse(
       minimalContract({
-        goals: [
-          {
-            id: "G-001",
-            description: "Script executes without errors",
-            acceptanceCriteriaIds: ["AC-001"],
-          },
-        ],
-        constraints: [
-          {
-            id: "C-001",
-            description: "Only modify script.sh",
-            kind: "scope",
-            rationale: "Other files are not in scope",
-          },
-        ],
-        guidance: [
-          {
-            id: "GD-001",
-            description: "Follow POSIX sh conventions",
-            source: "codebase-pattern",
-          },
-        ],
+        goals: [{ id: "G-001", description: "Script executes without errors", acceptanceCriteriaIds: ["AC-001"] }],
+        constraints: [{ id: "C-001", description: "Only modify script.sh", kind: "scope", rationale: "Other files are not in scope" }],
+        guidance: [{ id: "GD-001", description: "Follow POSIX sh conventions", source: "codebase-pattern" }],
       }),
     );
     expect(contract.goals).toHaveLength(1);
@@ -656,11 +542,6 @@ describe("PacketContractSchema — backward compat and new fields", () => {
   });
 });
 
-// ------------------------------------
-// PacketCompletionContextSchema
-// ------------------------------------
-
-/** Minimal valid completion context */
 function minimalCompletionContext(overrides: Record<string, unknown> = {}) {
   return {
     packetId: "PKT-001",
@@ -695,29 +576,15 @@ describe("PacketCompletionContextSchema", () => {
     expect(ctx.acceptanceResults.total).toBe(4);
   });
 
-  it("goals defaults to [] when omitted", () => {
+  test.each([
+    "goals",
+    "constraints",
+    "guidance",
+    "keyDecisions",
+    "evaluatorAddedCriteria",
+  ] as const)("%s defaults to [] when omitted", (field) => {
     const ctx = PacketCompletionContextSchema.parse(minimalCompletionContext());
-    expect(ctx.goals).toEqual([]);
-  });
-
-  it("constraints defaults to [] when omitted", () => {
-    const ctx = PacketCompletionContextSchema.parse(minimalCompletionContext());
-    expect(ctx.constraints).toEqual([]);
-  });
-
-  it("guidance defaults to [] when omitted", () => {
-    const ctx = PacketCompletionContextSchema.parse(minimalCompletionContext());
-    expect(ctx.guidance).toEqual([]);
-  });
-
-  it("keyDecisions defaults to [] when omitted", () => {
-    const ctx = PacketCompletionContextSchema.parse(minimalCompletionContext());
-    expect(ctx.keyDecisions).toEqual([]);
-  });
-
-  it("evaluatorAddedCriteria defaults to [] when omitted", () => {
-    const ctx = PacketCompletionContextSchema.parse(minimalCompletionContext());
-    expect(ctx.evaluatorAddedCriteria).toEqual([]);
+    expect(ctx[field]).toEqual([]);
   });
 
   it("parses with goals, constraints, guidance populated", () => {

@@ -20,6 +20,8 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
+# shellcheck source=./_lib.sh
+source "$HARNESS_DIR/_lib.sh"
 
 if [ $# -lt 3 ]; then
   echo "Usage: $0 <run-id> <packet-id|--planner> <role>" >&2
@@ -32,18 +34,12 @@ RUN_ID="$1"
 PACKET_ID="$2"
 ROLE="$3"
 
-# Resolve run dir. Launches from the repo root write to REPO_ROOT/.harnessd/,
-# while direct tsx invocations from harness/ write to HARNESS_DIR/.harnessd/.
-# Require run.json so we don't latch onto an empty stub dir left by an earlier
-# misrouted command (nudge.sh has this failure mode).
-RUN_DIR=""
-for candidate in "$REPO_ROOT/.harnessd/runs/$RUN_ID" "$HARNESS_DIR/.harnessd/runs/$RUN_ID"; do
-  if [ -f "$candidate/run.json" ]; then RUN_DIR="$candidate"; break; fi
-done
-if [ -z "$RUN_DIR" ]; then
+# Resolve run dir via shared helper (requires run.json so we never latch onto
+# an empty stub dir left by an earlier misrouted command).
+RUN_DIR=$(resolve_run_dir "$HARNESS_DIR" "$REPO_ROOT" "$RUN_ID") || {
   echo "Error: run '$RUN_ID' (with run.json) not found under $REPO_ROOT/.harnessd/runs/ or $HARNESS_DIR/.harnessd/runs/" >&2
   exit 1
-fi
+}
 
 # Resolve the artifact dir for (packetId, role).
 # Per-packet roles live under packets/<id>/<subdir>, where subdir is:

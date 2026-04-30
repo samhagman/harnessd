@@ -11,17 +11,14 @@ import type {
   PacketContract,
   EvaluatorReport,
 } from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
-import {
+  type BackendCapabilities,
   AUTONOMOUS_PREAMBLE,
   buildValidateEnvelopeSection,
   buildHarnessContextSection,
   buildMemorySearchSection,
 } from "./shared.js";
-import type { BackendCapabilities } from "./builder-prompt.js";
 
 export function buildContractBuilderPrompt(
   packet: Packet,
@@ -37,19 +34,15 @@ export function buildContractBuilderPrompt(
   const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
   const sections: string[] = [];
 
-  // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0a. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("contract_builder", { packetId: packet.id, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("contract_builder", enableMemory));
 
-  // 0b. Mandatory validate_envelope gate (only when MCP is available)
   if (supportsMcp) {
     sections.push(buildValidateEnvelopeSection("PacketContract"));
   }
 
-  // 0c. Renegotiation context (additive renegotiation after evaluator gap)
   if (existingContract && evaluatorReport) {
     const hardFailuresFormatted = evaluatorReport.hardFailures.length > 0
       ? evaluatorReport.hardFailures
@@ -101,7 +94,6 @@ ${existingContract.outOfScope.map((s) => `- ${s}`).join("\n")}
 ${existingContract.implementationPlan.map((step, i) => `${i + 1}. ${step}`).join("\n")}`);
   }
 
-  // 1. Packet objective
   sections.push(`## Packet to Plan
 
 **ID:** ${packet.id}
@@ -113,7 +105,6 @@ ${existingContract.implementationPlan.map((step, i) => `${i + 1}. ${step}`).join
 ${packet.risks.length > 0 ? `**Known risks:**\n${packet.risks.map((r) => `- ${r}`).join("\n")}` : ""}
 ${packet.notes.length > 0 ? `**Notes:**\n${packet.notes.map((n) => `- ${n}`).join("\n")}` : ""}`);
 
-  // 2. Acceptance template
   sections.push(`## Acceptance Template for "${packet.type}"
 
 Required criterion kinds: ${template.requiredCriterionKinds.join(", ")}
@@ -129,12 +120,10 @@ ${template.defaultCriteria
 You MUST include all required criterion kinds. You may add more criteria.
 Make each criterion specific and testable for THIS packet.`);
 
-  // 3. Spec excerpt
   sections.push(`## Specification Context
 
 ${specExcerpt}`);
 
-  // 4. Contract requirements
   sections.push(`## Required Contract Fields
 
 Your contract proposal MUST include ALL of these fields:
@@ -163,7 +152,6 @@ Your contract proposal MUST include ALL of these fields:
 Keep the packet bounded and completable in one builder session.
 If the scope feels too large, say so in the contract.`);
 
-  // 4a. Goals, constraints, and guidance teaching section
   sections.push(`## Goals, Constraints, and Guidance
 
 Your contract MUST separate intent into three explicit sections:
@@ -221,7 +209,6 @@ Each acceptance criterion should map to a goal. Constraints are checked
 separately — they don't need dedicated acceptance criteria unless they have
 a natural verification command.`);
 
-  // 4b. Data integrity rule
   sections.push(`## Data Integrity Rule
 
 If this packet involves mutating application state (database writes, store updates,
@@ -236,7 +223,6 @@ Examples:
 UI looking correct is NOT sufficient evidence that a mutation worked.
 The evaluator must independently query the data layer to verify state integrity.`);
 
-  // 5. Prior review (if revising)
   if (priorReview) {
     sections.push(`## REVISION REQUIRED
 
@@ -264,7 +250,6 @@ ${priorReview.suggestedCriteriaAdditions.length > 0 ? priorReview.suggestedCrite
 Address ALL required changes. Do not ignore the evaluator's feedback.`);
   }
 
-  // 6. Output format — conditional on whether the backend supports structured output schema
   const exampleJson = `{
   "packetId": "${packet.id}",
   "round": ${priorReview ? priorReview.round + 1 : 1},

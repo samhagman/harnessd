@@ -1,11 +1,3 @@
-/**
- * Unit tests for the advisory guard logic in evaluator-runner.ts.
- *
- * The advisory guard overrides an evaluator "fail" to "pass" when ALL blocking
- * criteria passed and only advisory (non-blocking) criteria failed — unless the
- * evaluator explicitly escalated an advisory criterion via advisoryEscalations.
- */
-
 import { describe, it, expect } from "vitest";
 
 import {
@@ -20,10 +12,6 @@ import type {
   CriterionVerdict,
   AcceptanceCriterion,
 } from "../../schemas.js";
-
-// ------------------------------------
-// Test fixtures
-// ------------------------------------
 
 function makeContract(criteria: AcceptanceCriterion[]): PacketContract {
   return {
@@ -88,10 +76,6 @@ const baseReport: EvaluatorReport = {
   additionalIssuesOmitted: false,
   advisoryEscalations: [],
 };
-
-// ------------------------------------
-// applyAdvisoryGuard
-// ------------------------------------
 
 describe("applyAdvisoryGuard", () => {
   it("overrides fail → pass when all blocking criteria pass and only advisory criteria fail", () => {

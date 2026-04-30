@@ -14,62 +14,59 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
+
+# shellcheck source=./_lib.sh
+source "$HARNESS_DIR/_lib.sh"
+
 RUN_ID="${HARNESSD_RUN_ID:-}"
 
-# Find the active run if not specified
-if [ -z "$RUN_ID" ]; then
-  RUNS_DIR="$REPO_ROOT/.harnessd/runs"
-  if [ ! -d "$RUNS_DIR" ]; then
-    echo "Error: No .harnessd/runs directory found" >&2
-    exit 1
-  fi
-  # Pick the most recently updated run
-  RUN_ID=$(ls -t "$RUNS_DIR" | head -1)
-  if [ -z "$RUN_ID" ]; then
+if [[ -z "$RUN_ID" ]]; then
+  RUN_DIR="$(find_latest_run_dir "$HARNESS_DIR" "$REPO_ROOT")" || {
     echo "Error: No runs found" >&2
     exit 1
-  fi
+  }
+  RUN_ID="$(basename "$RUN_DIR")"
+else
+  RUN_DIR="$(resolve_run_dir "$HARNESS_DIR" "$REPO_ROOT" "$RUN_ID")" || {
+    echo "Error: run '$RUN_ID' (with run.json) not found" >&2
+    exit 1
+  }
 fi
 
-INBOX_DIR="$REPO_ROOT/.harnessd/runs/$RUN_ID/inbox"
+INBOX_DIR="$RUN_DIR/inbox"
 mkdir -p "$INBOX_DIR"
 
-# Parse args
 MSG_TYPE="send_to_agent"
 MESSAGE=""
 
-if [ "${1:-}" = "--context" ]; then
+if [[ "${1:-}" == "--context" ]]; then
   MSG_TYPE="inject_context"
   shift
 fi
 
-if [ "${1:-}" = "--stdin" ]; then
+if [[ "${1:-}" == "--stdin" ]]; then
   MESSAGE=$(cat)
 else
   MESSAGE="${1:-}"
 fi
 
-if [ -z "$MESSAGE" ]; then
+if [[ -z "$MESSAGE" ]]; then
   echo "Usage: nudge.sh [--context] \"message\"" >&2
   echo "       nudge.sh --stdin < message.md" >&2
   exit 1
 fi
 
-# Escape for JSON (handle newlines, quotes, backslashes)
 JSON_MESSAGE=$(printf '%s' "$MESSAGE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
 
 TIMESTAMP=$(date +%s)
 FILENAME="nudge-${TIMESTAMP}.json"
 
-if [ "$MSG_TYPE" = "inject_context" ]; then
-  cat > "$INBOX_DIR/$FILENAME" <<EOF
-{"type": "inject_context", "context": $JSON_MESSAGE}
-EOF
+if [[ "$MSG_TYPE" == "inject_context" ]]; then
+  printf '{"type": "inject_context", "context": %s}\n' "$JSON_MESSAGE" > "$INBOX_DIR/$FILENAME"
 else
-  cat > "$INBOX_DIR/$FILENAME" <<EOF
-{"type": "send_to_agent", "message": $JSON_MESSAGE}
-EOF
+  printf '{"type": "send_to_agent", "message": %s}\n' "$JSON_MESSAGE" > "$INBOX_DIR/$FILENAME"
 fi
 
 echo "Nudge sent → $INBOX_DIR/$FILENAME (type: $MSG_TYPE, run: $RUN_ID)"

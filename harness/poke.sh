@@ -9,65 +9,37 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-RUNS_DIR="$REPO_ROOT/.harnessd/runs"
 
-# ------------------------------------
-# Validate arguments
-# ------------------------------------
+# shellcheck source=./_lib.sh
+source "$HARNESS_DIR/_lib.sh"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: ./poke.sh \"message to send\""
+  echo "Usage: ./poke.sh \"message to send\"" >&2
   exit 1
 fi
 
 MESSAGE="$1"
 
-# ------------------------------------
-# Find latest run
-# ------------------------------------
-
-find_latest_run() {
-  if [[ ! -d "$RUNS_DIR" ]]; then
-    echo ""
-    return
-  fi
-  ls -1d "$RUNS_DIR"/run-* 2>/dev/null | sort | tail -1 | xargs -I{} basename {}
-}
-
-RUN_ID="$(find_latest_run)"
-
-if [[ -z "$RUN_ID" ]]; then
-  echo "No runs found in $RUNS_DIR"
+RUN_DIR="$(find_latest_run_dir "$HARNESS_DIR" "$REPO_ROOT")" || {
+  echo "No runs found" >&2
   exit 1
-fi
-
-RUN_DIR="$RUNS_DIR/$RUN_ID"
+}
+RUN_ID="$(basename "$RUN_DIR")"
 INBOX_DIR="$RUN_DIR/inbox"
-
-# ------------------------------------
-# Write poke message
-# ------------------------------------
-
 mkdir -p "$INBOX_DIR"
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 FILENAME="${TIMESTAMP}-poke.json"
 ISO_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+JSON_MESSAGE=$(printf '%s' "$MESSAGE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
 
-cat > "$INBOX_DIR/$FILENAME" <<POKE_EOF
-{
-  "type": "poke",
-  "createdAt": "$ISO_TS",
-  "message": $(python3 -c "import json; print(json.dumps('$MESSAGE'))" 2>/dev/null || echo "\"$MESSAGE\"")
-}
-POKE_EOF
+printf '{"type":"poke","createdAt":"%s","message":%s}\n' "$ISO_TS" "$JSON_MESSAGE" > "$INBOX_DIR/$FILENAME"
 
 echo "Poke sent to run $RUN_ID"
 echo "  File: $INBOX_DIR/$FILENAME"
 echo "  Message: $MESSAGE"
 echo ""
 
-# Show latest status path
 STATUS_FILE="$RUN_DIR/status.md"
 if [[ -f "$STATUS_FILE" ]]; then
   echo "Status: $STATUS_FILE"

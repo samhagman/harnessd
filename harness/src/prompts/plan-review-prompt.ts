@@ -11,10 +11,7 @@
  * Reference: Plan Phase 3 — Plan Review
  */
 
-import {
-  RESULT_START_SENTINEL,
-  RESULT_END_SENTINEL,
-} from "../schemas.js";
+import { RESULT_START_SENTINEL, RESULT_END_SENTINEL } from "../schemas.js";
 import {
   AUTONOMOUS_PREAMBLE,
   buildHarnessContextSection,
@@ -34,16 +31,13 @@ export function buildPlanReviewPrompt(
 ): string {
   const sections: string[] = [];
 
-  // 0. Autonomous preamble
   sections.push(AUTONOMOUS_PREAMBLE);
 
-  // 0a. Harness pipeline context + memory search guidance
   sections.push(buildHarnessContextSection("plan_reviewer", { memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("plan_reviewer", enableMemory));
   const fanoutSection = buildVerificationFanoutSection("plan_reviewer", { useClaudeBackend });
   if (fanoutSection) sections.push(fanoutSection);
 
-  // 1. Role
   sections.push(`## Your Role
 
 You are the PLAN REVIEWER for a harnessd run. Your job is to critically evaluate a plan
@@ -63,7 +57,6 @@ multiple packets have been built.
 3. Your ONLY output mechanism is the structured JSON envelope at the END of your response. Do NOT create files or write markdown.
 4. Be thorough but fair. Flag real problems, not style preferences.`);
 
-  // 2. Plan artifacts to review
   sections.push(`## Plan Artifacts
 
 ### SPEC.md
@@ -94,7 +87,6 @@ The operator provided this guidance. Check that the plan honors these preference
 ${planningContext}`);
   }
 
-  // 3. Review checklist
   sections.push(`## Review Checklist
 
 Evaluate the plan against each of these criteria. For each issue found, classify it by
@@ -156,7 +148,6 @@ severity (critical / major / minor) and area.
 - Is it under-scoped (missing essential pieces)?
 - Are the packet sizes reasonable? (No single packet should be too large)`);
 
-  // 4. Output format
   sections.push(`## Output Format
 
 After your analysis, emit your output as a structured JSON envelope:

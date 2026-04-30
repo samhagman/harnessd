@@ -1,14 +1,5 @@
-/**
- * Unit tests for contract-linter.ts.
- */
-
 import { describe, it, expect } from "vitest";
-
 import { lintContract } from "../../contract-linter.js";
-
-// ------------------------------------
-// Helpers
-// ------------------------------------
 
 /** Build a minimal valid contract for a given packet type */
 function makeContract(
@@ -48,9 +39,6 @@ function makeContract(
   return base;
 }
 
-// ------------------------------------
-// Valid contract
-// ------------------------------------
 
 describe("lintContract", () => {
   it("valid contract passes", () => {
@@ -60,9 +48,6 @@ describe("lintContract", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  // ------------------------------------
-  // outOfScope
-  // ------------------------------------
 
   it("empty outOfScope fails", () => {
     const contract = makeContract({ outOfScope: [] });
@@ -71,9 +56,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /outOfScope/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // acceptance
-  // ------------------------------------
 
   it("empty acceptance fails", () => {
     const contract = makeContract({ acceptance: [] });
@@ -82,9 +64,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /acceptance/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // Required criterion kinds
-  // ------------------------------------
 
   it("missing required criterion kind fails", () => {
     // bugfix requires "command" and "negative" kinds
@@ -109,9 +88,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /negative/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // likelyFiles (no cap — informational only)
-  // ------------------------------------
 
   it("large likelyFiles list is allowed (no cap)", () => {
     const manyFiles = Array.from({ length: 100 }, (_, i) => `file${i}.ts`);
@@ -120,9 +96,6 @@ describe("lintContract", () => {
     expect(result.valid).toBe(true);
   });
 
-  // ------------------------------------
-  // long_running_job without observability
-  // ------------------------------------
 
   it("long_running_job without observability fails", () => {
     const contract = makeContract(
@@ -160,9 +133,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /observability/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // User-visible without scenario
-  // ------------------------------------
 
   it("user-visible packet without scenario fails", () => {
     const contract = makeContract(
@@ -193,9 +163,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /scenario|api/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // Risky packet without negative/invariant
-  // ------------------------------------
 
   it("risky packet without negative/invariant fails", () => {
     const contract = makeContract(
@@ -226,9 +193,6 @@ describe("lintContract", () => {
     expect(result.errors.some((e) => /negative|invariant/i.test(e))).toBe(true);
   });
 
-  // ------------------------------------
-  // Blocking criterion without evidence
-  // ------------------------------------
 
   it("blocking criterion without evidence fails", () => {
     const contract = makeContract({
@@ -356,9 +320,6 @@ describe("lintContract", () => {
   // semantic analysis belongs in the LLM, not in string-matching heuristics.
 });
 
-// ------------------------------------
-// Goals / constraints / guidance (new-style contract rules)
-// ------------------------------------
 
 describe("lintContract — goals/constraints/guidance rules", () => {
   // Old contract without goals field → still passes (backward compat)
