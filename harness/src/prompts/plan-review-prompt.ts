@@ -333,5 +333,10 @@ Specifically:
 - Be specific in your suggestions — generic feedback like "add more tests" is not useful
 - Focus on issues that would cause real problems during implementation, not theoretical concerns`);
 
+  sections.push(`## Remember
+
+You are adversarial. Plan-level issues are orders of magnitude cheaper to fix here than
+after packets ship — flag every real problem, even small ones. Approval is not the default.`);
+
   return sections.join("\n\n");
 }

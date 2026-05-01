@@ -37,10 +37,12 @@ export function buildContractEvaluatorPrompt(
 
   sections.push(`## Your Role
 
-You are the CONTRACT EVALUATOR. Your job is to review this contract proposal and decide
-whether it meets quality standards before the builder starts implementation.
+You are the CONTRACT EVALUATOR. Decide accept / revise / split / escalate.
 
-Be rigorous. A weak contract leads to weak implementation and wasted builder cycles.
+Above all: catch **over-prescription** — constraints disguised as goals are the #1
+cause of wasted builder cycles in the run pipeline. The detailed criteria are below;
+the over-prescription check is the one no deterministic linter can do for you.
+
 Only accept contracts that are specific, testable, and properly scoped.`);
 
   sections.push(`## Over-Prescription Detection (CRITICAL)
@@ -186,6 +188,11 @@ Emit the envelope ONCE at the end. No commentary after the end marker.
 
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
+
+  sections.push(`## Remember
+
+Accept / revise / split / escalate. Above all: catch over-prescription — constraints
+disguised as goals are the single biggest waster of builder cycles in the run pipeline.`);
 
   return sections.join("\n\n");
 }

@@ -301,19 +301,11 @@ ${contract.guidance.map((g) => {
 }).join("\n")}`);
   }
 
-  if ((contract.goals && contract.goals.length > 0) || (contract.constraints && contract.constraints.length > 0) || (contract.guidance && contract.guidance.length > 0)) {
-    sections.push(`### Where You Have Freedom
+  sections.push(`## You Have Freedom
 
-Your contract has three levels of binding:
-1. **Goals** — you MUST achieve these outcomes. Non-negotiable.
-2. **Constraints** — you MUST stay within these boundaries. Non-negotiable.
-3. **Guidance** — you SHOULD follow these principles. Deviate with reason.
-
-Everything else — the specific approach, architecture, file organization,
-naming, intermediate steps — is YOUR call. You are a staff-level engineer.
-The contract tells you what to deliver and what not to break. How you get
-there is up to you.`);
-  }
+The contract tells you what to deliver and what not to break. How you get there —
+approach, architecture, file organization, naming, intermediate steps — is your
+call. You're a staff-level engineer.`);
 
   if (criticalConstraints && criticalConstraints.length > 0) {
     sections.push(`## ⚠ Critical Constraints (from planner)
@@ -334,49 +326,20 @@ ${criticalConstraints.map((c) => `- ⚠ ${c}`).join("\n")}`);
 
   // Sub-agent guidance differs by backend: Claude backend uses the Task tool for
   // a parallel Explore sub-agent; Codex uses sequential in-session file reading.
-  if (supportsMcp) {
+  {
+    const exploreInstruction = supportsMcp
+      ? `Launch a sonnet Explore agent to read the files in your expectedFiles and report their current state, exports, and patterns.`
+      : `Read each file in your expectedFiles to understand current state, exports, and patterns.`;
+
     sections.push(`## Before You Start Implementing
 
-MANDATORY: Before writing any code, you MUST:
+Mandatory steps before writing code:
+1. \`git log --oneline -20\` — read what prior builders committed.
+2. ${exploreInstruction}
+3. Now begin.
 
-1. Run \`git log --oneline -20\` to see what prior builders committed.
-   Read the commit messages to understand what was changed and why.
-
-2. Launch a sonnet Explore agent to understand the current state of the code
-   in the areas you'll be modifying. Give it the list of files from your
-   expectedFiles and have it report:
-   - Current state of each file
-   - What functions/types/exports exist from prior packets
-   - Any patterns you should follow
-
-3. Only after steps 1 and 2 should you begin implementation.
-
-This exploration prevents you from re-implementing something that already exists,
-missing a function signature that a prior builder established, or breaking an
-integration point that's already wired up.
-
-Remember: you are implementing **${contract.packetId}: ${contract.title}**. Stay focused on this packet's scope.`);
-  } else {
-    sections.push(`## Before You Start Implementing
-
-MANDATORY: Before writing any code, you MUST:
-
-1. Run \`git log --oneline -20\` to see what prior builders committed.
-   Read the commit messages to understand what was changed and why.
-
-2. Read the relevant files to understand the current state of the code
-   in the areas you'll be modifying. For each file in your expectedFiles:
-   - Current state of each file
-   - What functions/types/exports exist from prior packets
-   - Any patterns you should follow
-
-3. Only after steps 1 and 2 should you begin implementation.
-
-This exploration prevents you from re-implementing something that already exists,
-missing a function signature that a prior builder established, or breaking an
-integration point that's already wired up.
-
-Remember: you are implementing **${contract.packetId}: ${contract.title}**. Stay focused on this packet's scope.`);
+This prevents reimplementing work, missing established signatures, and breaking
+wired-up integration points. Stay focused on **${contract.packetId}: ${contract.title}**.`);
   }
 
   // 3. Acceptance criteria
@@ -446,40 +409,21 @@ ${riskRegister.risks.map((r) => `- **${r.id}** (${r.severity}): ${r.description}
   );
   if (researchSection) sections.push(researchSection);
 
-  sections.push(`## Browser Self-Testing
+  sections.push(`## Runtime verification
 
-Before claiming done, verify your changes in the browser — even for backend
-or integration work, a browser smoke test catches regressions in the UI.
-Note: your Playwright MCP runs Chromium in \`--isolated\` mode. Opening a new browser
-window creates a fresh context with NO pre-existing cookies, localStorage, or session
-state. Reuse the same window for multi-step flows that depend on shared session context.
-Before claiming done:
-1. Navigate to your changes in the browser
-2. Take a screenshot of the current page state to verify visual correctness
-3. Check the browser console for errors and warnings
-4. Click through the complete user flow, fill form fields, and get a snapshot of
-   the page's content/accessibility tree to verify interactions
-5. Test at ALL viewports if the design should be responsive
+For any acceptance criterion of kind \`scenario\` or \`api\` you MUST execute it:
+start the dev server, perform the action, capture the actual response. Reading
+the code and reasoning about it is NOT evidence — code that typechecks can fail
+at runtime (missing wiring, race conditions, wrong response shapes, CSS bugs).
 
-Do NOT just read code and assume it works — actually test in the browser.
-Static code review alone is insufficient for UI work.
+Use Playwright MCP (\`mcp__playwright__*\`) for browser verification. Navigate,
+screenshot, observe the console and network responses, click through the full
+user flow. Do NOT skip browser verification for user-facing work.
 
-### Runtime Verification for Scenario Criteria (MANDATORY)
-
-For acceptance criteria with \`kind: "scenario"\` and \`blocking: true\`, you MUST:
-1. Start the dev server (\`pnpm dev:web\` or the configured dev command)
-2. Actually perform the action described in the criterion
-3. Observe the real result (HTTP response, browser behavior, console output)
-4. Report the ACTUAL output, not what the code "should" do
-
-Code-path verification (reading code and reasoning about what it does) is NOT
-sufficient for scenario criteria. The evaluator will test these at runtime and
-catch bugs that only manifest during execution (stale references, missing imports,
-race conditions, wrong response shapes).
-
-If you cannot perform runtime verification (e.g., missing credentials, external
-service unavailable), report the criterion as \`status: "untested"\` with the
-reason — NEVER report \`status: "pass"\` for criteria you did not actually execute.`);
+Status enum: \`pass\` (executed and succeeded), \`fail\` (executed and failed),
+\`unknown\` (could not determine), \`untested\` (genuinely could not execute —
+missing creds you've verified aren't in \`.env\`, third-party service down).
+Never report \`pass\` for a criterion you didn't actually run.`);
 
   sections.push(`## Repo Writer Rule
 
@@ -661,25 +605,6 @@ Run \`/code-review\` (but don't post to GitHub — just review locally and fix a
 
 ### Then: Final verification`);
 
-  sections.push(`## Runtime Verification Is Mandatory for Scenario Criteria
-
-If a criterion has kind "scenario" or "api", you MUST attempt runtime verification before marking it as "pass":
-
-1. Start the dev server if it is not already running
-2. Execute the scenario: make the HTTP call, navigate the browser, or run the test
-3. Capture the output as evidence (HTTP status code, response body, screenshot, test output)
-
-Mark a scenario criterion as "untested" only when:
-- The dev server genuinely cannot start (missing dependencies, build failure)
-- Required credentials are unavailable AND you verified they are not in .env
-- The scenario requires a third-party service that is unreachable
-
-Marking a scenario criterion as "pass" based solely on reading the code is NEVER acceptable.
-Code that typechecks and looks correct can still fail at runtime. You must execute it.
-
-If you mark 3 or more scenario criteria as "untested", include a section in your report
-explaining what would be needed to test them (credentials, services, configuration).`);
-
   sections.push(`## Git Discipline
 
 Before emitting your result envelope, you MUST commit your changes with logical,
@@ -854,67 +779,30 @@ If \`validate_envelope\` rejects your report, READ THE RETURNED \`schemaSource\`
 ### Result Envelope
 
 ${supportsOutputSchema
-  ? `When done, emit your final answer as structured JSON matching the output schema.
+  ? `Emit the JSON above directly as your final structured answer.
 Do NOT use envelope sentinels — the output schema enforces the correct structure.
-Emit the JSON directly as your final answer.
-
-Your final answer JSON must match this shape:
-{
-  "packetId": "${contract.packetId}",
-  "sessionId": "(your session ID or empty string)",
-  "changedFiles": ["file1.ts", "file2.ts"],
-  "commandsRun": [
-    {"command": "npm test", "exitCode": 0, "summary": "all tests pass"}
-  ],
-  "liveBackgroundJobs": [],
-  "microFanoutUsed": [],
-  "selfCheckResults": [
-    {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
-  ],
-  "keyDecisions": [
-    {"description": "...", "rationale": "..."}
-  ],
-  "remainingConcerns": [],
-  "claimsDone": true,
-  "commitShas": ["abc1234", "def5678"]
-}
-
-- Set \`claimsDone: false\` if you ran out of turns or could not complete
-- Set \`commitShas\` to an array of commit SHAs you created, or null if no changes
-- Emit your final answer ONCE — the harness reads the last structured output`
-  : `When done, emit your report:
+Set \`packetId\` to \`"${contract.packetId}"\`. Emit ONCE — the harness reads the last structured output.`
+  : `Emit the JSON above wrapped in the result sentinels:
 
 ${RESULT_START_SENTINEL}
-{
-  "packetId": "${contract.packetId}",
-  "sessionId": "(your session ID or empty string)",
-  "changedFiles": ["file1.ts", "file2.ts"],
-  "commandsRun": [
-    {"command": "npm test", "exitCode": 0, "summary": "all tests pass"}
-  ],
-  "liveBackgroundJobs": [],
-  "microFanoutUsed": [],
-  "selfCheckResults": [
-    {"criterionId": "criterion-id", "status": "pass", "evidence": "..."}
-  ],
-  "keyDecisions": [
-    {"description": "...", "rationale": "..."}
-  ],
-  "remainingConcerns": [],
-  "claimsDone": true,
-  "commitShas": ["abc1234", "def5678"]
-}
+{ ... your BuilderReport ... }
 ${RESULT_END_SENTINEL}
 
 - Emit this envelope ONCE at the very end
 - No commentary after the end marker
 - Set \`claimsDone: false\` if you ran out of turns or could not complete
 - Set \`commitShas\` to an array of commit SHAs you created, or null if no changes
+- Do NOT wrap the sentinels in markdown \`\`\`json fences
 
 **IMPORTANT:** Before emitting the envelope:
 1. Call \`gate_check()\` and confirm all gates pass${supportsMcp ? `
-2. Validate using \`validate_envelope\` (MCP tool) from the section above. **A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it persists your report to disk where the harness reads it. The \`${RESULT_START_SENTINEL}\` / \`${RESULT_END_SENTINEL}\` delimiters are a backup; emit them as a normal final assistant message, but do NOT wrap them in markdown \`\`\`json fences (the harness will recover from fences via fallback but it logs format-drift telemetry). If you only call \`validate_envelope\` successfully and never emit delimiters, the harness still gets your report.**` : ""}
+2. Validate using \`validate_envelope\` (MCP tool) from the section above. **A successful \`validate_envelope\` call (\`valid:true\`) IS the primary filing mechanism — it persists your report to disk where the harness reads it. The sentinels are a backup.**` : ""}
 Fix any errors before emitting.`}`);
+
+  sections.push(`## Remember
+
+You are the only canonical writer for this packet. Every acceptance criterion gets
+evidence before you claim done — runtime verification beats static inspection.`);
 
   return sections.join("\n\n");
 }

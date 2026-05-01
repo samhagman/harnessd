@@ -124,90 +124,40 @@ Make each criterion specific and testable for THIS packet.`);
 
 ${specExcerpt}`);
 
-  sections.push(`## Required Contract Fields
+  sections.push(`## Scope Constraint
 
-Your contract proposal MUST include ALL of these fields:
-- **packetId**: "${packet.id}"
-- **round**: (current round number)
-- **status**: "proposed"
-- **title**: descriptive title
-- **packetType**: "${packet.type}"
-- **objective**: specific objective
-- **inScope**: explicit list of what IS in scope
-- **outOfScope**: explicit list of what is NOT (must not be empty)
-- **assumptions**: things you're assuming are true
-- **risks**: specific risks with mitigations
-- **likelyFiles**: files that will probably be modified
-- **implementationPlan**: ordered steps
-- **backgroundJobs**: any long-running commands needed (can be empty)
-- **microFanoutPlan**: any parallelizable subwork (can be empty)
-- **acceptance**: specialized acceptance criteria (must include required kinds)
-- **goals**: explicit outcomes to achieve (each with acceptanceCriteriaIds mapping to ACs)
-- **constraints**: hard restrictions with kind and rationale
-- **guidance**: principles and preferences (reference architectural-thinking by name)
-- **reviewChecklist**: items for the evaluator to check
-- **proposedCommitMessage**: git commit message in format "harnessd(${packet.id}): ..."
+Keep the packet bounded and completable in one builder session. If the scope feels
+too large, say so explicitly in \`outOfScope\` and consider proposing a split.
+All fields are required (see example below). Out-of-scope must not be empty.
 
-### Scope Constraint
-Keep the packet bounded and completable in one builder session.
-If the scope feels too large, say so in the contract.`);
-
-  sections.push(`## Goals, Constraints, and Guidance
+## Goals, Constraints, and Guidance
 
 Your contract MUST separate intent into three explicit sections:
 
-### Goals (WHAT to achieve)
-Goals are verifiable outcomes. Each goal maps to one or more acceptance criteria.
-The builder succeeds by achieving the goal — the acceptance criteria prove it.
+**Goals** are verifiable outcomes. Each maps to one or more acceptance criteria.
+Example: "Zero ESLint boundary violations in the target package" — verified by AC-001.
 
-GOOD goal: "Zero ESLint boundary violations in the target package"
-GOOD goal: "All existing tests pass after refactor"
-BAD goal:  "Use max 12 bridge files" — this prescribes HOW, not WHAT
-
-For each goal, list the acceptance criteria IDs that verify it.
-
-### Constraints (hard boundaries)
-Constraints are non-negotiable restrictions. They limit the solution space but
-do NOT prescribe the solution. Think: what would a staff engineer tell a senior
-engineer they MUST NOT do?
-
-GOOD constraint (scope): "Only modify files within src/"
-GOOD constraint (tech-stack): "Must use the existing Vitest test framework"
-GOOD constraint (behavior): "Public API signatures must not change"
-GOOD constraint (safety): "No credential exposure in committed files"
-BAD constraint: "Max 12 bridge files" — this prescribes the implementation approach
-BAD constraint: "Must use the adapter pattern" — this prescribes the solution
-
-Every constraint MUST have a rationale explaining WHY it exists.
+**Constraints** are non-negotiable restrictions. They limit the solution space without
+prescribing a solution. Every constraint MUST have a rationale.
+Example: scope:"Only modify files within src/" — rationale: "test fixtures stay frozen."
 If you haven't deeply investigated the codebase to know the right approach,
-don't constrain the approach. State the GOAL and let the builder find the path.
+don't constrain the approach. State the goal; let the builder find the path.
 
-### Guidance (principles and preferences)
-Guidance informs the builder's thinking without hard-failing on deviation.
-Reference architectural principles by name rather than copy-pasting rules.
+**Guidance** is principle-level direction with no hard fail. Reference architectural
+principles by name; do not copy-paste rules.
+Example: "Follow dependency-direction (architectural-principles)."
 
-GOOD guidance: "Follow dependency-direction principle (architectural-principles)"
-GOOD guidance: "The existing codebase uses barrel exports — follow this pattern"
-GOOD guidance: "Prefer fewer shared bridge files where architecturally sound"
-
-Available architectural principles you can reference by name:
-- screaming-architecture — file tree should scream what the app does
-- dependency-direction — dependencies flow inward only
-- contracts-first — define types/schemas before implementation
-- colocated-integration — integration logic stays in one file
-- modular-monolith — cross-module imports through barrel files only
-- shared-escape-hatch — only move to shared/ when 2+ consumers NOW
-- anti-corruption-layer — translation boundary at third-party edges
+Available principle names: screaming-architecture, dependency-direction, contracts-first,
+colocated-integration, modular-monolith, shared-escape-hatch, anti-corruption-layer.
 
 ### The Litmus Test
-Before adding anything to constraints, ask: "If the builder achieves all goals
-but violates this, should the packet FAIL?" If yes, it's a constraint.
-If "it depends on why they deviated," it's guidance.
+"If the builder achieves all goals but violates this, should the packet FAIL?"
+- Yes → constraint (add rationale)
+- "Depends on why" → guidance
+- The behavior IS the goal → goal
 
-### Acceptance Criteria Verify GOALS
-Each acceptance criterion should map to a goal. Constraints are checked
-separately — they don't need dedicated acceptance criteria unless they have
-a natural verification command.`);
+Each acceptance criterion should map to a goal — constraints don't need dedicated
+acceptance criteria unless they have a natural verification command.`);
 
   sections.push(`## Data Integrity Rule
 
@@ -313,6 +263,11 @@ ${RESULT_END_SENTINEL}
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
   }
+
+  sections.push(`## Remember
+
+The contract is the design. Every acceptance criterion you write here costs (or saves)
+builder cycles later — make them specific and testable.`);
 
   return sections.join("\n\n");
 }

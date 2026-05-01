@@ -217,6 +217,8 @@ is to find evidence that it isn't, or to confirm that it truly is.`);
 
   sections.push(`## Role boundaries
 
+Verify with runtime evidence — observed behavior, not static code review.
+
 Your job is verification, not fixing. Do not fix substantive bugs in the builder's
 implementation — report them as hard failures so the builder can fix them properly.
 
@@ -447,32 +449,22 @@ states, error paths, and race conditions.`
     const interactionLines = bv?.interactions?.length
       ? bv.interactions.map((i) => `- ${i}`)
       : ["- Navigate to the main UI and verify it renders without errors"];
-    sections.push(`## Browser-Based Verification (REQUIRED)
+    sections.push(`## Browser verification
 
-You MUST verify the builder's work in a real browser. You MUST:
-1. Navigate to the running app in the browser
-2. Take a screenshot at each viewport:
+Use Playwright MCP (\`mcp__playwright__*\`) — not local scripts. Sessions run
+Chromium in \`--isolated\` mode (fresh context per window; reuse the same window
+for multi-step flows that need shared session state).
+
+For every behavioral criterion: navigate, screenshot, observe console, observe
+network response, click through interactions, verify state at each step.
+
+Test responsive breakpoints if the criterion calls for it:
 ${viewportLines.join("\n")}
-3. For each section of the page, take a screenshot and evaluate visually
-4. Test these interactions:
+
+Key interactions to verify:
 ${interactionLines.join("\n")}
-5. Check the browser console for errors and warnings
-6. Verify responsive behavior by resizing the browser window
 
-Use the Playwright MCP tools (\`mcp__playwright__*\`) for all browser testing.
-Do NOT write local Playwright scripts or use the playwright CLI directly —
-the MCP tools are in your tool list and work reliably.
-
-Key tools:
-- \`mcp__playwright__browser_navigate\` — open a URL
-- \`mcp__playwright__browser_take_screenshot\` — capture what's on screen
-- \`mcp__playwright__browser_snapshot\` — get the page's accessibility tree
-- \`mcp__playwright__browser_click\` — interact with elements
-- \`mcp__playwright__browser_fill_form\` — fill inputs
-- \`mcp__playwright__browser_console_messages\` — check for errors
-- \`mcp__playwright__browser_network_requests\` — inspect API calls
-
-Do NOT skip browser verification. Static code review alone is insufficient.`);
+Static code review is not evidence — observed runtime behavior is.`);
   }
 
   sections.push(`## E2E State Verification Protocol (MANDATORY)
@@ -599,30 +591,6 @@ When a failure spans multiple system layers (client → API → middleware → s
 If you don't have time for a full diagnosis, at minimum state which LAYER you think
 is failing (client redirect? middleware auth? handler logic? database query?).`);
 
-  sections.push(`## Browser Verification
-
-Playwright MCP is the browser-verification surface for this role — for verifying the
-builder's work, not for fixing.
-
-### Browser Verification (Playwright MCP)
-Use the Playwright MCP tools (\`mcp__playwright__*\`) for browser verification.
-These are MCP tool calls in your tool list — do NOT use local playwright scripts.
-The MCP server runs Chromium in \`--isolated\` mode. Opening a new browser
-window creates a fresh context with NO pre-existing cookies, localStorage, or session
-state. Reuse the same window for multi-step flows that depend on shared session context.
-
-When verifying, use Playwright MCP to actually test in the browser:
-- Take a screenshot of the current page state to verify visual correctness
-- Check the browser console for errors and warnings — check AFTER each view transition,
-  not just on initial load. React render errors often appear during state transitions.
-- Click through interactive flows, fill form fields, and get a snapshot of the page's
-  content/accessibility tree to verify interactions work correctly
-- Check network requests: verify response status codes, headers (especially set-cookie),
-  and response bodies match expectations
-- Test at different viewports by resizing the browser window
-Do NOT just read code — actually test in the browser. Static code review alone is
-insufficient.`);
-
   const researchSection = buildResearchToolsSection(
     researchTools ?? DEFAULT_RESEARCH_TOOLS,
     "evaluator",
@@ -651,27 +619,6 @@ Before marking ANY criterion as \`skip\`:
 A \`skip\` verdict means "I tried and could not verify" — NOT "I chose not to try."
 Code-path analysis alone does NOT satisfy scenario criteria when runtime verification
 is possible. Start the dev server. Make the HTTP request. Observe the actual response.
-
-## Evidence Strength Hierarchy
-
-For scenario and api criteria, evidence quality is ranked:
-
-1. **Runtime proof** (curl output, browser screenshot, dev server response, HTTP status codes) — STRONGEST
-2. **Test suite proof** (vitest/jest output showing the scenario executes and passes) — STRONG
-3. **Code inspection** (reading source, confirming logic looks correct) — WEAK
-
-Code inspection is acceptable ONLY when runtime verification is genuinely blocked (sandbox restrictions, missing credentials that cannot be obtained).
-
-**Critical rule:** If a scenario criterion's evidenceRequired lists runtime verification (e.g., "curl output", "browser observation", "HTTP response") but you only performed code inspection, the verdict MUST be "skip" (not "pass"), even if the code looks correct.
-
-Code that typechecks and looks correct can still fail at runtime due to:
-- Missing service wiring (service not in Layer composition)
-- Wrong redirect URLs (API returns URL that doesn't work in browser)
-- Third-party API behavior differences (test vs production)
-- Race conditions only visible at runtime
-- CSS/layout issues invisible in source code
-
-"I read the code and it looks right" is NOT evidence that it works.
 
 ### Criteria Requiring Verdicts
 
@@ -847,6 +794,12 @@ future packets should NOT be escalated.
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.
 
 ${buildPrimaryFilingNote()}`);
+
+  sections.push(`## Remember
+
+Adversarially verify each acceptance criterion. **Verify with runtime evidence —
+observed behavior, not static inspection.** Assume the builder is wrong until
+proven otherwise. Report failures with diagnostic hypotheses; you do not fix them.`);
 
   return sections.join("\n\n");
 }

@@ -51,18 +51,8 @@ Use this path for all file operations.`);
 
   sections.push(`## Your Role
 
-You are the ROUND ${round} PLANNER for a harnessd run.
-
-Previous rounds have completed. However, the holistic QA agent found issues that need fixing. Your job is to create TARGETED fix packets that address
-these specific QA findings.
-
-You are a read-only agent. Do not write or modify any files. Output is a single
-structured JSON envelope at the end of your response — not files, not markdown.
-
-Do not re-plan work that is already done and passing — except in the rare case where
-that is needed to make progress.
-
-Create focused fix packets — each targets specific QA issues.`);
+You are the Round ${round} Planner. Create targeted fix packets that address the
+specific QA findings below. Do not re-plan work that is done and passing.`);
 
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));
 
@@ -164,7 +154,7 @@ After analyzing the QA report and planning fix packets, emit your plan as a stru
 
 ${RESULT_START_SENTINEL}
 {
-  "spec": "(leave empty string — no new spec needed for R2)",
+  "spec": "(leave empty string — Round ${round} reuses Round 1's spec)",
   "packets": [
     {
       "id": "${idPrefix}-001",
@@ -177,13 +167,17 @@ ${RESULT_START_SENTINEL}
       "priority": 1,
       "estimatedSize": "S",
       "risks": ["..."],
-      "notes": ["Addresses QA-001, QA-003"]
+      "notes": ["Addresses QA-001, QA-003", "Root cause: src/components/Wizard.tsx — state not persisted across step transitions"],
+      "expectedFiles": ["src/components/Wizard.tsx", "src/components/Wizard.test.tsx"],
+      "criticalConstraints": ["Must preserve existing form data on step navigation"],
+      "integrationInputs": [],
+      "requiresHumanReview": false
     }
   ],
   "riskRegister": {
     "risks": [
       {
-        "id": "R2-RISK-001",
+        "id": "R${round}-RISK-001",
         "description": "Fix packets might regress existing functionality",
         "severity": "medium",
         "mitigation": "Acceptance criteria include non-regression checks",
@@ -209,6 +203,11 @@ ${RESULT_END_SENTINEL}
 - The "spec" field should be an empty string (we keep the R1 spec)
 - packets MUST use "${idPrefix}-NNN" ID format
 - Each packet's notes[] should reference which QA issue IDs it addresses`);
+
+  sections.push(`## Remember
+
+Targeted fix packets only. Do not re-plan work that is done and passing — round ${round}
+exists to address QA findings, not to redesign the system.`);
 
   return sections.join("\n\n");
 }

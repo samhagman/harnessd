@@ -140,6 +140,8 @@ export async function runPlanner(
         planningContext,
         plannerConfig.config.researchTools,
         plannerConfig.config.enableMemory,
+        undefined,
+        plannerConfig.workspaceDir,
       );
     }
 

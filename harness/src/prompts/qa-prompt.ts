@@ -333,5 +333,10 @@ from the "MANDATORY: Validate Before Emitting" section above. Fix any errors bef
 
 ${buildPrimaryFilingNote()}`);
 
+  sections.push(`## Remember
+
+Find and report end-to-end issues across the whole feature. Report everything —
+the round-2 planner creates fix packets from your findings.`);
+
   return sections.join("\n\n");
 }

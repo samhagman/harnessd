@@ -27,10 +27,18 @@ export function buildPlannerPrompt(
   researchTools?: ResearchToolAvailability,
   enableMemory?: boolean,
   backendCapabilities?: BackendCapabilities,
+  workspaceDir?: string,
 ): string {
   const supportsMcp = backendCapabilities?.supportsMcpServers ?? true;
   const supportsOutputSchema = backendCapabilities?.supportsOutputSchema ?? false;
   const sections: string[] = [];
+
+  if (workspaceDir) {
+    sections.push(`## WORKSPACE
+
+All files are located in: ${workspaceDir}
+Use this path for all file operations.`);
+  }
 
   sections.push(AUTONOMOUS_PREAMBLE);
 
@@ -77,12 +85,11 @@ Think through the design, then emit the envelope.${researchNote ? `\n\n${researc
   needed to fully deliver the objective. Do not under-scope. But do NOT over-specify
   HOW each packet achieves its goal — that's the builder's job. Define WHAT needs to
   happen and WHY, not the low-level implementation steps.
-- Bias toward packets that are:
-  - **Vertical** — each packet ships a thin, end-to-end slice that touches every layer the objective will eventually touch (see next section — this is the most important rule)
-  - Independently verifiable with USER-OBSERVABLE acceptance criteria (not just "typecheck passes")
-  - Independently runnable/deployable — after packet N, the app must still work end-to-end
-  - Ordered by increasing breadth, not by layer (prove the pipeline once, then widen)
-  - Not too large (each completable in one builder session)
+- Each packet is independently verifiable with USER-OBSERVABLE acceptance criteria (not just "typecheck passes")
+- Each packet is independently runnable/deployable — after packet N, the app must still work end-to-end
+- Packets are ordered by increasing breadth, not by layer (prove the pipeline once, then widen)
+- Each packet is completable in one builder session
+- Slice vertically (see next section)
 - Explicitly separate product outcomes from implementation guesses
 - Identify risks early`);
 
@@ -333,11 +340,11 @@ Choose the most appropriate type for each packet:
 - **bugfix** — fix a known bug (requires repro + regression test)
 - **ui_feature** — user-facing interface work (requires interactive scenarios)
 - **backend_feature** — API, service, or data layer work (requires integration tests)
-- **migration** — data or schema migration (requires rollback plan). ⚠ HIGH RISK of horizontal slicing. Never plan "migrate all of X"; plan one vertical slice first ("migrate one representative of X end-to-end with its tests and consumers"), then widen.
-- **refactor** — restructure without behavior change (requires no-regression proof). ⚠ HIGH RISK of horizontal slicing. Apply strangler-fig thinking: one slice at a time, old and new coexist, delete-old happens in the same packet that replaces the last use.
+- **migration** — data or schema migration (requires rollback plan)
+- **refactor** — restructure without behavior change (requires no-regression proof)
 - **long_running_job** — background process or batch job (requires heartbeat + completion check)
 - **integration** — connect multiple components (requires end-to-end scenario)
-- **tooling** — dev tools, scripts, CI (requires usage proof). ⚠ Horizontal by nature. Should be <10% of the plan. Fold into the first vertical packet that consumes it whenever possible; only stand alone if it's a time-boxed spike answering a specific question.`);
+- **tooling** — dev tools, scripts, CI (requires usage proof)`);
 
   const EXAMPLE_JSON = `{
   "spec": "(your full SPEC.md content as a string)",
@@ -460,6 +467,11 @@ ${RESULT_END_SENTINEL}
 **IMPORTANT:** Before emitting the envelope, validate using Option 1 (MCP tool) or Option 2 (CLI)
 from the "MANDATORY: Validate Before Emitting" section above. Fix any errors before emitting.`);
   }
+
+  sections.push(`## Remember
+
+Decompose the objective into vertical, end-to-end-testable slices. SPEC.md, the
+ordered packet list, and the risk register go in the envelope. That's the job.`);
 
   return sections.join("\n\n");
 }
