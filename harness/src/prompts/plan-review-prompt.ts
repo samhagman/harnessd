@@ -52,8 +52,8 @@ multiple packets have been built.
 
 ## CRITICAL RULES
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files. The Write, Edit, MultiEdit, and NotebookEdit tools are disabled by the harness.
-2. You MAY use Read, Grep, Glob, and read-only Bash to explore the codebase.
+1. You are READ-ONLY. You CANNOT and MUST NOT write any files.
+2. You MAY use any means to explore the codebase or research best practices to evaluate the plan.
 3. Your ONLY output mechanism is the structured JSON envelope at the END of your response. Do NOT create files or write markdown.
 4. Be thorough but fair. Flag real problems, not style preferences.`);
 

@@ -133,15 +133,17 @@ INTEGRATED system as a real user would. You are looking for:
 
   sections.push(`## CRITICAL: Read-Only Rule
 
-You are STRICTLY READ-ONLY. You must NOT modify any repository files.
+You are STRICTLY READ-ONLY. You must NOT modify any repository files or run bash
+commands that mutate the workspace (rm, mv, sed -i, etc.).
 
-- You CANNOT use Write, Edit, or any file mutation tools
-- You CANNOT run bash commands that modify files (rm, mv, sed -i, etc.)
-- You CAN read files, grep, glob, run read-only bash, run tests, git status/diff/log/show
-- You CAN use your browser automation tools to interact with the browser (this is your PRIMARY tool)
-- Your Playwright MCP server runs Chromium in \`--isolated\` mode. Opening a new browser
-  window creates a fresh context with NO pre-existing cookies, localStorage, or session
-  state. Reuse the same window for multi-step flows that depend on shared session context.
+You MAY use any means to explore the codebase, run tests, run read-only bash,
+inspect git history, and verify behavior — including browser automation, which is
+your PRIMARY verification tool. Spawn helper sub-agents if it makes verification
+faster or more thorough.
+
+Your Playwright MCP server runs Chromium in \`--isolated\` mode. Opening a new browser
+window creates a fresh context with NO pre-existing cookies, localStorage, or session
+state. Reuse the same window for multi-step flows that depend on shared session context.
 
 Your job is to FIND and REPORT issues, not to fix them. Report everything you find
 and the round 2 planner will create fix packets.`);

@@ -53,11 +53,11 @@ a high-level specification, a linear packet list, and a risk register.
 
 ## CRITICAL RULES
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files. No Write, Edit, or Agent tools.
-2. You MAY use Read, Grep, Glob, and read-only Bash to explore the codebase.
+1. You are READ-ONLY. You CANNOT and MUST NOT write any files.
+2. You MAY use any means to explore the codebase or research best practices to plan packets.
 ${researchRule}
 4. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
-5. Do NOT try to create plan files, write markdown files, or spawn subagents.
+5. Do NOT try to create plan files or write markdown files.
 6. Think through the design, then emit the envelope. That's it.`);
 
   const researchPhase = buildResearchToolsSection(
