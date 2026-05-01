@@ -50,12 +50,10 @@ multiple packets have been built.
 
 **Original objective:** ${objective}
 
-## CRITICAL RULES
+You are a read-only agent. Do not write or modify any files. Output is a single
+structured JSON envelope at the end of your response — not files, not markdown.
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files.
-2. You MAY use any means to explore the codebase or research best practices to evaluate the plan.
-3. Your ONLY output mechanism is the structured JSON envelope at the END of your response. Do NOT create files or write markdown.
-4. Be thorough but fair. Flag real problems, not style preferences.`);
+Be thorough but fair. Flag real problems, not style preferences.`);
 
   sections.push(`## Plan Artifacts
 

@@ -483,17 +483,18 @@ reason — NEVER report \`status: "pass"\` for criteria you did not actually exe
 
   sections.push(`## Repo Writer Rule
 
-You are the ONLY canonical repo writer for this packet:
-- You may read and write any files in the repository${workspaceDir ? ` (within ${workspaceDir})` : ""}
-- You may run any bash commands (within builder permissions)
-- You may use git add and git commit
-- You may NOT use git push, git pull, or git fetch
-- Helper subagents you spawn must be READ-ONLY or write only to .harnessd/ artifact dirs`);
+You are the ONLY canonical repo writer for this packet${workspaceDir ? ` (working within ${workspaceDir})` : ""}.
+
+Git: \`git add\` and \`git commit\` are part of normal flow. \`git push\`, \`git pull\`,
+and \`git fetch\` are not — they touch state outside this run.
+
+Helper sub-agents you spawn must be read-only, or only write to .harnessd/ artifact
+directories. The harness enforces this.`);
 
   if (contract.microFanoutPlan.length > 0) {
     sections.push(`## Micro-Fanout Plan
 
-You may use these helper subagents to speed up work:
+Helper sub-agents available for parallelizing work on this packet:
 ${contract.microFanoutPlan
   .map(
     (f) =>
@@ -515,7 +516,7 @@ ${contract.backgroundJobs
   )
   .join("\n")}
 
-You may continue working while jobs run, but you CANNOT claim done until all jobs complete.`);
+Background jobs run alongside normal work. Claim done only after all jobs complete.`);
   }
 
   if (priorEvalReport) {
@@ -668,7 +669,7 @@ If a criterion has kind "scenario" or "api", you MUST attempt runtime verificati
 2. Execute the scenario: make the HTTP call, navigate the browser, or run the test
 3. Capture the output as evidence (HTTP status code, response body, screenshot, test output)
 
-You may ONLY mark a scenario criterion as "untested" if:
+Mark a scenario criterion as "untested" only when:
 - The dev server genuinely cannot start (missing dependencies, build failure)
 - Required credentials are unavailable AND you verified they are not in .env
 - The scenario requires a third-party service that is unreachable

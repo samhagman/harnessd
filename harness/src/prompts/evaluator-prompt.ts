@@ -146,7 +146,7 @@ Key things to search for:
 - Tool calls: look for \`Edit\`, \`Write\` (files changed), \`Read\`, \`Grep\` (files investigated), \`Bash\` (commands run)
 - The builder's self-check results and what it claimed in its report
 
-You can grep/read this file efficiently:
+Grep/read this file efficiently:
 \`\`\`bash
 # What files did the builder edit?
 grep '"name":"Edit"' "${builderTranscriptPath}" | grep -o '"file_path":"[^"]*"'
@@ -215,31 +215,20 @@ is to find evidence that it isn't, or to confirm that it truly is.`);
   A builder who achieves every goal, honors every constraint, but deviates from
   guidance has PASSED.`);
 
-  sections.push(`## Evaluation Permissions
+  sections.push(`## Role boundaries
 
-Your primary job is VERIFICATION, not fixing. You must NOT fix substantive bugs — report
-them as hard failures so the builder can fix them properly.
+Your job is verification, not fixing. Do not fix substantive bugs in the builder's
+implementation — report them as hard failures so the builder can fix them properly.
 
-### What you CAN do
-- Read files, grep, glob, git status/diff/log/show
-- **Run curl / fetch** to test API endpoints directly and inspect response headers, cookies, status codes
-- **Run tests** (\`pnpm test\`, \`npx vitest run\`, etc.) to verify test suites pass
-- **Run typecheck** (\`npx tsc --noEmit\`) to verify compilation
-- **Use browser automation** to navigate, click, screenshot, and verify the running app
-- **Make small environment fixes** to unblock your testing — e.g., fix a missing env var,
-  adjust a port conflict, install a missing dev dependency, seed test data. These are
-  operational fixes that let you evaluate, not code fixes.
+Out of role: fixing bugs in the builder's implementation, rewriting / refactoring /
+improving application code, adding features, changing behavior, committing to git.
+Failures get reported, not patched.
 
-### What you MUST NOT do
-- Fix bugs in the builder's implementation — that's their job. Report failures instead.
-- Rewrite, refactor, or improve application code
-- Add features or change behavior
-- Commit changes to git
-
-### The line
-If a fix takes more than ~5 lines and touches application logic, it's a bug — report it.
-If it's plumbing to get your test environment working (start a server, seed a DB, set an
-env var), that's fine — do it and move on to verifying.`);
+Operational fixes that unblock your verification are fine — setting a missing env var,
+adjusting a port conflict, installing a missing dev dependency, seeding test data,
+starting a server. The line: if a fix takes more than ~5 lines and touches application
+logic, it's a bug — report it. If it's plumbing to get your test environment working,
+that's fine — do it and move on to verifying.`);
 
   const criterionIds = contract.acceptance.map((c) => c.id).join(",");
   sections.push(buildValidateEnvelopeSection("EvaluatorReport", criterionIds));
@@ -612,8 +601,8 @@ is failing (client redirect? middleware auth? handler logic? database query?).`)
 
   sections.push(`## Browser Verification
 
-You have access to Playwright MCP tools for browser verification. Use them to verify the builder's
-work — not to fix problems (you are read-only).
+Playwright MCP is the browser-verification surface for this role — for verifying the
+builder's work, not for fixing.
 
 ### Browser Verification (Playwright MCP)
 Use the Playwright MCP tools (\`mcp__playwright__*\`) for browser verification.

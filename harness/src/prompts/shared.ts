@@ -375,10 +375,11 @@ You are the **round ${round} planner** creating targeted fix packets from QA fin
 5. **Tool Gates** — typecheck + tests passed for every R1 packet
 6. **QA Agent (round ${round - 1})** — ran holistic E2E testing and found issues to fix
 
-You have access to the FULL memory trail of everything that happened across all prior rounds.
-Search for QA findings: \`search_memory({query: "QA findings issues"})\`
-Search for builder decisions: \`search_memory({query: "builder reasoning implementation"})\`
-Search for evaluator findings: \`search_memory({query: "evaluator report hard failures"})\`
+The FULL memory trail of every prior round is searchable via \`search_memory\`.
+Useful queries:
+- \`search_memory({query: "QA findings issues"})\` — prior QA reports
+- \`search_memory({query: "builder reasoning implementation"})\` — builder decisions
+- \`search_memory({query: "evaluator report hard failures"})\` — evaluator findings
 
 ### What happens after you:
 - Your fix packets go through contract negotiation → building → evaluation → QA again`;
@@ -402,8 +403,8 @@ You are the **QA agent** running holistic end-to-end testing after ALL packets a
    Search: \`search_memory({query: "evaluator report pass"})\`
 4. **Tool Gates** → typecheck + tests passed for every packet
 
-You have access to the FULL memory of everything that happened across all packets.
-Search: \`search_memory({query: "cross-packet integration decisions architectural"})\`
+The FULL memory of every packet is searchable via \`search_memory\`.
+Useful query: \`search_memory({query: "cross-packet integration decisions architectural"})\`
 
 ### What happens after you:
 - **Pass** → run complete
@@ -510,11 +511,11 @@ export function buildResearchToolsSection(
 
   // Header — role-specific framing
   if (role === "builder") {
-    sections.push(`## Research Tools\n\nYou have access to these research tools. Use them — don't guess at APIs.`);
+    sections.push(`## Research Tools\n\nResearch tools for grounding implementations against real APIs and library behavior — useful when API surfaces or library conventions are uncertain.`);
   } else if (role === "evaluator") {
-    sections.push(`## Research Tools\n\nYou have access to these tools for VERIFICATION purposes. Use them to verify the builder's work — not to fix problems (you are read-only).`);
+    sections.push(`## Research Tools\n\nResearch tools for verification — confirming the builder's work matches real library/API behavior, not for fixing.`);
   } else {
-    sections.push(`## Research Tools\n\nYou have access to research tools. Use them to ground your plan in real data.`);
+    sections.push(`## Research Tools\n\nResearch tools for grounding the plan in real domain and library data.`);
   }
 
   // Context7 section
@@ -595,8 +596,8 @@ export function buildMemorySearchSection(role: string, memoryEnabled?: boolean):
 
   return `## Run Memory Search
 
-You have access to the run's semantic memory via the \`search_memory\` MCP tool.
-This lets you find reasoning, decisions, reports, and artifacts from ALL prior agent phases.
+The run's semantic memory is searchable via the \`search_memory\` MCP tool —
+reasoning, decisions, reports, and artifacts from ALL prior agent phases.
 
 **IMPORTANT:** \`search_memory\` is already available as a direct MCP tool call — you do NOT
 need to discover it via ToolSearch. Just call it directly:

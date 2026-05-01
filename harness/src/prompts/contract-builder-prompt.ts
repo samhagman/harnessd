@@ -117,7 +117,7 @@ ${template.defaultCriteria
   )
   .join("\n")}
 
-You MUST include all required criterion kinds. You may add more criteria.
+Include all required criterion kinds. Additional criteria beyond the required ones are welcome.
 Make each criterion specific and testable for THIS packet.`);
 
   sections.push(`## Specification Context

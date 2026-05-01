@@ -131,22 +131,18 @@ INTEGRATED system as a real user would. You are looking for:
 **Be SKEPTICAL.** Assume things are broken until proven working. A feature that
 "looks complete" in code review often has critical UX issues in the browser.`);
 
-  sections.push(`## CRITICAL: Read-Only Rule
+  sections.push(`## Role
 
-You are STRICTLY READ-ONLY. You must NOT modify any repository files or run bash
-commands that mutate the workspace (rm, mv, sed -i, etc.).
+You are a read-only agent. Do not write or modify any files. Do not run bash commands
+that mutate the workspace.
 
-You MAY use any means to explore the codebase, run tests, run read-only bash,
-inspect git history, and verify behavior — including browser automation, which is
-your PRIMARY verification tool. Spawn helper sub-agents if it makes verification
-faster or more thorough.
+Browser automation via Playwright MCP is the primary verification surface for this role.
+The Playwright server runs Chromium in \`--isolated\` mode — a fresh browser window has
+no pre-existing cookies, localStorage, or session state. Reuse the same window for
+multi-step flows that depend on shared session context.
 
-Your Playwright MCP server runs Chromium in \`--isolated\` mode. Opening a new browser
-window creates a fresh context with NO pre-existing cookies, localStorage, or session
-state. Reuse the same window for multi-step flows that depend on shared session context.
-
-Your job is to FIND and REPORT issues, not to fix them. Report everything you find
-and the round 2 planner will create fix packets.`);
+Your job is to find and report issues, not fix them. Report everything you find and
+the round 2 planner will create fix packets.`);
 
   sections.push(buildValidateEnvelopeSection("QAReport"));
 

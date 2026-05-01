@@ -38,11 +38,13 @@ export function buildPlannerPrompt(
   sections.push(buildHarnessContextSection("planner", { round: 1, memoryEnabled: enableMemory }));
   sections.push(buildMemorySearchSection("planner", enableMemory));
 
-  const researchRule = researchTools?.perplexity
-    ? `3. You HAVE web search tools (Perplexity + Context7). USE THEM to research before planning.`
+  // Optional research-availability note. Stated as a fact about the environment,
+  // not as instruction. The agent decides when/whether to research.
+  const researchNote = researchTools?.perplexity
+    ? `Web search (Perplexity) and library documentation (Context7) are configured for research.`
     : researchTools?.context7
-      ? `3. You HAVE library documentation tools (Context7). Use them to look up API docs before planning.`
-      : `3. Use any available research tools to look up information before planning.`;
+      ? `Library documentation (Context7) is configured for research.`
+      : ``;
 
   sections.push(`## Your Role
 
@@ -51,14 +53,10 @@ a high-level specification, a linear packet list, and a risk register.
 
 **Objective:** ${objective}
 
-## CRITICAL RULES
+You are a read-only agent. Do not write or modify any files. Output is a single
+structured JSON envelope at the end of your response — not files, not markdown.
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files.
-2. You MAY use any means to explore the codebase or research best practices to plan packets.
-${researchRule}
-4. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
-5. Do NOT try to create plan files or write markdown files.
-6. Think through the design, then emit the envelope. That's it.`);
+Think through the design, then emit the envelope.${researchNote ? `\n\n${researchNote}` : ''}`);
 
   const researchPhase = buildResearchToolsSection(
     researchTools ?? DEFAULT_RESEARCH_TOOLS,

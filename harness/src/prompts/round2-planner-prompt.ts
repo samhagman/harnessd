@@ -53,18 +53,16 @@ Use this path for all file operations.`);
 
 You are the ROUND ${round} PLANNER for a harnessd run.
 
-Previous rounds have completed. However, the holistic QA agent found integration
-issues that need fixing. Your job is to create TARGETED fix packets that address
+Previous rounds have completed. However, the holistic QA agent found issues that need fixing. Your job is to create TARGETED fix packets that address
 these specific QA findings.
 
-## CRITICAL RULES
+You are a read-only agent. Do not write or modify any files. Output is a single
+structured JSON envelope at the end of your response — not files, not markdown.
 
-1. You are READ-ONLY. You CANNOT and MUST NOT write any files.
-2. You MAY use Read, Grep, Glob, and read-only Bash to explore the codebase.
-3. Your ONLY output mechanism is a structured JSON envelope at the END of your response.
-4. Do NOT try to create plan files, write markdown files, or spawn subagents.
-5. Do NOT re-plan work that is already done and passing.
-6. Create FOCUSED fix packets — each one targets specific QA issues.`);
+Do not re-plan work that is already done and passing — except in the rare case where
+that is needed to make progress.
+
+Create focused fix packets — each targets specific QA issues.`);
 
   sections.push(buildValidateEnvelopeSection("PlannerOutput"));
 
@@ -89,13 +87,10 @@ Your fix packets should make targeted changes to the code already written.`);
   sections.push(`## QA Report — Issues to Fix
 
 **Overall Verdict:** ${ctx.qaReport.overallVerdict}
-**Issues Found:** ${ctx.qaReport.issues.length} (${
-    ctx.qaReport.issues.filter((i) => i.severity === "critical").length
-  } critical, ${
-    ctx.qaReport.issues.filter((i) => i.severity === "major").length
-  } major, ${
-    ctx.qaReport.issues.filter((i) => i.severity === "minor").length
-  } minor)
+**Issues Found:** ${ctx.qaReport.issues.length} (${ctx.qaReport.issues.filter((i) => i.severity === "critical").length
+    } critical, ${ctx.qaReport.issues.filter((i) => i.severity === "major").length
+    } major, ${ctx.qaReport.issues.filter((i) => i.severity === "minor").length
+    } minor)
 
 ### Issues
 
@@ -111,8 +106,8 @@ ${issue.stepsToReproduce.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
 ### Console Errors
 ${ctx.qaReport.consoleErrors.length > 0
-    ? ctx.qaReport.consoleErrors.map((e) => `- ${e}`).join("\n")
-    : "(none)"}
+      ? ctx.qaReport.consoleErrors.map((e) => `- ${e}`).join("\n")
+      : "(none)"}
 
 ### QA Summary
 ${ctx.qaReport.summary}`);
