@@ -30,7 +30,11 @@
               "risk",
               "acceptance_criteria",
               "integration",
-              "ux"
+              "ux",
+              "slc_simple",
+              "slc_lovable",
+              "slc_complete",
+              "vertical_slicing"
             ]
           },
           "description": {
@@ -55,6 +59,54 @@
         "type": "string"
       }
     },
+    "maslowScores": {
+      "type": "object",
+      "properties": {
+        "useful": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Does the plan let users accomplish the work the objective actually requires?"
+        },
+        "reliable": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Are the loops tight enough that work doesn't fall through cracks?"
+        },
+        "intuitive": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Would a first-time user know what to do from the home screen / first prompt alone?"
+        },
+        "delightful": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Is there something here that would make the user smile?"
+        },
+        "meaningful": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Does the plan honor why this work matters to the people doing it?"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Brief justification — especially for any score ≤ 3, why is the plan acceptable at that level given the objective?"
+        }
+      },
+      "required": [
+        "useful",
+        "reliable",
+        "intuitive",
+        "delightful",
+        "meaningful",
+        "notes"
+      ],
+      "additionalProperties": false
+    },
     "summary": {
       "type": "string"
     }
@@ -63,6 +115,7 @@
     "verdict",
     "issues",
     "missingIntegrationScenarios",
+    "maslowScores",
     "summary"
   ],
   "additionalProperties": false

@@ -833,17 +833,48 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export const PlanReviewIssueSchema = z.object({
   severity: z.enum(["critical", "major", "minor"]),
-  area: z.enum(["architecture", "scope", "risk", "acceptance_criteria", "integration", "ux"]),
+  area: z.enum([
+    "architecture",
+    "scope",
+    "risk",
+    "acceptance_criteria",
+    "integration",
+    "ux",
+    // SLC dimensions — see plan-review-prompt.ts "SLC Framework" section.
+    "slc_simple",       // vocabulary mismatch, lack of restraint, multiple paths to same outcome, incoherence
+    "slc_lovable",      // re-implements existing pain, no delightful corner, screens nobody would open
+    "slc_complete",     // missing loops, broken trigger→action→feedback→recovery wiring
+    "vertical_slicing", // packet decomposition is horizontal (data → api → ui) instead of vertical (thin end-to-end slices)
+  ]),
   description: z.string(),
   suggestion: z.string(),
 });
 
 export type PlanReviewIssue = z.infer<typeof PlanReviewIssueSchema>;
 
+/**
+ * Maslow's Product Hierarchy of Needs (1–5 each). The plan reviewer scores
+ * the proposed plan on each layer; low scores must be intentional and
+ * justified by the original objective (e.g. an internal admin tool can score
+ * low on Delightful — but a consumer-facing product cannot).
+ */
+export const MaslowScoresSchema = z.object({
+  useful:     z.number().int().min(1).max(5).describe("Does the plan let users accomplish the work the objective actually requires?"),
+  reliable:   z.number().int().min(1).max(5).describe("Are the loops tight enough that work doesn't fall through cracks?"),
+  intuitive:  z.number().int().min(1).max(5).describe("Would a first-time user know what to do from the home screen / first prompt alone?"),
+  delightful: z.number().int().min(1).max(5).describe("Is there something here that would make the user smile?"),
+  meaningful: z.number().int().min(1).max(5).describe("Does the plan honor why this work matters to the people doing it?"),
+  notes: z.string().describe("Brief justification — especially for any score ≤ 3, why is the plan acceptable at that level given the objective?"),
+});
+
+export type MaslowScores = z.infer<typeof MaslowScoresSchema>;
+
 export const PlanReviewSchema = z.object({
   verdict: z.enum(["approve", "revise"]),
   issues: z.array(PlanReviewIssueSchema),
   missingIntegrationScenarios: z.array(z.string()),
+  /** Maslow's Product Hierarchy of Needs cross-check, 1–5 per layer. */
+  maslowScores: MaslowScoresSchema,
   summary: z.string(),
 });
 

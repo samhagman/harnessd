@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { buildBuilderPrompt } from "../../prompts/builder-prompt.js";
 import { buildPlannerPrompt } from "../../prompts/planner-prompt.js";
 import { buildContractBuilderPrompt } from "../../prompts/contract-builder-prompt.js";
+import { buildPlanReviewPrompt } from "../../prompts/plan-review-prompt.js";
+import { PlanReviewSchema } from "../../schemas.js";
 import type { PacketContract, Packet, AcceptanceTemplate } from "../../schemas.js";
 
 function makeMinimalContract(): PacketContract {
@@ -274,5 +276,93 @@ describe("buildContractBuilderPrompt — backendCapabilities", () => {
     );
     expect(prompt).not.toContain("===HARNESSD_RESULT_START===");
     expect(prompt).toContain("output schema");
+  });
+});
+
+describe("buildPlanReviewPrompt — SLC framework + vertical slicing", () => {
+  function makeReview() {
+    return buildPlanReviewPrompt(
+      "spec content",
+      "packets content",
+      "Build a tiny utility",
+    );
+  }
+
+  it("includes the vertical-slicing principle as a checklist criterion", () => {
+    const prompt = makeReview();
+    expect(prompt).toContain("Vertical Slices, Not Horizontal Layers");
+    // Must call out the specific anti-pattern shape
+    expect(prompt).toMatch(/data layer.*no consuming surface|API endpoints.*later UI/i);
+    expect(prompt).toContain("vertical_slicing");
+  });
+
+  it("includes the four SLC pillars (SCOPE / SIMPLE / LOVABLE / COMPLETE)", () => {
+    const prompt = makeReview();
+    expect(prompt).toContain("SLC Framework");
+    expect(prompt).toMatch(/SCOPE\s+—/);
+    expect(prompt).toMatch(/SIMPLE\s+—/);
+    expect(prompt).toMatch(/LOVABLE\s+—/);
+    expect(prompt).toMatch(/COMPLETE\s+—/);
+  });
+
+  it("includes the Maslow cross-check with all five layers", () => {
+    const prompt = makeReview();
+    expect(prompt).toContain("Maslow Cross-Check");
+    for (const layer of ["Useful", "Reliable", "Intuitive", "Delightful", "Meaningful"]) {
+      expect(prompt).toContain(layer);
+    }
+  });
+
+  it("documents all four new SLC area enum values in the JSON envelope template", () => {
+    const prompt = makeReview();
+    for (const area of ["slc_simple", "slc_lovable", "slc_complete", "vertical_slicing"]) {
+      expect(prompt).toContain(area);
+    }
+  });
+
+  it("documents maslowScores in the JSON envelope template", () => {
+    const prompt = makeReview();
+    expect(prompt).toContain("maslowScores");
+    expect(prompt).toMatch(/"useful":\s*1-5/);
+    expect(prompt).toMatch(/"meaningful":\s*1-5/);
+  });
+
+  it("PlanReviewSchema rejects envelopes without maslowScores", () => {
+    const result = PlanReviewSchema.safeParse({
+      verdict: "approve",
+      issues: [],
+      missingIntegrationScenarios: [],
+      summary: "ok",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("PlanReviewSchema accepts the new SLC area enum values", () => {
+    const result = PlanReviewSchema.safeParse({
+      verdict: "revise",
+      issues: [
+        { severity: "critical", area: "vertical_slicing", description: "horizontal split", suggestion: "thread end-to-end" },
+        { severity: "major", area: "slc_simple", description: "vocab mismatch", suggestion: "use domain words" },
+        { severity: "major", area: "slc_lovable", description: "no delight", suggestion: "find one corner" },
+        { severity: "major", area: "slc_complete", description: "missing recovery", suggestion: "add it" },
+      ],
+      missingIntegrationScenarios: [],
+      maslowScores: { useful: 4, reliable: 3, intuitive: 4, delightful: 2, meaningful: 5, notes: "delight low intentionally — internal tool" },
+      summary: "needs revision",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("PlanReviewSchema rejects out-of-range maslow scores", () => {
+    for (const bad of [0, 6, -1, 7]) {
+      const result = PlanReviewSchema.safeParse({
+        verdict: "approve",
+        issues: [],
+        missingIntegrationScenarios: [],
+        maslowScores: { useful: bad, reliable: 3, intuitive: 3, delightful: 3, meaningful: 3, notes: "" },
+        summary: "ok",
+      });
+      expect(result.success).toBe(false);
+    }
   });
 });

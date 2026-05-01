@@ -73,6 +73,14 @@ function planReviewEnvelope(): string {
     summary: "Plan approved.",
     issues: [],
     missingIntegrationScenarios: [],
+    maslowScores: {
+      useful: 5,
+      reliable: 5,
+      intuitive: 5,
+      delightful: 5,
+      meaningful: 5,
+      notes: "Test fixture — no real plan to score.",
+    },
   })}`;
 }
 

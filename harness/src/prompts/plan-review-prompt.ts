@@ -146,7 +146,140 @@ severity (critical / major / minor) and area.
 - Is the plan scoped appropriately for the objective?
 - Is it over-scoped (building things not asked for)?
 - Is it under-scoped (missing essential pieces)?
-- Are the packet sizes reasonable? (No single packet should be too large)`);
+- Are the packet sizes reasonable? (No single packet should be too large)
+
+### 9. Vertical Slices, Not Horizontal Layers
+We aim for **vertical slices**: each packet should deliver a thin end-to-end piece of
+user-visible functionality. Not horizontal layers like "PKT-001: schema, PKT-002: API,
+PKT-003: UI" — that's a recipe for half-built features and unrunnable intermediate
+states.
+
+For each packet, ask:
+- After this packet ships (and only this packet), can a user (or developer, or operator,
+  depending on audience) actually exercise something end-to-end? Even a tiny something?
+- Or does this packet only become useful once 2–3 sibling packets also land?
+
+Anti-patterns to flag as vertical_slicing issues:
+- A "data layer" or "schema" packet with no consuming surface in the same packet.
+- An "API endpoints" packet whose consumer is a later UI packet.
+- A "UI shell" packet that has no working actions until later packets fill in handlers.
+- A packet that defines types/interfaces/contracts but no implementation.
+
+Right pattern: each packet picks one user goal and threads through the whole stack
+(schema bit + API bit + UI bit) for that one goal. Subsequent packets thread through
+the next goal. This way the build order produces working, demoable software at every
+step — and if the run aborts mid-plan, the operator gets a partial-but-usable system,
+not three unconnected scaffolds.
+
+A horizontal-layer plan is a CRITICAL issue (it forces every demo, every QA round, and
+every fix loop to wait until the entire stack is built before anything actually runs).`);
+
+  sections.push(`## SLC Framework — Simple, Lovable, Complete
+
+In addition to the correctness checks above, evaluate the plan against the SLC framework.
+The objective above is the source of truth — SLC asks whether the plan is the right
+*shape* for that objective, not just whether the plan is internally consistent.
+
+### SCOPE — prerequisite for Simple
+
+Scope is the surface area the plan absorbs from the objective. A well-scoped plan reads
+as simple; a badly-scoped plan reads as complicated no matter how clean the prose.
+
+- Does the plan cover the meta-goals implied by the objective, or is it narrower than
+  the objective suggests?
+- Are there personas, external parties, or workflows named or implied in the objective
+  that the plan does not engage with?
+- Conversely, has the plan expanded beyond what the objective warrants — modeling things
+  the objective didn't ask about and doesn't need?
+- Are the workflows the plan identifies the *right* workflows? Watch for obvious omissions
+  (an onboarding flow with no offboarding, a claims processor with no appeals, a creation
+  flow with no edit/delete, a sync flow with no conflict handling).
+
+You don't need the objective to name every workflow. The plan proposes the workflows;
+you check whether those proposals are the right surface area for what was asked.
+
+Tag scope-related issues with area: \`scope\`.
+
+### SIMPLE — a function of scope
+
+- **Vocabulary matches user mental models.** Entity names, relationship names, process
+  names should be the words the people in this domain actually use. Generic software
+  nouns where the domain has specific ones (or vice versa) is a Simple failure.
+- **Restraint.** Anything in the plan that isn't load-bearing for the objective should
+  be cut or flagged.
+- **One obvious way to do each thing.** If users have multiple paths to the same outcome
+  with no clear reason to prefer one, that's a Simple failure.
+- **Coherence.** Does the plan read as one design, or like three sub-plans stapled
+  together? The merge is where elegance happens.
+
+Tag simple-related issues with area: \`slc_simple\`.
+
+### LOVABLE — delightful on day one, not "useful eventually"
+
+- **Addresses what actually hurts.** Does the plan provide visible relief from the pain
+  implied by the objective? Re-implementing existing pain is a Lovable failure.
+- **At least one delightful corner.** Some view, some action, some output should feel
+  like "oh, finally." Not everything — but something.
+- **Home screens worth opening.** For each persona implied by the objective, would they
+  open this voluntarily, or is it a chore?
+- **Respect for the user's attention.** Does the plan avoid busywork — redundant entry,
+  ceremonial status updates, pointless approvals — or does it preserve them?
+
+Lovable is not a feature requirement — it's a *posture*. A CLI tool can be lovable. A
+migration script can be lovable. A test harness can be lovable. Ask: would the user feel
+this was made for them?
+
+Tag lovable-related issues with area: \`slc_lovable\`.
+
+### COMPLETE — two dimensions, both required
+
+**Loop coverage (absence).** Have all the loops this objective implies been surfaced?
+Not just "every loop the plan claims is well-formed" but "are there loops that the
+objective implies should exist which the plan doesn't mention?"
+
+- What jobs-to-be-done does the objective imply? Is there a flow in the plan for each?
+- What personas need feedback loops of their own (not just admin/operator loops)?
+- What external parties generate work that has to close (callbacks, retries, webhooks),
+  and are those loops represented?
+- What recoveries are implied by the happy paths in the plan?
+
+**Loop integrity (within what's claimed).** For each loop the plan does include:
+
+- Trigger → attention → action → feedback → recovery — is each step wired up?
+- Every constraint has a local action. If the design says something can be "expired" /
+  "overdue" / "non-compliant" / "blocked", is there a place where that state surfaces
+  AND an action that resolves it?
+- Every process has a recovery path. What happens when the happy path fails? Recovery
+  should be named in the plan, not implicit.
+- Every handoff is a message object. When work moves between roles, something carries
+  the handoff — not just a status change.
+- Every mutating action produces proof (audit log, confirmation, receipt).
+- Every persona named in the objective has at least one view they would open daily.
+
+A plan with rock-solid integrity on a *subset* of the loops it should have is **not**
+Complete — it's tidy, but it's incomplete.
+
+Tag complete-related issues with area: \`slc_complete\`.
+
+## Maslow Cross-Check (required output)
+
+Score the plan 1–5 on each layer of Maslow's Product Hierarchy of Needs. These scores
+go in the JSON envelope under \`maslowScores\`.
+
+1. **Useful** — does the plan let users accomplish the work the objective actually
+   requires?
+2. **Reliable** — are loops tight enough that things don't fall through cracks?
+3. **Intuitive** — would a first-time user know what to do from the home screen / first
+   prompt alone?
+4. **Delightful** — is there something here that would make the user smile?
+5. **Meaningful** — does the plan honor why this work matters to the people doing it?
+
+SLC aims at the whole pyramid narrow, not the base wide. A low Delightful or Meaningful
+score isn't automatically bad — but it has to be **intentional** and **justified by the
+objective**. If the objective implies the work is meaningful (healthcare, safety,
+livelihood, money) and Meaningful scores low, that's a finding to flag in \`issues\`.
+
+Put your justification (especially for any score ≤ 3) in \`maslowScores.notes\`.`);
 
   sections.push(`## Output Format
 
@@ -158,7 +291,7 @@ ${RESULT_START_SENTINEL}
   "issues": [
     {
       "severity": "critical" | "major" | "minor",
-      "area": "architecture" | "scope" | "risk" | "acceptance_criteria" | "integration" | "ux",
+      "area": "architecture" | "scope" | "risk" | "acceptance_criteria" | "integration" | "ux" | "slc_simple" | "slc_lovable" | "slc_complete" | "vertical_slicing",
       "description": "Clear description of the problem",
       "suggestion": "Specific suggestion for how to fix it"
     }
@@ -166,6 +299,14 @@ ${RESULT_START_SENTINEL}
   "missingIntegrationScenarios": [
     "Description of a missing scenario that should be added"
   ],
+  "maslowScores": {
+    "useful": 1-5,
+    "reliable": 1-5,
+    "intuitive": 1-5,
+    "delightful": 1-5,
+    "meaningful": 1-5,
+    "notes": "Brief justification — especially for any score ≤ 3, why is the plan acceptable at that level given the objective?"
+  },
   "summary": "2-3 sentence summary of your review"
 }
 ${RESULT_END_SENTINEL}
@@ -183,6 +324,9 @@ Specifically:
 - Any CRITICAL issue → verdict MUST be "revise"
 - 2+ MAJOR issues → verdict should be "revise"
 - Only MINOR issues → verdict should be "approve"
+- A horizontal-slicing plan (vertical_slicing area, critical) → verdict MUST be "revise"
+- Any Maslow score of 1 on a layer the objective implies should be high → flag in
+  issues and lean toward "revise"
 
 ## Important
 
